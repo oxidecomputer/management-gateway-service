@@ -1,7 +1,7 @@
 ## Overview
 
 The Management Gateway Service (MGS) is the [control
-plane](https://github.com/oxidecomputer/omicron) service that communications
+plane](https://github.com/oxidecomputer/omicron) service that communicates
 with Service Processors (SPs) running
 [hubris](https://github.com/oxidecomputer/hubris).
 
