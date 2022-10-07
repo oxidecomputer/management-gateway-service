@@ -1,0 +1,13 @@
+[workspace]
+members = [
+    "faux-mgs",
+    "gateway-messages",
+    "gateway-sp-comms",
+]
+
+default-members = [
+    "faux-mgs",
+    "gateway-messages",
+    "gateway-sp-comms",
+]
+resolver = "2"
