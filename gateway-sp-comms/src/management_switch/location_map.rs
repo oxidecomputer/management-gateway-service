@@ -26,7 +26,7 @@ use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
 /// Configuration of a single port of the management network switch.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SwitchPortConfig {
     /// Data link addresses; this is the address on which we should bind a
     /// socket, which will be tagged with the appropriate VLAN for this switch
@@ -48,7 +48,7 @@ pub struct SwitchPortConfig {
 
 /// Configure the topology of the rack where MGS is running, and describe how we
 /// can determine our own location.
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct LocationConfig {
     /// List of human-readable location names; the actual strings don't matter,
     /// but they're used in log messages and to sync with the refined locations
@@ -60,7 +60,7 @@ pub struct LocationConfig {
     pub determination: Vec<LocationDeterminationConfig>,
 }
 
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct LocationDeterminationConfig {
     /// Which port to contact.
     pub switch_port: usize,
@@ -165,13 +165,13 @@ impl LocationMap {
 // b) validates that all the fields that reference each other are self
 //    consistent; e.g., there isn't a LocationDeterminationConfig that refers to
 //    a nonexistent switch port.
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub(super) struct ValidatedLocationConfig {
     names: HashSet<String>,
     determination: Vec<ValidatedLocationDeterminationConfig>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 struct ValidatedLocationDeterminationConfig {
     switch_port: SwitchPort,
     sp_port_1: HashSet<String>,

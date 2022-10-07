@@ -462,7 +462,9 @@ bitflags! {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct BulkIgnitionState {
     /// Ignition state for each target.
     ///

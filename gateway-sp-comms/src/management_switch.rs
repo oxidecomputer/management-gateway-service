@@ -37,7 +37,7 @@ use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 
 #[serde_as]
-#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SwitchConfig {
     pub local_ignition_controller_port: usize,
     pub rpc_max_attempts: usize,
