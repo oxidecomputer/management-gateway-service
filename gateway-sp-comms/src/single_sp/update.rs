@@ -436,9 +436,8 @@ async fn send_update_in_chunks(
             "offset" => offset,
         );
 
-        image =
-            send_single_update_chunk(&cmds_tx, component, id, offset, image)
-                .await?;
+        image = send_single_update_chunk(cmds_tx, component, id, offset, image)
+            .await?;
 
         // Update our offset according to how far our cursor advanced.
         offset += (image.position() - prior_pos) as u32;
