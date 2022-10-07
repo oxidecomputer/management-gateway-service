@@ -1,0 +1,11 @@
+#
+# We use nightly for the "asm" unstable Rust feature, used for dtrace probes.
+#
+# We specify a specific, known-good nightly to avoid regular breakage.
+# Once all unstable features that we use are stabilized, we should switch back
+# to "stable".
+#
+
+[toolchain]
+channel = "nightly-2022-09-27"
+profile = "default"
