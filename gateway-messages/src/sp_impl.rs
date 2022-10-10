@@ -12,6 +12,7 @@ use crate::DiscoverResponse;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
 use crate::PowerState;
+use crate::RequestHeader;
 use crate::RequestKind;
 use crate::ResponseError;
 use crate::ResponseKind;
@@ -188,14 +189,16 @@ pub fn handle_message<H: SpHandler>(
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
 ) -> usize {
-    // If we can't read the request ID, we have to fill in _something_ in our
-    // response. We'll use 0xffff_ffff.
-    let mut request_id = u32::MAX;
-    let result = read_request_header(data, &mut request_id).and_then(
-        |request_kind_data| {
-            handle_message_impl(sender, port, request_kind_data, handler)
-        },
-    );
+    // Try to peel the header off first, allowing us to check the version and
+    // get the request ID (even if we fail to parse the rest of the request).
+    let (request_id, result) = read_request_header(data);
+
+    // If we were able to peel off the header, chain the rest of the data
+    // then chain the rest of the data
+    // through to the handler.
+    let result = result.and_then(|request_kind_data| {
+        handle_message_impl(sender, port, request_kind_data, handler)
+    });
 
     // We control `SpMessage` and know all cases can successfully serialize
     // into `self.buf`.
@@ -212,46 +215,36 @@ pub fn handle_message<H: SpHandler>(
     }
 }
 
-/// Read the version and request_id from the front of `data`.
-///
-/// Our API is slightly unidiomatic here: we take a `&mut u32` that we fill in
-/// with the request ID instead of returning it because we may be able to
-/// determine the request_id even in the error case.
-///
-/// If `data.len() >= 8`, interprets the first 4 bytes as the request version
-/// and the subsequent bytes as the request ID, filling in `*request_id`. If the
-/// version is compatible, returns `Ok(rest_of_data)`. If the version is
-/// incompatible, returns `Err(reason)`.
-///
-/// If `data.len() < 8`, returns `Err(reason)` without modifying `*request_id`,
-/// as there isn't enough data to know what it should be.
-fn read_request_header<'a>(
-    data: &'a [u8],
-    request_id: &mut u32,
-) -> Result<&'a [u8], ResponseError> {
-    // Split off the first four bytes for `version`.
-    let version = data.get(0..mem::size_of::<u32>()).ok_or(
-        ResponseError::BadRequest(BadRequestReason::DeserializationError),
-    )?;
-    let data = &data[mem::size_of::<u32>()..];
-    let version = u32::from_le_bytes(version.try_into().unwrap());
+/// Read the request header from the front of `data`, returning the request ID
+/// we should use in our response (pulled from the header if possible, or a
+/// sentinel if not) and either the remainder of the request data or an error.
+fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], ResponseError>) {
+    let (header, request_kind_data) =
+        match hubpack::deserialize::<RequestHeader>(data) {
+            Ok((header, request_kind_data)) => (header, request_kind_data),
+            Err(_) => {
+                return (
+                    // We don't know the request ID, but need to reply with
+                    // something - fill in 0xffff_ffff.
+                    u32::MAX,
+                    Err(ResponseError::BadRequest(
+                        BadRequestReason::DeserializationError,
+                    )),
+                );
+            }
+        };
 
-    // Split off the next four bytes for `request_id`.
-    let request_id_bytes = data.get(0..mem::size_of::<u32>()).ok_or(
-        ResponseError::BadRequest(BadRequestReason::DeserializationError),
-    )?;
-    let data = &data[mem::size_of::<u32>()..];
-    *request_id = u32::from_le_bytes(request_id_bytes.try_into().unwrap());
-
-    // Version check.
-    if version == version::V1 {
-        Ok(data)
+    // Check the message version.
+    let result = if header.version == version::V1 {
+        Ok(request_kind_data)
     } else {
         Err(ResponseError::BadRequest(BadRequestReason::WrongVersion {
             sp: version::V1,
-            request: version,
+            request: header.version,
         }))
-    }
+    };
+
+    (header.request_id, result)
 }
 
 /// Parses the remainder of a request (after `version` and `request_id`, which
@@ -552,8 +545,10 @@ mod tests {
     #[test]
     fn handle_valid_request() {
         let req = Request {
-            version: version::V1,
-            request_id: 0x01020304,
+            header: RequestHeader {
+                version: version::V1,
+                request_id: 0x01020304,
+            },
             kind: RequestKind::Discover,
         };
 
@@ -564,7 +559,7 @@ mod tests {
             SpMessage {
                 version: version::V1,
                 kind: SpMessageKind::Response {
-                    request_id: req.request_id,
+                    request_id: req.header.request_id,
                     result: Ok(ResponseKind::Discover(DiscoverResponse {
                         sp_port: SpPort::One
                     }))
@@ -576,8 +571,10 @@ mod tests {
     #[test]
     fn bad_version() {
         let req = Request {
-            version: 0x0badf00d,
-            request_id: 0x01020304,
+            header: RequestHeader {
+                version: 0x0badf00d,
+                request_id: 0x01020304,
+            },
             kind: RequestKind::Discover,
         };
 
@@ -604,8 +601,10 @@ mod tests {
     fn bad_request_header() {
         // Valid request...
         let req = Request {
-            version: version::V1,
-            request_id: 0x01020304,
+            header: RequestHeader {
+                version: version::V1,
+                request_id: 0x01020304,
+            },
             kind: RequestKind::Discover,
         };
         let mut req_buf = vec![0; Request::MAX_SIZE];

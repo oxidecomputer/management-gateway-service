@@ -34,9 +34,16 @@ pub mod version {
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
 )]
 pub struct Request {
+    pub header: RequestHeader,
+    pub kind: RequestKind,
+}
+
+#[derive(
+    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+)]
+pub struct RequestHeader {
     pub version: u32,
     pub request_id: u32,
-    pub kind: RequestKind,
 }
 
 #[derive(
@@ -677,8 +684,10 @@ mod tests {
     #[test]
     fn test_serialize_with_trailing_data() {
         let mut out = [0; MAX_SERIALIZED_SIZE];
-        let header =
-            Request { version: 1, request_id: 2, kind: RequestKind::Discover };
+        let header = Request {
+            header: RequestHeader { version: 1, request_id: 2 },
+            kind: RequestKind::Discover,
+        };
         let data_vecs = &[
             vec![0; 256],
             vec![1; 256],

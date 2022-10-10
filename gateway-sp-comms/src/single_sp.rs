@@ -18,6 +18,7 @@ use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
 use gateway_messages::Request;
+use gateway_messages::RequestHeader;
 use gateway_messages::RequestKind;
 use gateway_messages::ResponseError;
 use gateway_messages::ResponseKind;
@@ -769,8 +770,13 @@ impl Inner {
     ) -> Result<(SocketAddrV6, ResponseKind)> {
         // Build and serialize our request once.
         self.request_id += 1;
-        let request =
-            Request { version: version::V1, request_id: self.request_id, kind };
+        let request = Request {
+            header: RequestHeader {
+                version: version::V1,
+                request_id: self.request_id,
+            },
+            kind,
+        };
 
         let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
         let n = match trailing_data {
@@ -806,7 +812,7 @@ impl Inner {
             match self
                 .rpc_call_one_attempt(
                     addr,
-                    request.request_id,
+                    request.header.request_id,
                     outgoing_buf,
                     incoming_buf,
                 )
