@@ -5,13 +5,14 @@
 //! Behavior implemented by both real and simulated SPs.
 
 use crate::version;
+use crate::BadRequestReason;
 use crate::BulkIgnitionState;
 use crate::ComponentUpdatePrepare;
 use crate::DiscoverResponse;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
 use crate::PowerState;
-use crate::Request;
+use crate::RequestHeader;
 use crate::RequestKind;
 use crate::ResponseError;
 use crate::ResponseKind;
@@ -159,24 +160,6 @@ pub trait SpHandler {
     ) -> Result<Infallible, ResponseError>;
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Error {
-    /// Incoming data packet is larger than the largest [`Request`].
-    DataTooLarge,
-    /// Incoming data packet had leftover trailing data.
-    LeftoverData,
-    /// Message version is unsupported.
-    UnsupportedVersion(u32),
-    /// Deserializing the packet into a [`Request`] failed.
-    DeserializationFailed(hubpack::error::Error),
-}
-
-impl From<hubpack::error::Error> for Error {
-    fn from(err: hubpack::error::Error) -> Self {
-        Self::DeserializationFailed(err)
-    }
-}
-
 /// Unpack the 2-byte length-prefixed trailing data that comes after some
 /// packets (e.g., update chunks, serial console).
 pub fn unpack_trailing_data(data: &[u8]) -> hubpack::error::Result<&[u8]> {
@@ -205,36 +188,103 @@ pub fn handle_message<H: SpHandler>(
     data: &[u8],
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
-) -> Result<usize, Error> {
-    // parse request, with sanity checks on sizes
-    if data.len() > crate::MAX_SERIALIZED_SIZE {
-        return Err(Error::DataTooLarge);
-    }
-    let (request, leftover) = hubpack::deserialize::<Request>(data)?;
+) -> usize {
+    // Try to peel the header off first, allowing us to check the version and
+    // get the request ID (even if we fail to parse the rest of the request).
+    let (request_id, result) = read_request_header(data);
 
-    // `version` is intentionally the first 4 bytes of the packet; we could
-    // check it before trying to deserialize?
-    if request.version != version::V1 {
-        return Err(Error::UnsupportedVersion(request.version));
+    // If we were able to peel off the header, chain the rest of the data
+    // then chain the rest of the data
+    // through to the handler.
+    let result = result.and_then(|request_kind_data| {
+        handle_message_impl(sender, port, request_kind_data, handler)
+    });
+
+    // We control `SpMessage` and know all cases can successfully serialize
+    // into `self.buf`.
+    let response = SpMessage {
+        version: version::V1,
+        kind: SpMessageKind::Response { request_id, result },
+    };
+
+    // We know `response` is well-formed and fits into `out` (since it's
+    // statically sized for `SpMessage`), so we can unwrap serialization.
+    match hubpack::serialize(&mut out[..], &response) {
+        Ok(n) => n,
+        Err(_) => panic!(),
     }
+}
+
+/// Read the request header from the front of `data`, returning the request ID
+/// we should use in our response (pulled from the header if possible, or a
+/// sentinel if not) and either the remainder of the request data or an error.
+fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], ResponseError>) {
+    let (header, request_kind_data) =
+        match hubpack::deserialize::<RequestHeader>(data) {
+            Ok((header, request_kind_data)) => (header, request_kind_data),
+            Err(_) => {
+                return (
+                    // We don't know the request ID, but need to reply with
+                    // something - fill in 0xffff_ffff.
+                    u32::MAX,
+                    Err(ResponseError::BadRequest(
+                        BadRequestReason::DeserializationError,
+                    )),
+                );
+            }
+        };
+
+    // Check the message version.
+    let result = if header.version == version::V1 {
+        Ok(request_kind_data)
+    } else {
+        Err(ResponseError::BadRequest(BadRequestReason::WrongVersion {
+            sp: version::V1,
+            request: header.version,
+        }))
+    };
+
+    (header.request_id, result)
+}
+
+/// Parses the remainder of a request (after `version` and `request_id`, which
+/// are handled by `read_request_header`) and calls `handler`.
+fn handle_message_impl<H: SpHandler>(
+    sender: SocketAddrV6,
+    port: SpPort,
+    request_kind_data: &[u8],
+    handler: &mut H,
+) -> Result<ResponseKind, ResponseError> {
+    let (kind, leftover) = hubpack::deserialize::<RequestKind>(
+        request_kind_data,
+    )
+    .map_err(|_| {
+        ResponseError::BadRequest(BadRequestReason::DeserializationError)
+    })?;
 
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
-    let trailing_data = match &request.kind {
+    let trailing_data = match &kind {
         RequestKind::UpdateChunk(_)
         | RequestKind::SerialConsoleWrite { .. } => {
-            unpack_trailing_data(leftover)?
+            unpack_trailing_data(leftover).map_err(|_| {
+                ResponseError::BadRequest(
+                    BadRequestReason::DeserializationError,
+                )
+            })?
         }
         _ => {
             if !leftover.is_empty() {
-                return Err(Error::LeftoverData);
+                return Err(ResponseError::BadRequest(
+                    BadRequestReason::UnexpectedTrailingData,
+                ));
             }
             &[]
         }
     };
 
     // call out to handler to provide response
-    let result = match request.kind {
+    match kind {
         RequestKind::Discover => {
             handler.discover(sender, port).map(ResponseKind::Discover)
         }
@@ -295,24 +345,340 @@ pub fn handle_message<H: SpHandler>(
                 match infallible {}
             })
         }
-    };
+    }
+}
 
-    // we control `SpMessage` and know all cases can successfully serialize
-    // into `self.buf`
-    let response = SpMessage {
-        version: version::V1,
-        kind: SpMessageKind::Response {
-            request_id: request.request_id,
-            result,
-        },
-    };
+#[cfg(test)]
+mod tests {
+    use serde::Serialize;
 
-    // We know `response` is well-formed and fits into `out` (since it's
-    // statically sized for `SpMessage`), so we can unwrap serialization.
-    let n = match hubpack::serialize(&mut out[..], &response) {
-        Ok(n) => n,
-        Err(_) => panic!(),
-    };
+    use super::*;
+    use crate::Request;
+    use crate::SerializedSize;
 
-    Ok(n)
+    struct FakeHandler;
+
+    // Only implements `discover()`.
+    impl SpHandler for FakeHandler {
+        fn discover(
+            &mut self,
+            _sender: SocketAddrV6,
+            port: SpPort,
+        ) -> Result<DiscoverResponse, ResponseError> {
+            Ok(DiscoverResponse { sp_port: port })
+        }
+
+        fn ignition_state(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _target: u8,
+        ) -> Result<IgnitionState, ResponseError> {
+            todo!()
+        }
+
+        fn bulk_ignition_state(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<BulkIgnitionState, ResponseError> {
+            todo!()
+        }
+
+        fn ignition_command(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _target: u8,
+            _command: IgnitionCommand,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn sp_state(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<SpState, ResponseError> {
+            todo!()
+        }
+
+        fn sp_update_prepare(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _update: SpUpdatePrepare,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn component_update_prepare(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _update: ComponentUpdatePrepare,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn update_chunk(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _chunk: UpdateChunk,
+            _data: &[u8],
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn update_status(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<UpdateStatus, ResponseError> {
+            todo!()
+        }
+
+        fn update_abort(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+            _id: UpdateId,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn power_state(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<PowerState, ResponseError> {
+            todo!()
+        }
+
+        fn set_power_state(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _power_state: PowerState,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn serial_console_attach(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn serial_console_write(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _offset: u64,
+            _data: &[u8],
+        ) -> Result<u64, ResponseError> {
+            todo!()
+        }
+
+        fn serial_console_detach(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn reset_prepare(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<(), ResponseError> {
+            todo!()
+        }
+
+        fn reset_trigger(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<Infallible, ResponseError> {
+            todo!()
+        }
+    }
+
+    #[cfg(feature = "std")]
+    fn any_socket_addr_v6() -> SocketAddrV6 {
+        "[::1]:123".parse().unwrap()
+    }
+
+    #[cfg(not(feature = "std"))]
+    fn any_socket_addr_v6() -> SocketAddrV6 {
+        SocketAddrV6 { ip: smoltcp::wire::Ipv6Address::LOOPBACK, port: 123 }
+    }
+
+    fn call_handle_message<Req>(req: Req) -> SpMessage
+    where
+        Req: Serialize + SerializedSize,
+    {
+        let mut req_buf = vec![0; Req::MAX_SIZE];
+        let m = crate::serialize(&mut req_buf, &req).unwrap();
+
+        let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
+        let n = handle_message(
+            any_socket_addr_v6(),
+            SpPort::One,
+            &req_buf[..m],
+            &mut FakeHandler,
+            &mut buf,
+        );
+
+        let (resp, _) = crate::deserialize::<SpMessage>(&buf[..n]).unwrap();
+        resp
+    }
+
+    // Smoke test that a valid request returns an `Ok(_)` response.
+    #[test]
+    fn handle_valid_request() {
+        let req = Request {
+            header: RequestHeader {
+                version: version::V1,
+                request_id: 0x01020304,
+            },
+            kind: RequestKind::Discover,
+        };
+
+        let resp = call_handle_message(req);
+
+        assert_eq!(
+            resp,
+            SpMessage {
+                version: version::V1,
+                kind: SpMessageKind::Response {
+                    request_id: req.header.request_id,
+                    result: Ok(ResponseKind::Discover(DiscoverResponse {
+                        sp_port: SpPort::One
+                    }))
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn bad_version() {
+        let req = Request {
+            header: RequestHeader {
+                version: 0x0badf00d,
+                request_id: 0x01020304,
+            },
+            kind: RequestKind::Discover,
+        };
+
+        let resp = call_handle_message(req);
+
+        assert_eq!(
+            resp,
+            SpMessage {
+                version: version::V1,
+                kind: SpMessageKind::Response {
+                    request_id: 0x01020304,
+                    result: Err(ResponseError::BadRequest(
+                        BadRequestReason::WrongVersion {
+                            sp: version::V1,
+                            request: 0x0badf00d
+                        }
+                    )),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn bad_request_header() {
+        // Valid request...
+        let req = Request {
+            header: RequestHeader {
+                version: version::V1,
+                request_id: 0x01020304,
+            },
+            kind: RequestKind::Discover,
+        };
+        let mut req_buf = vec![0; Request::MAX_SIZE];
+        let _ = crate::serialize(&mut req_buf, &req).unwrap();
+
+        let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
+
+        // ... but only the first 3 bytes (incomplete version field)
+        let n = handle_message(
+            any_socket_addr_v6(),
+            SpPort::One,
+            &req_buf[..3],
+            &mut FakeHandler,
+            &mut buf,
+        );
+        let (resp1, _) = crate::deserialize::<SpMessage>(&buf[..n]).unwrap();
+
+        // ... or only the first 7 bytes (incomplete request ID field)
+        let n = handle_message(
+            any_socket_addr_v6(),
+            SpPort::One,
+            &req_buf[..7],
+            &mut FakeHandler,
+            &mut buf,
+        );
+        let (resp2, _) = crate::deserialize::<SpMessage>(&buf[..n]).unwrap();
+
+        assert_eq!(resp1, resp2);
+        assert_eq!(
+            resp1,
+            SpMessage {
+                version: version::V1,
+                kind: SpMessageKind::Response {
+                    // Header is incomplete, so we don't know the request ID.
+                    request_id: 0xffff_ffff,
+                    result: Err(ResponseError::BadRequest(
+                        BadRequestReason::DeserializationError
+                    )),
+                }
+            }
+        );
+    }
+
+    #[test]
+    fn bad_request_kind() {
+        #[derive(SerializedSize, Serialize)]
+        struct FakeRequest {
+            version: u32,
+            request_id: u32,
+            kind: u8,
+        }
+
+        let req = FakeRequest {
+            version: version::V1,
+            request_id: 0x01020304,
+            // Hubpack encodes the real `RequestKind` enum using an initial byte
+            // to identify the variant; send a byte that is past the end of our
+            // enum (assuming we never have 256 cases).
+            kind: 0xff,
+        };
+
+        let resp = call_handle_message(req);
+
+        assert_eq!(
+            resp,
+            SpMessage {
+                version: version::V1,
+                kind: SpMessageKind::Response {
+                    request_id: 0x01020304,
+                    result: Err(ResponseError::BadRequest(
+                        BadRequestReason::DeserializationError
+                    )),
+                }
+            }
+        );
+    }
 }

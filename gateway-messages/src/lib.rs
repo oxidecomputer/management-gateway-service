@@ -34,9 +34,16 @@ pub mod version {
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
 )]
 pub struct Request {
+    pub header: RequestHeader,
+    pub kind: RequestKind,
+}
+
+#[derive(
+    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+)]
+pub struct RequestHeader {
     pub version: u32,
     pub request_id: u32,
-    pub kind: RequestKind,
 }
 
 #[derive(
@@ -96,7 +103,9 @@ pub enum SpPort {
     Two = 2,
 }
 
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub enum UpdateStatus {
     /// The SP has no update status.
     None,
@@ -161,7 +170,9 @@ pub enum PowerState {
 }
 
 /// Current state when the SP is preparing to apply an update.
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct UpdatePreparationStatus {
     pub id: UpdateId,
     pub progress: Option<UpdatePreparationProgress>,
@@ -173,20 +184,26 @@ pub struct UpdatePreparationStatus {
 /// defined in some SP-specific unit. `current` should advance toward `total`;
 /// once `current == total` preparation is complete, and the SP should return
 /// `UpdateStatus::InProgress` instead.
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct UpdatePreparationProgress {
     pub current: u32,
     pub total: u32,
 }
 
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct UpdateInProgressStatus {
     pub id: UpdateId,
     pub bytes_received: u32,
     pub total_size: u32,
 }
 
-#[derive(Debug, Clone, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub enum ResponseKind {
     Discover(DiscoverResponse),
     IgnitionState(IgnitionState),
@@ -209,7 +226,9 @@ pub enum ResponseKind {
     // acks to be sent.
 }
 
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct DiscoverResponse {
     /// Which SP port received the `Discover` request.
     pub sp_port: SpPort,
@@ -218,19 +237,25 @@ pub struct DiscoverResponse {
 // TODO how is this reported? Same/different for components?
 pub type SerialNumber = [u8; 16];
 
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct SpState {
     pub serial_number: SerialNumber,
     pub version: u32,
 }
 
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub enum ResponseError {
     /// The SP is busy; retry the request mometarily.
     ///
     /// E.g., the request requires communicating on a USART whose FIFO is
     /// currently full.
     Busy,
+    /// The request from MGS was invalid.
+    BadRequest(BadRequestReason),
     /// The [`RequestKind`] is not supported by the receiving SP; e.g., asking an
     /// SP without an attached ignition controller for ignition state.
     RequestUnsupportedForSp,
@@ -279,6 +304,9 @@ impl fmt::Display for ResponseError {
         match self {
             ResponseError::Busy => {
                 write!(f, "SP busy")
+            }
+            ResponseError::BadRequest(reason) => {
+                write!(f, "bad request: {reason:?}")
             }
             ResponseError::RequestUnsupportedForSp => {
                 write!(f, "unsupported request for this SP")
@@ -336,15 +364,31 @@ impl fmt::Display for ResponseError {
 #[cfg(feature = "std")]
 impl std::error::Error for ResponseError {}
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum BadRequestReason {
+    /// The [`Request::version`] field did not match what we expected.
+    WrongVersion { sp: u32, request: u32 },
+    /// The message had unexpected trailing data.
+    UnexpectedTrailingData,
+    /// The message failed to deserialize.
+    DeserializationError,
+}
+
 /// Messages from an SP to a gateway. Includes both responses to [`Request`]s as
 /// well as SP-initiated messages like serial console output.
-#[derive(Debug, Clone, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct SpMessage {
     pub version: u32,
     pub kind: SpMessageKind,
 }
 
-#[derive(Debug, Clone, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub enum SpMessageKind {
     // TODO: Is only sending the new state sufficient?
     // IgnitionChange { target: u8, new_state: IgnitionState },
@@ -640,8 +684,10 @@ mod tests {
     #[test]
     fn test_serialize_with_trailing_data() {
         let mut out = [0; MAX_SERIALIZED_SIZE];
-        let header =
-            Request { version: 1, request_id: 2, kind: RequestKind::Discover };
+        let header = Request {
+            header: RequestHeader { version: 1, request_id: 2 },
+            kind: RequestKind::Discover,
+        };
         let data_vecs = &[
             vec![0; 256],
             vec![1; 256],
