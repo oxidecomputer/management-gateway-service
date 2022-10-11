@@ -5,6 +5,7 @@
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 
 pub mod sp_impl;
+pub mod tlv;
 
 use bitflags::bitflags;
 use core::fmt;
