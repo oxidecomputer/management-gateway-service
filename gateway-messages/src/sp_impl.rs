@@ -4,10 +4,13 @@
 
 //! Behavior implemented by both real and simulated SPs.
 
+use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
 use crate::BulkIgnitionState;
 use crate::ComponentUpdatePrepare;
+use crate::DeviceInventoryPage;
+use crate::DevicePresence;
 use crate::DiscoverResponse;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
@@ -16,6 +19,7 @@ use crate::RequestHeader;
 use crate::RequestKind;
 use crate::ResponseError;
 use crate::ResponseKind;
+use crate::SerializedSize;
 use crate::SpComponent;
 use crate::SpMessage;
 use crate::SpMessageKind;
@@ -36,6 +40,26 @@ use std::net::SocketAddrV6;
 pub struct SocketAddrV6 {
     pub ip: smoltcp::wire::Ipv6Address,
     pub port: u16,
+}
+
+/// Description of a device as reported as part of this SP's inventory.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct DeviceDescription<'a> {
+    pub device: &'a str,
+    pub description: &'a str,
+    pub num_measurement_channels: u32,
+    pub presence: DevicePresence,
+}
+
+impl From<DeviceDescription<'_>> for crate::DeviceDescription {
+    fn from(dev: DeviceDescription<'_>) -> Self {
+        Self {
+            device_len: dev.device.len() as u32,
+            description_len: dev.description.len() as u32,
+            num_measurement_channels: dev.num_measurement_channels,
+            presence: dev.presence,
+        }
+    }
 }
 
 pub trait SpHandler {
@@ -158,6 +182,21 @@ pub trait SpHandler {
         sender: SocketAddrV6,
         port: SpPort,
     ) -> Result<Infallible, ResponseError>;
+
+    /// Number of devices returned in the inventory of this SP.
+    fn num_devices(&mut self, sender: SocketAddrV6, port: SpPort) -> u32;
+
+    /// Get the description for the given device.
+    ///
+    /// This function should never fail, as the device inventory should be
+    /// static. Acquiring the presence of a device may fail, but that should be
+    /// indicated inline via the returned description's `presence` field.
+    ///
+    /// # Panics
+    ///
+    /// Implementors are allowed to panic if `index` is not in range (i.e., is
+    /// greater than or equal to the value returned by `num_devices()`).
+    fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
 }
 
 /// Unpack the 2-byte length-prefixed trailing data that comes after some
@@ -196,9 +235,12 @@ pub fn handle_message<H: SpHandler>(
     // If we were able to peel off the header, chain the rest of the data
     // then chain the rest of the data
     // through to the handler.
-    let result = result.and_then(|request_kind_data| {
-        handle_message_impl(sender, port, request_kind_data, handler)
-    });
+    let (result, outgoing_trailing_data) = match result {
+        Ok(request_kind_data) => {
+            handle_message_impl(sender, port, request_kind_data, handler)
+        }
+        Err(err) => (Err(err), None),
+    };
 
     // We control `SpMessage` and know all cases can successfully serialize
     // into `self.buf`.
@@ -209,10 +251,84 @@ pub fn handle_message<H: SpHandler>(
 
     // We know `response` is well-formed and fits into `out` (since it's
     // statically sized for `SpMessage`), so we can unwrap serialization.
-    match hubpack::serialize(&mut out[..], &response) {
+    let mut n = match hubpack::serialize(&mut out[..], &response) {
         Ok(n) => n,
         Err(_) => panic!(),
+    };
+
+    // Append any outgoing trailing data.
+    n += match outgoing_trailing_data {
+        Some(OutgoingTrailingData::DeviceInventory {
+            device_index,
+            total_devices,
+        }) => encode_device_inventory(
+            &mut out[n..],
+            device_index,
+            total_devices,
+            handler,
+        ),
+        None => 0,
+    };
+
+    n
+}
+
+/// Pack as many device description TLV triples as we can into `out`, starting
+/// at `device_index`.
+fn encode_device_inventory<H: SpHandler>(
+    mut out: &mut [u8],
+    mut device_index: u32,
+    total_devices: u32,
+    handler: &mut H,
+) -> usize {
+    use crate::DeviceDescription as DeviceDescriptionHeader;
+
+    let mut total_tlv_len = 0;
+    while device_index < total_devices {
+        let dev = handler.device_description(device_index);
+
+        // Will the serialized description of this device fit in `out`?
+        let len = tlv::tlv_len(
+            DeviceDescriptionHeader::MAX_SIZE
+                + dev.device.len()
+                + dev.description.len(),
+        );
+        if len > out.len() {
+            break;
+        }
+
+        // It will fit: serialize and encode it.
+        match tlv::encode::<_, Infallible>(
+            out,
+            DeviceDescriptionHeader::TAG,
+            |buf| {
+                let header = DeviceDescriptionHeader::from(dev);
+                // We know our buffer is large enough from our length check
+                // above, so this serialization can't fail.
+                let mut n = hubpack::serialize(buf, &header).unwrap();
+
+                // Pack in the device and description
+                for s in [dev.device, dev.description] {
+                    buf[n..][..s.len()].copy_from_slice(s.as_bytes());
+                    n += s.len();
+                }
+
+                Ok(n)
+            },
+        ) {
+            Ok(n) => {
+                total_tlv_len += n;
+                out = &mut out[n..];
+            }
+            // We checked the length above; this error isn't possible.
+            Err(tlv::EncodeError::BufferTooSmall) => panic!(),
+            Err(tlv::EncodeError::Custom(infallible)) => match infallible {},
+        }
+
+        device_index += 1;
     }
+
+    total_tlv_len
 }
 
 /// Read the request header from the front of `data`, returning the request ID
@@ -249,42 +365,68 @@ fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], ResponseError>) {
 
 /// Parses the remainder of a request (after `version` and `request_id`, which
 /// are handled by `read_request_header`) and calls `handler`.
+///
+/// If the response kind needs to generate trailing data, returns `(Ok(_),
+/// Some(_)`, and our caller is resposnible for handling that generation.
+/// Otherwise, returns `(result, None)`.
 fn handle_message_impl<H: SpHandler>(
     sender: SocketAddrV6,
     port: SpPort,
     request_kind_data: &[u8],
     handler: &mut H,
-) -> Result<ResponseKind, ResponseError> {
-    let (kind, leftover) = hubpack::deserialize::<RequestKind>(
-        request_kind_data,
-    )
-    .map_err(|_| {
-        ResponseError::BadRequest(BadRequestReason::DeserializationError)
-    })?;
+) -> (Result<ResponseKind, ResponseError>, Option<OutgoingTrailingData>) {
+    let (kind, leftover) =
+        match hubpack::deserialize::<RequestKind>(request_kind_data) {
+            Ok((kind, leftover)) => (kind, leftover),
+            Err(_) => {
+                return (
+                    Err(ResponseError::BadRequest(
+                        BadRequestReason::DeserializationError,
+                    )),
+                    None,
+                );
+            }
+        };
 
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
     let trailing_data = match &kind {
         RequestKind::UpdateChunk(_)
         | RequestKind::SerialConsoleWrite { .. } => {
-            unpack_trailing_data(leftover).map_err(|_| {
-                ResponseError::BadRequest(
-                    BadRequestReason::DeserializationError,
-                )
-            })?
+            match unpack_trailing_data(leftover) {
+                Ok(trailing_data) => trailing_data,
+                Err(_) => {
+                    return (
+                        Err(ResponseError::BadRequest(
+                            BadRequestReason::DeserializationError,
+                        )),
+                        None,
+                    );
+                }
+            }
         }
         _ => {
             if !leftover.is_empty() {
-                return Err(ResponseError::BadRequest(
-                    BadRequestReason::UnexpectedTrailingData,
-                ));
+                return (
+                    Err(ResponseError::BadRequest(
+                        BadRequestReason::UnexpectedTrailingData,
+                    )),
+                    None,
+                );
             }
             &[]
         }
     };
 
-    // call out to handler to provide response
-    match kind {
+    // Call out to handler to provide response.
+    //
+    // The vast majority of response kinds do not need to pack additional
+    // trailing data in, so instead of having our match return `(result,
+    // outgoing_trailing_data)`, we'll use a mutable `outgoing_trailing_data`
+    // here that defaults to `None`, and only set it to `Some(_)` in the odd arm
+    // that needs it.
+    let mut outgoing_trailing_data = None;
+    let result = match kind {
         RequestKind::Discover => {
             handler.discover(sender, port).map(ResponseKind::Discover)
         }
@@ -345,7 +487,29 @@ fn handle_message_impl<H: SpHandler>(
                 match infallible {}
             })
         }
-    }
+        RequestKind::Inventory { device_index } => {
+            let total_devices = handler.num_devices(sender, port);
+            // If a caller asks for an index past our end, clamp it.
+            let device_index = u32::min(device_index, total_devices);
+            // We need to pack TLV-encoded device descriptions as our outgoing
+            // trailing data.
+            outgoing_trailing_data =
+                Some(OutgoingTrailingData::DeviceInventory {
+                    device_index,
+                    total_devices,
+                });
+            Ok(ResponseKind::Inventory(DeviceInventoryPage {
+                device_index,
+                total_devices,
+            }))
+        }
+    };
+
+    (result, outgoing_trailing_data)
+}
+
+enum OutgoingTrailingData {
+    DeviceInventory { device_index: u32, total_devices: u32 },
 }
 
 #[cfg(test)]
@@ -507,6 +671,14 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<Infallible, ResponseError> {
+            todo!()
+        }
+
+        fn num_devices(&mut self, _sender: SocketAddrV6, _port: SpPort) -> u32 {
+            todo!()
+        }
+
+        fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
             todo!()
         }
     }

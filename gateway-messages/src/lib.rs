@@ -84,6 +84,10 @@ pub enum RequestKind {
     SetPowerState(PowerState),
     ResetPrepare,
     ResetTrigger,
+    /// Get the device inventory of the SP, starting with `device_index`.
+    Inventory {
+        device_index: u32,
+    },
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -170,6 +174,62 @@ pub enum PowerState {
     A2,
 }
 
+/// Metadata describing the set of device descriptions present in this response.
+///
+/// Followed by trailing data containing a sequence of [`tlv`]-encoded
+/// [`DeviceDescription`]s.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct DeviceInventoryPage {
+    /// First device index present in this response.
+    pub device_index: u32,
+    /// Total number of devices present on the SP.
+    pub total_devices: u32,
+}
+
+/// Description of a single device.
+///
+/// Always packed into a [`tlv`] triple containing:
+///
+/// ```text
+/// [
+///     DeviceDescription::TAG
+///     | length
+///     | hubpack-serialized DeviceDescription
+///     | device
+///     | description
+/// ]
+/// ```
+///
+/// where `device` and `description` are UTF8 strings whose lengths are included
+/// in the `DeviceDescription`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct DeviceDescription {
+    pub device_len: u32,
+    pub description_len: u32,
+    pub num_measurement_channels: u32,
+    pub presence: DevicePresence,
+}
+
+impl DeviceDescription {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"DSC0");
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum DevicePresence {
+    Present,
+    NotPresent,
+    Failed,
+    Unavailable,
+    Timeout,
+    Error,
+}
+
 /// Current state when the SP is preparing to apply an update.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
@@ -217,7 +277,9 @@ pub enum ResponseKind {
     UpdateStatus(UpdateStatus),
     UpdateAbortAck,
     SerialConsoleAttachAck,
-    SerialConsoleWriteAck { furthest_ingested_offset: u64 },
+    SerialConsoleWriteAck {
+        furthest_ingested_offset: u64,
+    },
     SerialConsoleDetachAck,
     PowerState(PowerState),
     SetPowerStateAck,
@@ -225,6 +287,9 @@ pub enum ResponseKind {
     // There is intentionally no `ResetTriggerAck` response; the expected
     // "response" to `ResetTrigger` is an SP reset, which won't allow for
     // acks to be sent.
+    /// An `Inventory` response is followed by a TLV-encoded set of device
+    /// descriptions. See TODO FIXME for details.
+    Inventory(DeviceInventoryPage),
 }
 
 #[derive(
@@ -625,7 +690,7 @@ impl GatewayMessage for SpMessage {}
 impl private::Sealed for Request {}
 impl private::Sealed for SpMessage {}
 
-// `GatewayMessage` imlementers can be followed by binary data; we want the
+// `GatewayMessage` implementers can be followed by binary data; we want the
 // majority of our packet to be available for that data. Statically check that
 // our serialized message headers haven't gotten too large. The specific value
 // here is arbitrary; if this check starts failing, it's probably fine to reduce
