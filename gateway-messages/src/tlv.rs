@@ -39,6 +39,11 @@ struct Header {
     length: U32<LittleEndian>,
 }
 
+/// Length of a TLV triple for a value of the given length.
+pub const fn tlv_len(value_len: usize) -> usize {
+    value_len + mem::size_of::<Header>()
+}
+
 /// Encode a tag/length/value into `out`, returning the number of bytes of `out`
 /// used to encode the triple.
 ///
@@ -141,13 +146,13 @@ mod tests {
         let value = b"hello world";
 
         let n = encode(&mut buf, TAG, |out| {
-            assert_eq!(out.len(), BUF_LEN - 8);
+            assert_eq!(out.len(), BUF_LEN - tlv_len(0));
             out[..value.len()].copy_from_slice(value);
             Ok::<_, Infallible>(value.len())
         })
         .unwrap();
 
-        assert_eq!(n, 8 + value.len());
+        assert_eq!(n, tlv_len(value.len()));
 
         // Give decode just the encoded triple.
         let (tag, decoded_value, rest) = decode(&buf[..n]).unwrap();
@@ -165,14 +170,14 @@ mod tests {
     #[test]
     fn encode_errors() {
         // Buffer too small for header.
-        let mut buf = [0; 7];
+        let mut buf = [0; tlv_len(0) - 1];
         let err =
             encode(&mut buf, Tag(*b"aaaa"), |_| panic!("should not be called"))
                 .unwrap_err();
         assert_eq!(err, EncodeError::<Infallible>::BufferTooSmall);
 
         // Value closure returns an error.
-        let mut buf = [0; 8];
+        let mut buf = [0; tlv_len(0)];
         let err = encode(&mut buf, Tag(*b"aaaa"), |_| Err(12345)).unwrap_err();
         assert_eq!(err, EncodeError::<i32>::Custom(12345));
     }
@@ -181,14 +186,14 @@ mod tests {
     #[should_panic = "assertion failed"]
     fn encode_lying_value_closure() {
         // Value claims to use 10 bytes, but 0 were available.
-        let mut buf = [0; 8];
+        let mut buf = [0; tlv_len(0)];
         let _ = encode::<_, Infallible>(&mut buf, Tag(*b"aaaa"), |_| Ok(10));
     }
 
     #[test]
     fn decode_errors() {
         // Buffer too small for header.
-        let buf = [0; 7];
+        let buf = [0; tlv_len(0) - 1];
         let err = decode(&buf).unwrap_err();
         assert_eq!(err, DecodeError::BufferTooSmall);
 
@@ -218,7 +223,7 @@ mod tests {
 
         assert_eq!(
             n,
-            tag_values.iter().map(|(_tag, value)| 8 + value.len()).sum()
+            tag_values.iter().map(|(_tag, value)| tlv_len(value.len())).sum()
         );
 
         let decoded =
