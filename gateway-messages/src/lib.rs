@@ -9,7 +9,6 @@ pub mod tlv;
 
 use bitflags::bitflags;
 use core::fmt;
-use core::mem;
 use core::str;
 use serde::Deserialize;
 use serde::Serialize;
@@ -736,10 +735,7 @@ where
     // than `MAX_SERIALIZED_SIZE`. They cannot fail to serialize for any reason
     // other than an undersized buffer, so we can unwrap here.
     let n = hubpack::serialize(out, header).unwrap();
-    let out = &mut out[n..];
-
-    // Split `out` into a 2-byte length prefix and the remainder of the buffer.
-    let (length_prefix, mut out) = out.split_at_mut(mem::size_of::<u16>());
+    let mut out = &mut out[n..];
 
     let mut nwritten = 0;
     for &data in data_slices {
@@ -753,10 +749,7 @@ where
         }
     }
 
-    // Fill in the length prefix with the amount of data we copied into `out`.
-    length_prefix.copy_from_slice(&(nwritten as u16).to_le_bytes());
-
-    (n + mem::size_of::<u16>() + nwritten, nwritten)
+    (n + nwritten, nwritten)
 }
 
 #[cfg(test)]
@@ -790,8 +783,6 @@ mod tests {
 
         let (deserialized_header, remainder) =
             deserialize::<Request>(&out).unwrap();
-
-        let remainder = sp_impl::unpack_trailing_data(remainder).unwrap();
 
         assert_eq!(header, deserialized_header);
         assert_eq!(remainder.len(), nwritten);

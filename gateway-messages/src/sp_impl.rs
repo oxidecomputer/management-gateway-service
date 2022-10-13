@@ -30,7 +30,6 @@ use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
 use core::convert::Infallible;
-use core::mem;
 
 #[cfg(feature = "std")]
 use std::net::SocketAddrV6;
@@ -197,20 +196,6 @@ pub trait SpHandler {
     /// Implementors are allowed to panic if `index` is not in range (i.e., is
     /// greater than or equal to the value returned by `num_devices()`).
     fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
-}
-
-/// Unpack the 2-byte length-prefixed trailing data that comes after some
-/// packets (e.g., update chunks, serial console).
-pub fn unpack_trailing_data(data: &[u8]) -> hubpack::error::Result<&[u8]> {
-    if data.len() < mem::size_of::<u16>() {
-        return Err(hubpack::error::Error::Truncated);
-    }
-    let (prefix, data) = data.split_at(mem::size_of::<u16>());
-    let len = u16::from_le_bytes([prefix[0], prefix[1]]);
-    if data.len() != usize::from(len) {
-        return Err(hubpack::error::Error::Invalid);
-    }
-    Ok(data)
 }
 
 /// Handle a single incoming message.
@@ -392,19 +377,7 @@ fn handle_message_impl<H: SpHandler>(
     // if we get any for other messages, bail out.
     let trailing_data = match &kind {
         RequestKind::UpdateChunk(_)
-        | RequestKind::SerialConsoleWrite { .. } => {
-            match unpack_trailing_data(leftover) {
-                Ok(trailing_data) => trailing_data,
-                Err(_) => {
-                    return (
-                        Err(ResponseError::BadRequest(
-                            BadRequestReason::DeserializationError,
-                        )),
-                        None,
-                    );
-                }
-            }
-        }
+        | RequestKind::SerialConsoleWrite { .. } => leftover,
         _ => {
             if !leftover.is_empty() {
                 return (
