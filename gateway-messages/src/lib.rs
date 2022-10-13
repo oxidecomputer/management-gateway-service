@@ -690,13 +690,29 @@ impl GatewayMessage for SpMessage {}
 impl private::Sealed for Request {}
 impl private::Sealed for SpMessage {}
 
+/// Minimum guaranteed space for trailing data in a [`Request`] packet.
+///
+/// Depending on the [`Request`] payload, there may be more space for trailing
+/// data than indicated by this constant; this specifies the minimum amount
+/// available regardless of the request type.
+pub const MIN_REQUEST_TRAILING_TRAILING_DATA_LEN: usize =
+    MAX_SERIALIZED_SIZE - Request::MAX_SIZE;
+
+/// Minimum guaranteed space for trailing data in an [`SpMessage`] packet.
+///
+/// Depending on the [`SpMessage`] payload, there may be more space for trailing
+/// data than indicated by this constant; this specifies the minimum amount
+/// available regardless of the message type.
+pub const MIN_SP_MESSAGE_TRAILING_TRAILING_DATA_LEN: usize =
+    MAX_SERIALIZED_SIZE - SpMessage::MAX_SIZE;
+
 // `GatewayMessage` implementers can be followed by binary data; we want the
 // majority of our packet to be available for that data. Statically check that
 // our serialized message headers haven't gotten too large. The specific value
 // here is arbitrary; if this check starts failing, it's probably fine to reduce
 // it some. The check is here to force us to think about it.
-const_assert!(MAX_SERIALIZED_SIZE - Request::MAX_SIZE > 700);
-const_assert!(MAX_SERIALIZED_SIZE - SpMessage::MAX_SIZE > 700);
+const_assert!(MIN_REQUEST_TRAILING_TRAILING_DATA_LEN > 700);
+const_assert!(MIN_SP_MESSAGE_TRAILING_TRAILING_DATA_LEN > 700);
 
 /// Returns `(serialized_size, data_bytes_written)` where `serialized_size` is
 /// the message size written to `out` and `data_bytes_written` is the number of
