@@ -27,6 +27,10 @@ pub enum SpCommunicationError {
     SpError(#[from] ResponseError),
     #[error("Bogus serial console state; detach and reattach")]
     BogusSerialConsoleState,
+    #[error("SP claimed more inventory devices than we can accept")]
+    InventoryTooLarge,
+    #[error("Invalid inventory pagination state")]
+    InvalidInventoryPagination,
 }
 
 #[derive(Debug, Error)]

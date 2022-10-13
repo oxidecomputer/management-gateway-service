@@ -11,8 +11,11 @@ use crate::error::BadResponseType;
 use crate::error::SpCommunicationError;
 use crate::error::UpdateError;
 use backoff::backoff::Backoff;
+use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::BulkIgnitionState;
+use gateway_messages::DeviceDescription;
+use gateway_messages::DevicePresence;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
@@ -29,6 +32,7 @@ use gateway_messages::SpState;
 use gateway_messages::UpdateStatus;
 use slog::debug;
 use slog::error;
+use slog::info;
 use slog::trace;
 use slog::warn;
 use slog::Logger;
@@ -38,6 +42,7 @@ use std::io::SeekFrom;
 use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV6;
+use std::str;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -63,7 +68,32 @@ pub const DISCOVERY_MULTICAST_ADDR: Ipv6Addr =
 // TODO-correctness/TODO-security What do we do if the SP address changes?
 const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 
+// Minor "malicious / misbehaving SP" denial of service protection: When we ask
+// the SP for its inventory, we get back a response indicating the total number
+// of devices the SP has. We then repeatedly call the SP to fetch all of those
+// devices (getting back multiple devices per call, hopefully, but that's fully
+// in the SP's control). The number of devices is a u32; if an SP claimed to
+// have an absurdly large number, we'd be stuck fetching that many devices (and
+// building up a Vec of them in memory). We set a "we never expect this many
+// devices" cap here; 1024 is over 10x our current gimlet rev-c device count, so
+// this should be plenty of buffer. If it needs to increase in the future, that
+// will require an MGS update.
+const INVENTORY_TOTAL_DEVICE_DOS_LIMIT: u32 = 1024;
+
 type Result<T, E = SpCommunicationError> = std::result::Result<T, E>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpInventory {
+    pub devices: Vec<SpDevice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpDevice {
+    pub device: String,
+    pub description: String,
+    pub num_measurement_channels: u32,
+    pub presence: DevicePresence,
+}
 
 #[derive(Debug)]
 pub struct SingleSp {
@@ -165,6 +195,59 @@ impl SingleSp {
                 response.expect_sp_state().map_err(Into::into)
             },
         )
+    }
+
+    /// Request the inventory of the SP.
+    pub async fn inventory(&self) -> Result<SpInventory> {
+        // We don't know the total devices until we've requested the first page;
+        // we'll set this to `Some(_)` in the first iteration of the loop below.
+        let mut page0_total_devices = None;
+        let mut devices = Vec::new();
+
+        while devices.len() < page0_total_devices.unwrap_or(usize::MAX) {
+            // Index of the first device we want to fetch.
+            let device_index = devices.len() as u32;
+
+            let (page, data) = self
+                .rpc(RequestKind::Inventory { device_index })
+                .await
+                .and_then(|(_peer, response, data)| {
+                    response
+                        .expect_inventory()
+                        .map_err(Into::into)
+                        .map(|response| (response, data))
+                })?;
+
+            // Double-check the numbers we got were reasonable: did we get the
+            // page we asked for, and is the total_devices correct? If this is
+            // the first page, "correct" just means "reasonable"; if this is the
+            // second or later page, it should match every other page.
+            if page.device_index != device_index {
+                return Err(SpCommunicationError::InvalidInventoryPagination);
+            }
+            let total_devices = if let Some(n) = page0_total_devices {
+                if n != page.total_devices as usize {
+                    return Err(
+                        SpCommunicationError::InvalidInventoryPagination,
+                    );
+                }
+                n
+            } else {
+                if page.total_devices > INVENTORY_TOTAL_DEVICE_DOS_LIMIT {
+                    return Err(SpCommunicationError::InventoryTooLarge);
+                }
+                let n = page.total_devices as usize;
+                devices.reserve_exact(n);
+                page0_total_devices = Some(n);
+                n
+            };
+
+            // Response metadata checks out; decode the trailing data as a
+            // sequence of TLV-encoded device descriptions.
+            decode_tlv_devices(&mut devices, total_devices, &data, &self.log)?;
+        }
+
+        Ok(SpInventory { devices })
     }
 
     /// Update a component of the SP (or the SP itself!).
@@ -332,6 +415,70 @@ impl SingleSp {
     ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
         rpc(&self.cmds_tx, kind, None).await.result
     }
+}
+
+// Helper function to unpack an inventory page packet's TLV device
+// descriptions into `out`.
+fn decode_tlv_devices(
+    out: &mut Vec<SpDevice>,
+    total_devices: usize,
+    data: &[u8],
+    log: &Logger,
+) -> Result<()> {
+    for result in tlv::decode_iter(data) {
+        // Is the TLV chunk valid?
+        let (tag, value) = result
+            .map_err(|_| SpCommunicationError::InvalidInventoryPagination)?;
+
+        // Are we expecting this chunk?
+        if out.len() >= total_devices {
+            return Err(SpCommunicationError::InvalidInventoryPagination);
+        }
+
+        // Do we know how to interpret this tag?
+        match tag {
+            DeviceDescription::TAG => {
+                // Peel header out of the value.
+                let (header, data) =
+                    gateway_messages::deserialize::<DeviceDescription>(value)
+                        .map_err(|_| {
+                        SpCommunicationError::InvalidInventoryPagination
+                    })?;
+
+                // Make sure the data length matches the header's claims.
+                let device_len = header.device_len as usize;
+                let description_len = header.description_len as usize;
+                if data.len() != device_len.saturating_add(description_len) {
+                    return Err(
+                        SpCommunicationError::InvalidInventoryPagination,
+                    );
+                }
+
+                // Interpret the data as UTF8.
+                let device =
+                    str::from_utf8(&data[..device_len]).map_err(|_| {
+                        SpCommunicationError::InvalidInventoryPagination
+                    })?;
+                let description =
+                    str::from_utf8(&data[device_len..]).map_err(|_| {
+                        SpCommunicationError::InvalidInventoryPagination
+                    })?;
+
+                out.push(SpDevice {
+                    device: device.to_string(),
+                    description: description.to_string(),
+                    num_measurement_channels: header.num_measurement_channels,
+                    presence: header.presence,
+                });
+            }
+            _ => {
+                info!(log, "skipping unknown device description tag {tag:?}");
+                continue;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn rpc_with_trailing_data(
