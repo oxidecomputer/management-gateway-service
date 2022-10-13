@@ -11,6 +11,7 @@ serde-big-array = "0.4.1"
 serde_repr = { version = "0.1" }
 static_assertions = "1.1.0"
 uuid = { version = "1.1", default-features = false }
+zerocopy = "0.6.1"
 
 hubpack = { git = "https://github.com/cbiffle/hubpack", rev = "df08cc3a6e1f97381cd0472ae348e310f0119e25" }
 
