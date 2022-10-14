@@ -18,6 +18,7 @@ use futures::stream::FuturesUnordered;
 use futures::Future;
 use futures::Stream;
 use gateway_messages::BulkIgnitionState;
+use gateway_messages::DeviceInventoryPage;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
@@ -370,6 +371,8 @@ pub(crate) trait ResponseKindExt {
     fn expect_set_power_state_ack(self) -> Result<(), BadResponseType>;
 
     fn expect_sys_reset_prepare_ack(self) -> Result<(), BadResponseType>;
+
+    fn expect_inventory(self) -> Result<DeviceInventoryPage, BadResponseType>;
 }
 
 impl ResponseKindExt for ResponseKind {
@@ -415,6 +418,7 @@ impl ResponseKindExt for ResponseKind {
             ResponseKind::ResetPrepareAck => {
                 response_kind_names::RESET_PREPARE_ACK
             }
+            ResponseKind::Inventory(_) => response_kind_names::INVENTORY,
         }
     }
 
@@ -583,6 +587,16 @@ impl ResponseKindExt for ResponseKind {
             }),
         }
     }
+
+    fn expect_inventory(self) -> Result<DeviceInventoryPage, BadResponseType> {
+        match self {
+            ResponseKind::Inventory(page) => Ok(page),
+            other => Err(BadResponseType {
+                expected: response_kind_names::INVENTORY,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -606,4 +620,5 @@ mod response_kind_names {
     pub(super) const POWER_STATE: &str = "power_state";
     pub(super) const SET_POWER_STATE_ACK: &str = "set_power_state_ack";
     pub(super) const RESET_PREPARE_ACK: &str = "reset_prepare_ack";
+    pub(super) const INVENTORY: &str = "inventory";
 }

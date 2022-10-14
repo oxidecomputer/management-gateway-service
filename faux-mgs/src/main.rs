@@ -100,6 +100,9 @@ enum SpCommand {
     /// Ask SP for its current state.
     State,
 
+    /// Ask SP for its inventory.
+    Inventory,
+
     /// Attach to the SP's USART.
     UsartAttach {
         /// Put the local terminal in raw mode.
@@ -245,6 +248,22 @@ async fn main() -> Result<()> {
         }
         Some(SpCommand::State) => {
             info!(log, "{:?}", sp.state().await?);
+        }
+        Some(SpCommand::Inventory) => {
+            let inventory = sp.inventory().await?;
+            println!(
+                "{:<12} {:>10} {:<16} {:<}",
+                "STATUS", "MEAS.CHAN.", "DEVICE", "DESCRIPTION"
+            );
+            for d in inventory.devices {
+                println!(
+                    "{:<12} {:>10} {:<16} {:<}",
+                    format!("{:?}", d.presence),
+                    d.num_measurement_channels,
+                    d.device,
+                    d.description
+                );
+            }
         }
         Some(SpCommand::UsartAttach { raw, stdin_buffer_time_millis }) => {
             usart::run(

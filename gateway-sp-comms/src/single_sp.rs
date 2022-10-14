@@ -11,9 +11,11 @@ use crate::error::BadResponseType;
 use crate::error::SpCommunicationError;
 use crate::error::UpdateError;
 use backoff::backoff::Backoff;
-use gateway_messages::sp_impl;
+use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::BulkIgnitionState;
+use gateway_messages::DeviceDescriptionHeader;
+use gateway_messages::DevicePresence;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
@@ -30,6 +32,7 @@ use gateway_messages::SpState;
 use gateway_messages::UpdateStatus;
 use slog::debug;
 use slog::error;
+use slog::info;
 use slog::trace;
 use slog::warn;
 use slog::Logger;
@@ -39,6 +42,7 @@ use std::io::SeekFrom;
 use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV6;
+use std::str;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -64,7 +68,32 @@ pub const DISCOVERY_MULTICAST_ADDR: Ipv6Addr =
 // TODO-correctness/TODO-security What do we do if the SP address changes?
 const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 
+// Minor "malicious / misbehaving SP" denial of service protection: When we ask
+// the SP for its inventory, we get back a response indicating the total number
+// of devices the SP has. We then repeatedly call the SP to fetch all of those
+// devices (getting back multiple devices per call, hopefully, but that's fully
+// in the SP's control). The number of devices is a u32; if an SP claimed to
+// have an absurdly large number, we'd be stuck fetching that many devices (and
+// building up a Vec of them in memory). We set a "we never expect this many
+// devices" cap here; 1024 is over 10x our current gimlet rev-c device count, so
+// this should be plenty of buffer. If it needs to increase in the future, that
+// will require an MGS update.
+const INVENTORY_TOTAL_DEVICE_DOS_LIMIT: u32 = 1024;
+
 type Result<T, E = SpCommunicationError> = std::result::Result<T, E>;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpInventory {
+    pub devices: Vec<SpDevice>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SpDevice {
+    pub device: String,
+    pub description: String,
+    pub num_measurement_channels: u32,
+    pub presence: DevicePresence,
+}
 
 #[derive(Debug)]
 pub struct SingleSp {
@@ -127,7 +156,7 @@ impl SingleSp {
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_state(&self, target: u8) -> Result<IgnitionState> {
         self.rpc(RequestKind::IgnitionState { target }).await.and_then(
-            |(_peer, response)| {
+            |(_peer, response, _data)| {
                 response.expect_ignition_state().map_err(Into::into)
             },
         )
@@ -138,7 +167,7 @@ impl SingleSp {
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn bulk_ignition_state(&self) -> Result<BulkIgnitionState> {
         self.rpc(RequestKind::BulkIgnitionState).await.and_then(
-            |(_peer, response)| {
+            |(_peer, response, _data)| {
                 response.expect_bulk_ignition_state().map_err(Into::into)
             },
         )
@@ -154,16 +183,71 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(RequestKind::IgnitionCommand { target, command })
             .await
-            .and_then(|(_peer, response)| {
+            .and_then(|(_peer, response, _data)| {
                 response.expect_ignition_command_ack().map_err(Into::into)
             })
     }
 
     /// Request the state of the SP.
     pub async fn state(&self) -> Result<SpState> {
-        self.rpc(RequestKind::SpState).await.and_then(|(_peer, response)| {
-            response.expect_sp_state().map_err(Into::into)
-        })
+        self.rpc(RequestKind::SpState).await.and_then(
+            |(_peer, response, _data)| {
+                response.expect_sp_state().map_err(Into::into)
+            },
+        )
+    }
+
+    /// Request the inventory of the SP.
+    pub async fn inventory(&self) -> Result<SpInventory> {
+        // We don't know the total devices until we've requested the first page;
+        // we'll set this to `Some(_)` in the first iteration of the loop below.
+        let mut page0_total_devices = None;
+        let mut devices = Vec::new();
+
+        while devices.len() < page0_total_devices.unwrap_or(usize::MAX) {
+            // Index of the first device we want to fetch.
+            let device_index = devices.len() as u32;
+
+            let (page, data) = self
+                .rpc(RequestKind::Inventory { device_index })
+                .await
+                .and_then(|(_peer, response, data)| {
+                    response
+                        .expect_inventory()
+                        .map_err(Into::into)
+                        .map(|response| (response, data))
+                })?;
+
+            // Double-check the numbers we got were reasonable: did we get the
+            // page we asked for, and is the total_devices correct? If this is
+            // the first page, "correct" just means "reasonable"; if this is the
+            // second or later page, it should match every other page.
+            if page.device_index != device_index {
+                return Err(SpCommunicationError::InvalidInventoryPagination);
+            }
+            let total_devices = if let Some(n) = page0_total_devices {
+                if n != page.total_devices as usize {
+                    return Err(
+                        SpCommunicationError::InvalidInventoryPagination,
+                    );
+                }
+                n
+            } else {
+                if page.total_devices > INVENTORY_TOTAL_DEVICE_DOS_LIMIT {
+                    return Err(SpCommunicationError::InventoryTooLarge);
+                }
+                let n = page.total_devices as usize;
+                devices.reserve_exact(n);
+                page0_total_devices = Some(n);
+                n
+            };
+
+            // Response metadata checks out; decode the trailing data as a
+            // sequence of TLV-encoded device descriptions.
+            decode_tlv_devices(&mut devices, total_devices, &data, &self.log)?;
+        }
+
+        Ok(SpInventory { devices })
     }
 
     /// Update a component of the SP (or the SP itself!).
@@ -225,7 +309,7 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(RequestKind::UpdateAbort { component, id: update_id.into() })
             .await
-            .and_then(|(_peer, response)| {
+            .and_then(|(_peer, response, _data)| {
                 response.expect_update_abort_ack().map_err(Into::into)
             })
     }
@@ -233,7 +317,7 @@ impl SingleSp {
     /// Get the current power state.
     pub async fn power_state(&self) -> Result<PowerState> {
         self.rpc(RequestKind::GetPowerState).await.and_then(
-            |(_peer, response)| {
+            |(_peer, response, _data)| {
                 response.expect_power_state().map_err(Into::into)
             },
         )
@@ -242,7 +326,7 @@ impl SingleSp {
     /// Set the current power state.
     pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
         self.rpc(RequestKind::SetPowerState(power_state)).await.and_then(
-            |(_peer, response)| {
+            |(_peer, response, _data)| {
                 response.expect_set_power_state_ack().map_err(Into::into)
             },
         )
@@ -260,7 +344,7 @@ impl SingleSp {
     /// the case of updates).
     pub async fn reset_prepare(&self) -> Result<()> {
         self.rpc(RequestKind::ResetPrepare).await.and_then(
-            |(_peer, response)| {
+            |(_peer, response, _data)| {
                 response.expect_sys_reset_prepare_ack().map_err(Into::into)
             },
         )
@@ -273,7 +357,7 @@ impl SingleSp {
         // Reset trigger should retry until we get back an error indicating the
         // SP wasn't expecting a reset trigger (because it has reset!).
         match self.rpc(RequestKind::ResetTrigger).await {
-            Ok((_peer, response)) => {
+            Ok((_peer, response, _data)) => {
                 Err(SpCommunicationError::BadResponseType(BadResponseType {
                     expected: "system-reset",
                     got: response.name(),
@@ -328,28 +412,93 @@ impl SingleSp {
     pub(crate) async fn rpc(
         &self,
         kind: RequestKind,
-    ) -> Result<(SocketAddrV6, ResponseKind)> {
+    ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
         rpc(&self.cmds_tx, kind, None).await.result
     }
+}
+
+// Helper function to unpack an inventory page packet's TLV device
+// descriptions into `out`.
+fn decode_tlv_devices(
+    out: &mut Vec<SpDevice>,
+    total_devices: usize,
+    data: &[u8],
+    log: &Logger,
+) -> Result<()> {
+    for result in tlv::decode_iter(data) {
+        // Is the TLV chunk valid?
+        let (tag, value) = result
+            .map_err(|_| SpCommunicationError::InvalidInventoryPagination)?;
+
+        // Are we expecting this chunk?
+        if out.len() >= total_devices {
+            return Err(SpCommunicationError::InvalidInventoryPagination);
+        }
+
+        // Do we know how to interpret this tag?
+        match tag {
+            DeviceDescriptionHeader::TAG => {
+                // Peel header out of the value.
+                let (header, data) = gateway_messages::deserialize::<
+                    DeviceDescriptionHeader,
+                >(value)
+                .map_err(|_| {
+                    SpCommunicationError::InvalidInventoryPagination
+                })?;
+
+                // Make sure the data length matches the header's claims.
+                let device_len = header.device_len as usize;
+                let description_len = header.description_len as usize;
+                if data.len() != device_len.saturating_add(description_len) {
+                    return Err(
+                        SpCommunicationError::InvalidInventoryPagination,
+                    );
+                }
+
+                // Interpret the data as UTF8.
+                let device =
+                    str::from_utf8(&data[..device_len]).map_err(|_| {
+                        SpCommunicationError::InvalidInventoryPagination
+                    })?;
+                let description =
+                    str::from_utf8(&data[device_len..]).map_err(|_| {
+                        SpCommunicationError::InvalidInventoryPagination
+                    })?;
+
+                out.push(SpDevice {
+                    device: device.to_string(),
+                    description: description.to_string(),
+                    num_measurement_channels: header.num_measurement_channels,
+                    presence: header.presence,
+                });
+            }
+            _ => {
+                info!(log, "skipping unknown device description tag {tag:?}");
+                continue;
+            }
+        }
+    }
+
+    Ok(())
 }
 
 async fn rpc_with_trailing_data(
     inner_tx: &mpsc::Sender<InnerCommand>,
     kind: RequestKind,
-    trailing_data: Cursor<Vec<u8>>,
-) -> (Result<(SocketAddrV6, ResponseKind)>, Cursor<Vec<u8>>) {
-    let RpcResponse { result, trailing_data } =
-        rpc(inner_tx, kind, Some(trailing_data)).await;
+    our_trailing_data: Cursor<Vec<u8>>,
+) -> (Result<(SocketAddrV6, ResponseKind, Vec<u8>)>, Cursor<Vec<u8>>) {
+    let RpcResponse { result, our_trailing_data } =
+        rpc(inner_tx, kind, Some(our_trailing_data)).await;
 
     // We sent `Some(_)` trailing data, so we get `Some(_)` back; unwrap it
     // so our caller can remain ignorant of this detail.
-    (result, trailing_data.unwrap())
+    (result, our_trailing_data.unwrap())
 }
 
 async fn rpc(
     inner_tx: &mpsc::Sender<InnerCommand>,
     kind: RequestKind,
-    trailing_data: Option<Cursor<Vec<u8>>>,
+    our_trailing_data: Option<Cursor<Vec<u8>>>,
 ) -> RpcResponse {
     let (resp_tx, resp_rx) = oneshot::channel();
 
@@ -358,7 +507,7 @@ async fn rpc(
     inner_tx
         .send(InnerCommand::Rpc(RpcRequest {
             kind,
-            trailing_data,
+            our_trailing_data,
             response_tx: resp_tx,
         }))
         .await
@@ -418,7 +567,7 @@ impl AttachedSerialConsoleSend {
                 - CursorExt::remaining_slice(&new_data).len())
                 as u64;
 
-            let n = result.and_then(|(_peer, response)| {
+            let n = result.and_then(|(_peer, response, _data)| {
                 response.expect_serial_console_write_ack().map_err(Into::into)
             })?;
 
@@ -486,27 +635,27 @@ impl AttachedSerialConsoleRecv {
 }
 
 // All RPC request/responses are handled by message passing to the `Inner` task
-// below. `trailing_data` deserves some extra documentation: Some packet types
+// below. `our_trailing_data` deserves some extra documentation: Some packet types
 // (e.g., update chunks) want to send potentially-large binary data. We
 // serialize this data with `gateway_messages::serialize_with_trailing_data()`,
 // which appends as much data as will fit after the message header, but the
 // caller doesn't know how much data that is until serialization happens. To
 // handle this, we traffic in `Cursor<Vec<u8>>`s for communicating trailing data
-// to `Inner`. If `trailing_data` in the `RpcRequest` is `Some(_)`, it will
+// to `Inner`. If `our_trailing_data` in the `RpcRequest` is `Some(_)`, it will
 // always be returned as `Some(_)` in the response as well, and the cursor will
 // have been advanced by however much data was packed into the single RPC packet
 // exchanged with the SP.
 #[derive(Debug)]
 struct RpcRequest {
     kind: RequestKind,
-    trailing_data: Option<Cursor<Vec<u8>>>,
+    our_trailing_data: Option<Cursor<Vec<u8>>>,
     response_tx: oneshot::Sender<RpcResponse>,
 }
 
 #[derive(Debug)]
 struct RpcResponse {
-    result: Result<(SocketAddrV6, ResponseKind)>,
-    trailing_data: Option<Cursor<Vec<u8>>>,
+    result: Result<(SocketAddrV6, ResponseKind, Vec<u8>)>,
+    our_trailing_data: Option<Cursor<Vec<u8>>>,
 }
 
 #[derive(Debug)]
@@ -649,7 +798,7 @@ impl Inner {
         &mut self,
         incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
     ) -> Result<SocketAddrV6> {
-        let (addr, response) = self
+        let (addr, response, _data) = self
             .rpc_call(
                 self.discovery_addr,
                 RequestKind::Discover,
@@ -680,12 +829,14 @@ impl Inner {
                     .rpc_call(
                         sp_addr,
                         rpc.kind,
-                        rpc.trailing_data.as_mut(),
+                        rpc.our_trailing_data.as_mut(),
                         incoming_buf,
                     )
                     .await;
-                let response =
-                    RpcResponse { result, trailing_data: rpc.trailing_data };
+                let response = RpcResponse {
+                    result,
+                    our_trailing_data: rpc.our_trailing_data,
+                };
 
                 if rpc.response_tx.send(response).is_err() {
                     warn!(
@@ -717,9 +868,9 @@ impl Inner {
         &mut self,
         result: Result<(SocketAddrV6, SpMessage, &[u8])>,
     ) {
-        let (peer, message, trailing_data) = match result {
-            Ok((peer, message, trailing_data)) => {
-                (peer, message, trailing_data)
+        let (peer, message, sp_trailing_data) = match result {
+            Ok((peer, message, sp_trailing_data)) => {
+                (peer, message, sp_trailing_data)
             }
             Err(err) => {
                 error!(
@@ -756,7 +907,11 @@ impl Inner {
                 );
             }
             SpMessageKind::SerialConsole { component, offset } => {
-                self.forward_serial_console(component, offset, trailing_data);
+                self.forward_serial_console(
+                    component,
+                    offset,
+                    sp_trailing_data,
+                );
             }
         }
     }
@@ -765,9 +920,9 @@ impl Inner {
         &mut self,
         addr: SocketAddrV6,
         kind: RequestKind,
-        trailing_data: Option<&mut Cursor<Vec<u8>>>,
+        our_trailing_data: Option<&mut Cursor<Vec<u8>>>,
         incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) -> Result<(SocketAddrV6, ResponseKind)> {
+    ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
         // Build and serialize our request once.
         self.request_id += 1;
         let request = Request {
@@ -779,7 +934,7 @@ impl Inner {
         };
 
         let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
-        let n = match trailing_data {
+        let n = match our_trailing_data {
             Some(data) => {
                 let (n, written) =
                     gateway_messages::serialize_with_trailing_data(
@@ -832,7 +987,7 @@ impl Inner {
         request_id: u32,
         serialized_request: &[u8],
         incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) -> Result<Option<(SocketAddrV6, ResponseKind)>> {
+    ) -> Result<Option<(SocketAddrV6, ResponseKind, Vec<u8>)>> {
         // We consider an RPC attempt to be our attempt to contact the SP. It's
         // possible for the SP to respond and say it's busy; we shouldn't count
         // that as a failed UDP RPC attempt, so we loop within this "one
@@ -852,7 +1007,7 @@ impl Inner {
                 Err(_elapsed) => return Ok(None),
             };
 
-            let (peer, response, trailing_data) = match result {
+            let (peer, response, sp_trailing_data) = match result {
                 Ok((peer, response, data)) => (peer, response, data),
                 Err(err) => {
                     warn!(
@@ -865,9 +1020,6 @@ impl Inner {
 
             let result = match response.kind {
                 SpMessageKind::Response { request_id: response_id, result } => {
-                    if !trailing_data.is_empty() {
-                        warn!(self.log, "received unexpected trailing data with response (discarding)");
-                    }
                     if response_id == request_id {
                         result
                     } else {
@@ -883,7 +1035,7 @@ impl Inner {
                     self.forward_serial_console(
                         component,
                         offset,
-                        trailing_data,
+                        sp_trailing_data,
                     );
                     continue;
                 }
@@ -896,7 +1048,9 @@ impl Inner {
                     time::sleep(backoff_sleep).await;
                     continue;
                 }
-                other => return Ok(Some((peer, other?))),
+                other => {
+                    return Ok(Some((peer, other?, sp_trailing_data.to_vec())))
+                }
             }
         }
     }
@@ -956,7 +1110,7 @@ impl Inner {
             ));
         }
 
-        let (_peer, response) = self
+        let (_peer, response, _data) = self
             .rpc_call(
                 sp_addr,
                 RequestKind::SerialConsoleAttach(component),
@@ -980,7 +1134,7 @@ impl Inner {
         sp_addr: SocketAddrV6,
         incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
     ) -> Result<()> {
-        let (_peer, response) = self
+        let (_peer, response, _data) = self
             .rpc_call(
                 sp_addr,
                 RequestKind::SerialConsoleDetach,
@@ -1033,7 +1187,7 @@ async fn recv<'a>(
         }
     };
 
-    let (message, leftover) =
+    let (message, sp_trailing_data) =
         gateway_messages::deserialize::<SpMessage>(&incoming_buf[..n])
             .map_err(|err| SpCommunicationError::Deserialize { peer, err })?;
 
@@ -1043,14 +1197,7 @@ async fn recv<'a>(
         "message" => ?message,
     );
 
-    let trailing_data = if leftover.is_empty() {
-        &[]
-    } else {
-        sp_impl::unpack_trailing_data(leftover)
-            .map_err(|err| SpCommunicationError::Deserialize { peer, err })?
-    };
-
-    Ok((peer, message, trailing_data))
+    Ok((peer, message, sp_trailing_data))
 }
 
 fn sp_busy_policy() -> backoff::ExponentialBackoff {

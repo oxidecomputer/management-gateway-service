@@ -9,7 +9,6 @@ pub mod tlv;
 
 use bitflags::bitflags;
 use core::fmt;
-use core::mem;
 use core::str;
 use serde::Deserialize;
 use serde::Serialize;
@@ -84,6 +83,10 @@ pub enum RequestKind {
     SetPowerState(PowerState),
     ResetPrepare,
     ResetTrigger,
+    /// Get the device inventory of the SP, starting with `device_index`.
+    Inventory {
+        device_index: u32,
+    },
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -170,6 +173,62 @@ pub enum PowerState {
     A2,
 }
 
+/// Metadata describing the set of device descriptions present in this response.
+///
+/// Followed by trailing data containing a sequence of [`tlv`]-encoded
+/// [`DeviceDescriptionHeader`]s and their associated data.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct DeviceInventoryPage {
+    /// First device index present in this response.
+    pub device_index: u32,
+    /// Total number of devices present on the SP.
+    pub total_devices: u32,
+}
+
+/// Header for the description of a single device.
+///
+/// Always packed into a [`tlv`] triple containing:
+///
+/// ```text
+/// [
+///     DeviceDescriptionHeader::TAG
+///     | length
+///     | hubpack-serialized DeviceDescriptionHeader
+///     | device
+///     | description
+/// ]
+/// ```
+///
+/// where `device` and `description` are UTF8 strings whose lengths are included
+/// in the `DeviceDescriptionHeader`.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct DeviceDescriptionHeader {
+    pub device_len: u32,
+    pub description_len: u32,
+    pub num_measurement_channels: u32,
+    pub presence: DevicePresence,
+}
+
+impl DeviceDescriptionHeader {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"DSC0");
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum DevicePresence {
+    Present,
+    NotPresent,
+    Failed,
+    Unavailable,
+    Timeout,
+    Error,
+}
+
 /// Current state when the SP is preparing to apply an update.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
@@ -217,7 +276,9 @@ pub enum ResponseKind {
     UpdateStatus(UpdateStatus),
     UpdateAbortAck,
     SerialConsoleAttachAck,
-    SerialConsoleWriteAck { furthest_ingested_offset: u64 },
+    SerialConsoleWriteAck {
+        furthest_ingested_offset: u64,
+    },
     SerialConsoleDetachAck,
     PowerState(PowerState),
     SetPowerStateAck,
@@ -225,6 +286,9 @@ pub enum ResponseKind {
     // There is intentionally no `ResetTriggerAck` response; the expected
     // "response" to `ResetTrigger` is an SP reset, which won't allow for
     // acks to be sent.
+    /// An `Inventory` response is followed by a TLV-encoded set of device
+    /// descriptions. See TODO FIXME for details.
+    Inventory(DeviceInventoryPage),
 }
 
 #[derive(
@@ -625,13 +689,29 @@ impl GatewayMessage for SpMessage {}
 impl private::Sealed for Request {}
 impl private::Sealed for SpMessage {}
 
-// `GatewayMessage` imlementers can be followed by binary data; we want the
+/// Minimum guaranteed space for trailing data in a [`Request`] packet.
+///
+/// Depending on the [`Request`] payload, there may be more space for trailing
+/// data than indicated by this constant; this specifies the minimum amount
+/// available regardless of the request type.
+pub const MIN_REQUEST_TRAILING_TRAILING_DATA_LEN: usize =
+    MAX_SERIALIZED_SIZE - Request::MAX_SIZE;
+
+/// Minimum guaranteed space for trailing data in an [`SpMessage`] packet.
+///
+/// Depending on the [`SpMessage`] payload, there may be more space for trailing
+/// data than indicated by this constant; this specifies the minimum amount
+/// available regardless of the message type.
+pub const MIN_SP_MESSAGE_TRAILING_TRAILING_DATA_LEN: usize =
+    MAX_SERIALIZED_SIZE - SpMessage::MAX_SIZE;
+
+// `GatewayMessage` implementers can be followed by binary data; we want the
 // majority of our packet to be available for that data. Statically check that
 // our serialized message headers haven't gotten too large. The specific value
 // here is arbitrary; if this check starts failing, it's probably fine to reduce
 // it some. The check is here to force us to think about it.
-const_assert!(MAX_SERIALIZED_SIZE - Request::MAX_SIZE > 700);
-const_assert!(MAX_SERIALIZED_SIZE - SpMessage::MAX_SIZE > 700);
+const_assert!(MIN_REQUEST_TRAILING_TRAILING_DATA_LEN > 700);
+const_assert!(MIN_SP_MESSAGE_TRAILING_TRAILING_DATA_LEN > 700);
 
 /// Returns `(serialized_size, data_bytes_written)` where `serialized_size` is
 /// the message size written to `out` and `data_bytes_written` is the number of
@@ -655,10 +735,7 @@ where
     // than `MAX_SERIALIZED_SIZE`. They cannot fail to serialize for any reason
     // other than an undersized buffer, so we can unwrap here.
     let n = hubpack::serialize(out, header).unwrap();
-    let out = &mut out[n..];
-
-    // Split `out` into a 2-byte length prefix and the remainder of the buffer.
-    let (length_prefix, mut out) = out.split_at_mut(mem::size_of::<u16>());
+    let mut out = &mut out[n..];
 
     let mut nwritten = 0;
     for &data in data_slices {
@@ -672,10 +749,7 @@ where
         }
     }
 
-    // Fill in the length prefix with the amount of data we copied into `out`.
-    length_prefix.copy_from_slice(&(nwritten as u16).to_le_bytes());
-
-    (n + mem::size_of::<u16>() + nwritten, nwritten)
+    (n + nwritten, nwritten)
 }
 
 #[cfg(test)]
@@ -709,8 +783,6 @@ mod tests {
 
         let (deserialized_header, remainder) =
             deserialize::<Request>(&out).unwrap();
-
-        let remainder = sp_impl::unpack_trailing_data(remainder).unwrap();
 
         assert_eq!(header, deserialized_header);
         assert_eq!(remainder.len(), nwritten);

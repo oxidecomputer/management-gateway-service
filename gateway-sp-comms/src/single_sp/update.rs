@@ -81,7 +81,7 @@ pub(super) async fn start_sp_update(
     )
     .await
     .result
-    .and_then(|(_peer, response)| {
+    .and_then(|(_peer, response, _data)| {
         response.expect_sp_update_prepare_ack().map_err(Into::into)
     })?;
 
@@ -253,7 +253,7 @@ pub(super) async fn start_component_update(
     )
     .await
     .result
-    .and_then(|(_peer, response)| {
+    .and_then(|(_peer, response, _data)| {
         response.expect_component_update_prepare_ack().map_err(Into::into)
     })?;
 
@@ -412,7 +412,7 @@ pub(super) async fn update_status(
     super::rpc(cmds_tx, RequestKind::UpdateStatus(component), None)
         .await
         .result
-        .and_then(|(_peer, response)| {
+        .and_then(|(_peer, response, _data)| {
             response.expect_update_status().map_err(Into::into)
         })
 }
@@ -464,7 +464,7 @@ async fn send_single_update_chunk(
     )
     .await;
 
-    result.and_then(|(_peer, response)| {
+    result.and_then(|(_peer, response, _data)| {
         response.expect_update_chunk_ack().map_err(Into::into)
     })?;
 
