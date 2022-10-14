@@ -14,7 +14,7 @@ use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::BulkIgnitionState;
-use gateway_messages::DeviceDescription;
+use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
@@ -437,13 +437,14 @@ fn decode_tlv_devices(
 
         // Do we know how to interpret this tag?
         match tag {
-            DeviceDescription::TAG => {
+            DeviceDescriptionHeader::TAG => {
                 // Peel header out of the value.
-                let (header, data) =
-                    gateway_messages::deserialize::<DeviceDescription>(value)
-                        .map_err(|_| {
-                        SpCommunicationError::InvalidInventoryPagination
-                    })?;
+                let (header, data) = gateway_messages::deserialize::<
+                    DeviceDescriptionHeader,
+                >(value)
+                .map_err(|_| {
+                    SpCommunicationError::InvalidInventoryPagination
+                })?;
 
                 // Make sure the data length matches the header's claims.
                 let device_len = header.device_len as usize;

@@ -9,6 +9,7 @@ use crate::version;
 use crate::BadRequestReason;
 use crate::BulkIgnitionState;
 use crate::ComponentUpdatePrepare;
+use crate::DeviceDescriptionHeader;
 use crate::DeviceInventoryPage;
 use crate::DevicePresence;
 use crate::DiscoverResponse;
@@ -50,7 +51,7 @@ pub struct DeviceDescription<'a> {
     pub presence: DevicePresence,
 }
 
-impl From<DeviceDescription<'_>> for crate::DeviceDescription {
+impl From<DeviceDescription<'_>> for DeviceDescriptionHeader {
     fn from(dev: DeviceDescription<'_>) -> Self {
         Self {
             device_len: dev.device.len() as u32,
@@ -266,8 +267,6 @@ fn encode_device_inventory<H: SpHandler>(
     total_devices: u32,
     handler: &mut H,
 ) -> usize {
-    use crate::DeviceDescription as DeviceDescriptionHeader;
-
     let mut total_tlv_len = 0;
     while device_index < total_devices {
         let dev = handler.device_description(device_index);

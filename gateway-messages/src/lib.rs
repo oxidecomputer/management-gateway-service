@@ -176,7 +176,7 @@ pub enum PowerState {
 /// Metadata describing the set of device descriptions present in this response.
 ///
 /// Followed by trailing data containing a sequence of [`tlv`]-encoded
-/// [`DeviceDescription`]s.
+/// [`DeviceDescriptionHeader`]s and their associated data.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
@@ -187,33 +187,33 @@ pub struct DeviceInventoryPage {
     pub total_devices: u32,
 }
 
-/// Description of a single device.
+/// Header for the description of a single device.
 ///
 /// Always packed into a [`tlv`] triple containing:
 ///
 /// ```text
 /// [
-///     DeviceDescription::TAG
+///     DeviceDescriptionHeader::TAG
 ///     | length
-///     | hubpack-serialized DeviceDescription
+///     | hubpack-serialized DeviceDescriptionHeader
 ///     | device
 ///     | description
 /// ]
 /// ```
 ///
 /// where `device` and `description` are UTF8 strings whose lengths are included
-/// in the `DeviceDescription`.
+/// in the `DeviceDescriptionHeader`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct DeviceDescription {
+pub struct DeviceDescriptionHeader {
     pub device_len: u32,
     pub description_len: u32,
     pub num_measurement_channels: u32,
     pub presence: DevicePresence,
 }
 
-impl DeviceDescription {
+impl DeviceDescriptionHeader {
     pub const TAG: tlv::Tag = tlv::Tag(*b"DSC0");
 }
 
