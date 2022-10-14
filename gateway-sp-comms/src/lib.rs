@@ -34,6 +34,8 @@ pub use single_sp::AttachedSerialConsole;
 pub use single_sp::AttachedSerialConsoleRecv;
 pub use single_sp::AttachedSerialConsoleSend;
 pub use single_sp::SingleSp;
+pub use single_sp::SpDevice;
+pub use single_sp::SpInventory;
 pub use single_sp::DISCOVERY_MULTICAST_ADDR;
 pub use timeout::Elapsed;
 pub use timeout::Timeout;
