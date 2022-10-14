@@ -304,9 +304,16 @@ fn encode_device_inventory<H: SpHandler>(
                 total_tlv_len += n;
                 out = &mut out[n..];
             }
+            Err(tlv::EncodeError::Custom(infallible)) => {
+                // A bit of type system magic here; our custom error type
+                // (`Infallible`) cannot be instantiated. We can
+                // provide an empty match to teach the type system that an
+                // `Infallible` (which can't exist) can this branch is
+                // unreachable without needing to explicitly panic.
+                match infallible {}
+            }
             // We checked the length above; this error isn't possible.
             Err(tlv::EncodeError::BufferTooSmall) => panic!(),
-            Err(tlv::EncodeError::Custom(infallible)) => match infallible {},
         }
 
         device_index += 1;
@@ -351,7 +358,7 @@ fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], ResponseError>) {
 /// are handled by `read_request_header`) and calls `handler`.
 ///
 /// If the response kind needs to generate trailing data, returns `(Ok(_),
-/// Some(_)`, and our caller is resposnible for handling that generation.
+/// Some(_)`, and our caller is responsible for handling that generation.
 /// Otherwise, returns `(result, None)`.
 fn handle_message_impl<H: SpHandler>(
     sender: SocketAddrV6,
