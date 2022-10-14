@@ -49,6 +49,9 @@ struct Args {
     #[clap(long, default_value = "[::]:0")]
     local_addr: SocketAddrV6,
 
+    #[clap(long)]
+    interface: Option<String>,
+
     /// Listening port for the `mgmt-gateway` task on the SP.
     #[clap(long, short, default_value = "11111")]
     discovery_port: u16,
@@ -172,8 +175,28 @@ async fn main() -> Result<()> {
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
 
-    let mut discovery_addr =
-        SocketAddrV6::new(DISCOVERY_MULTICAST_ADDR, args.discovery_port, 0, 0);
+    let scope_id = match args.interface {
+        Some(iface) => {
+            // If `iface` is already an integer, just use it. Otherwise, run it
+            // through `if_nametoindex()` to work around
+            // https://github.com/rust-lang/rust/issues/65976.
+            match iface.parse::<u32>() {
+                Ok(n) => n,
+                Err(_) => nix::net::if_::if_nametoindex(iface.as_str())
+                    .with_context(|| {
+                        format!("failed to find scope ID for interface {iface}")
+                    })?,
+            }
+        }
+        None => 0,
+    };
+
+    let mut discovery_addr = SocketAddrV6::new(
+        DISCOVERY_MULTICAST_ADDR,
+        args.discovery_port,
+        0,
+        scope_id,
+    );
     let command = match args.command {
         Command::Discover => {
             info!(
