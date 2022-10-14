@@ -10,6 +10,7 @@ use crate::error::StartupError;
 use crate::management_switch::ManagementSwitch;
 use crate::management_switch::SwitchPort;
 use crate::single_sp::AttachedSerialConsole;
+use crate::single_sp::SpInventory;
 use crate::Elapsed;
 use crate::SpIdentifier;
 use crate::SwitchConfig;
@@ -209,6 +210,16 @@ impl Communicator {
         let port = self.id_to_port(sp)?;
         let sp = self.switch.sp(port).ok_or(Error::SpAddressUnknown(sp))?;
         Ok(sp.state().await?)
+    }
+
+    /// Get the inventory of a given SP.
+    pub async fn inventory(
+        &self,
+        sp: SpIdentifier,
+    ) -> Result<SpInventory, Error> {
+        let port = self.id_to_port(sp)?;
+        let sp = self.switch.sp(port).ok_or(Error::SpAddressUnknown(sp))?;
+        Ok(sp.inventory().await?)
     }
 
     /// Start sending an update payload to the given SP.
