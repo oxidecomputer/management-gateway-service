@@ -56,7 +56,7 @@ use self::update::start_sp_update;
 use self::update::update_status;
 
 pub const DISCOVERY_MULTICAST_ADDR: Ipv6Addr =
-    Ipv6Addr::new(0xff15, 0, 0, 0, 0, 0, 0x1de, 0);
+    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
 // Once we've discovered an SP, continue to send discovery packets on this
 // interval to detect changes.
