@@ -207,14 +207,27 @@ pub struct DeviceInventoryPage {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub struct DeviceDescriptionHeader {
+    pub component: SpComponent,
     pub device_len: u32,
     pub description_len: u32,
-    pub num_measurement_channels: u32,
+    pub capabilities: DeviceCapabilities,
     pub presence: DevicePresence,
 }
 
 impl DeviceDescriptionHeader {
     pub const TAG: tlv::Tag = tlv::Tag(*b"DSC0");
+}
+
+bitflags! {
+    #[derive(Default, SerializedSize, Serialize, Deserialize)]
+    pub struct DeviceCapabilities: u32 {
+        const UPDATEABLE = 1 << 0;
+        const HAS_MEASUREMENT_CHANNELS = 1 << 1;
+        const HAS_SERIAL_CONSOLE = 1 << 2;
+        // MGS has a placeholder API for powering off an individual component;
+        // do we want to keep that? If so, add a bit for "can be powered on and
+        // off".
+    }
 }
 
 #[derive(
@@ -630,6 +643,10 @@ impl SpComponent {
     /// The host CPU boot flash.
     pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
 
+    /// Prefix for devices that are identified generically by index (e.g.,
+    /// `dev-17`).
+    pub const GENERIC_DEVICE_PREFIX: &'static str = "dev-";
+
     /// Interpret the component name as a human-readable string.
     ///
     /// Our current expectation of component names is that this should never
@@ -640,6 +657,43 @@ impl SpComponent {
         let n =
             self.id.iter().position(|&c| c == 0).unwrap_or(Self::MAX_ID_LENGTH);
         str::from_utf8(&self.id[..n]).ok()
+    }
+
+    /// Interpret the component name as a human-readable string in a `const`
+    /// context, panicking if the string is not human readable.
+    ///
+    /// This function should only be used in const contexts when the caller
+    /// knows the component is valid (e.g., one of this type's associated
+    /// constants); for component names parsed or constructed at runtime, prefer
+    /// [`SpComponent::as_str()`] which performs runtime validation.
+    pub const fn const_as_str(&self) -> &str {
+        // const-equivalent of
+        // ```
+        // let n =
+        //    self.id.iter().position(|&c| c == 0)
+        //      .unwrap_or(Self::MAX_ID_LENGTH);
+        // ```
+        let mut n = 0;
+        while n < self.id.len() {
+            if self.id[n] == 0 {
+                break;
+            }
+            n += 1;
+        }
+
+        // const-equivalent of `let s = &self.id[..n]`.
+        //
+        // SAFETY: We really want to say `&self.id[..n]` here, but we're not
+        // allowed to use the indexing operator inside a `const fn`. We know
+        // from the loop above that `n <= self.id.len()`, turning the following
+        // into a manual `&self.id[..n]` without a bounds check.
+        let s = unsafe { core::slice::from_raw_parts(self.id.as_ptr(), n) };
+
+        // const-equivalent of `str::from_utf8(s).unwrap_lite()`.
+        match str::from_utf8(s) {
+            Ok(s) => s,
+            Err(_) => panic!("invalid SpComponent ID (not a utf8 string)"),
+        }
     }
 }
 

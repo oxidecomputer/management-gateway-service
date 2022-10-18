@@ -252,16 +252,17 @@ async fn main() -> Result<()> {
         Some(SpCommand::Inventory) => {
             let inventory = sp.inventory().await?;
             println!(
-                "{:<12} {:>10} {:<16} {:<}",
-                "STATUS", "MEAS.CHAN.", "DEVICE", "DESCRIPTION"
+                "{:<16} {:<12} {:<16} {:<}",
+                "COMPONENT", "STATUS", "DEVICE", "DESCRIPTION (CAPABILITIES)"
             );
             for d in inventory.devices {
                 println!(
-                    "{:<12} {:>10} {:<16} {:<}",
+                    "{:<16} {:<12} {:<16} {} ({:?})",
+                    d.component.as_str().unwrap_or("???"),
                     format!("{:?}", d.presence),
-                    d.num_measurement_channels,
                     d.device,
-                    d.description
+                    d.description,
+                    d.capabilities,
                 );
             }
         }
