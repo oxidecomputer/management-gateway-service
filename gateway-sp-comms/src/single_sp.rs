@@ -14,6 +14,7 @@ use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::BulkIgnitionState;
+use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
 use gateway_messages::IgnitionCommand;
@@ -89,9 +90,10 @@ pub struct SpInventory {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpDevice {
+    pub component: SpComponent,
     pub device: String,
     pub description: String,
-    pub num_measurement_channels: u32,
+    pub capabilities: DeviceCapabilities,
     pub presence: DevicePresence,
 }
 
@@ -466,9 +468,10 @@ fn decode_tlv_devices(
                     })?;
 
                 out.push(SpDevice {
+                    component: header.component,
                     device: device.to_string(),
                     description: description.to_string(),
-                    num_measurement_channels: header.num_measurement_channels,
+                    capabilities: header.capabilities,
                     presence: header.presence,
                 });
             }

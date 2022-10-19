@@ -9,6 +9,7 @@ use crate::version;
 use crate::BadRequestReason;
 use crate::BulkIgnitionState;
 use crate::ComponentUpdatePrepare;
+use crate::DeviceCapabilities;
 use crate::DeviceDescriptionHeader;
 use crate::DeviceInventoryPage;
 use crate::DevicePresence;
@@ -45,18 +46,20 @@ pub struct SocketAddrV6 {
 /// Description of a device as reported as part of this SP's inventory.
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct DeviceDescription<'a> {
+    pub component: SpComponent,
     pub device: &'a str,
     pub description: &'a str,
-    pub num_measurement_channels: u32,
+    pub capabilities: DeviceCapabilities,
     pub presence: DevicePresence,
 }
 
 impl From<DeviceDescription<'_>> for DeviceDescriptionHeader {
     fn from(dev: DeviceDescription<'_>) -> Self {
         Self {
+            component: dev.component,
             device_len: dev.device.len() as u32,
             description_len: dev.description.len() as u32,
-            num_measurement_channels: dev.num_measurement_channels,
+            capabilities: dev.capabilities,
             presence: dev.presence,
         }
     }
