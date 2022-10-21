@@ -151,6 +151,7 @@ impl SingleSp {
         Self { state, inner_task, log }
     }
 
+    /// Block until all our local setup (see [`SingleSp::new()`] is complete.
     pub async fn wait_for_startup_completion(
         &self,
     ) -> Result<(), StartupError> {
@@ -159,6 +160,11 @@ impl SingleSp {
 
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
     /// SP's address.
+    ///
+    /// This function only returns an error if startup has failed; if startup
+    /// has succeeded, always returns `Ok(_)` even if no SP has been discovered
+    /// yet (in which case the returned receiver will be holding the value
+    /// `None`).
     pub fn sp_addr_watch(
         &self,
     ) -> Result<&watch::Receiver<Option<(SocketAddrV6, SpPort)>>, StartupError>

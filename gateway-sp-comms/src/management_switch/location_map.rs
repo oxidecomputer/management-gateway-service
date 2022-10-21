@@ -26,7 +26,7 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-/// Description of the network interface for a single switch port.
+/// Configuration of a single port of the management network switch.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SwitchPortConfig {
     /// Address to bind our listening socket for this switch port.
@@ -48,7 +48,7 @@ pub struct SwitchPortConfig {
     pub interface: Option<String>,
 }
 
-/// Configuration of a single port of the management network switch.
+/// Description of the network interface for a single switch port.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SwitchPortDescription {
     #[serde(flatten)]
