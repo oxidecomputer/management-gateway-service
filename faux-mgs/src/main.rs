@@ -15,7 +15,6 @@ use gateway_messages::SpComponent;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::SingleSp;
-use gateway_sp_comms::DISCOVERY_MULTICAST_ADDR;
 use slog::info;
 use slog::o;
 use slog::Drain;
@@ -43,18 +42,18 @@ struct Args {
     log_level: Level,
 
     /// Address to bind to locally.
-    ///
-    /// May need an interface specification (e.g., `[::%2]:0`), depending
-    /// on the host OS and network setup between the host and SP.
     #[clap(long, default_value = "[::]:0")]
-    local_addr: SocketAddrV6,
+    listen_addr: SocketAddrV6,
 
+    /// Address to use to discover the SP. May be a specific SP's address to
+    /// bypass multicast discovery.
+    #[clap(long, default_value_t = gateway_sp_comms::default_discovery_addr())]
+    discovery_addr: SocketAddrV6,
+
+    /// Interface to specify as the scope ID for both `listen_addr` and
+    /// `discovery_addr`.
     #[clap(long)]
     interface: Option<String>,
-
-    /// Listening port for the `mgmt-gateway` task on the SP.
-    #[clap(long, short, default_value = "11111")]
-    discovery_port: u16,
 
     /// Maximum number of attempts to make when sending requests to the SP.
     #[clap(long, default_value = "5")]
@@ -171,13 +170,6 @@ async fn main() -> Result<()> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!("component" => "faux-mgs"));
 
-    let socket = UdpSocket::bind(args.local_addr).await.with_context(|| {
-        format!("failed to bind UDP socket to {}", args.local_addr)
-    })?;
-
-    let per_attempt_timeout =
-        Duration::from_millis(args.per_attempt_timeout_millis);
-
     let scope_id = match args.interface {
         Some(iface) => {
             // If `iface` is already an integer, just use it. Otherwise, run it
@@ -194,12 +186,17 @@ async fn main() -> Result<()> {
         None => 0,
     };
 
-    let mut discovery_addr = SocketAddrV6::new(
-        DISCOVERY_MULTICAST_ADDR,
-        args.discovery_port,
-        0,
-        scope_id,
-    );
+    let mut listen_addr = args.listen_addr;
+    listen_addr.set_scope_id(scope_id);
+    let socket = UdpSocket::bind(listen_addr).await.with_context(|| {
+        format!("failed to bind UDP socket to {}", args.listen_addr)
+    })?;
+
+    let per_attempt_timeout =
+        Duration::from_millis(args.per_attempt_timeout_millis);
+
+    let mut discovery_addr = args.discovery_addr;
+    discovery_addr.set_scope_id(scope_id);
     let command = match args.command {
         Command::Discover => {
             info!(

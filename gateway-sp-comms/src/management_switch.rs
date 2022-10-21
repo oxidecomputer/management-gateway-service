@@ -17,6 +17,7 @@ pub use self::location_map::LocationConfig;
 pub use self::location_map::LocationDeterminationConfig;
 use self::location_map::LocationMap;
 pub use self::location_map::SwitchPortConfig;
+pub use self::location_map::SwitchPortDescription;
 use self::location_map::ValidatedLocationConfig;
 
 use crate::error::Error;
@@ -44,7 +45,7 @@ pub struct SwitchConfig {
     pub rpc_per_attempt_timeout_millis: u64,
     pub location: LocationConfig,
     #[serde_as(as = "HashMap<DisplayFromStr, _>")]
-    pub port: HashMap<usize, SwitchPortConfig>,
+    pub port: HashMap<usize, SwitchPortDescription>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -116,7 +117,7 @@ impl ManagementSwitch {
         // instead of `usize`.
         let mut ports = HashMap::with_capacity(config.port.len());
         for (port, port_config) in config.port {
-            let addr = port_config.data_link_addr;
+            let addr = port_config.config.listen_addr;
             let socket = UdpSocket::bind(addr)
                 .await
                 .map_err(|err| StartupError::UdpBind { addr, err })?;
@@ -126,7 +127,7 @@ impl ManagementSwitch {
                 port,
                 SingleSp::new(
                     socket,
-                    port_config.multicast_addr,
+                    port_config.config.discovery_addr,
                     config.rpc_max_attempts,
                     Duration::from_millis(
                         config.rpc_per_attempt_timeout_millis,

@@ -25,20 +25,33 @@ use std::sync::Arc;
 use tokio::sync::mpsc;
 use tokio_stream::wrappers::ReceiverStream;
 
-/// Configuration of a single port of the management network switch.
+/// Description of the network interface for a single switch port.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct SwitchPortConfig {
-    /// Data link addresses; this is the address on which we should bind a
-    /// socket, which will be tagged with the appropriate VLAN for this switch
-    /// port (see RFD 250).
-    pub data_link_addr: SocketAddrV6,
+    /// Address to bind our listening socket for this switch port.
+    #[serde(default = "crate::default_listen_addr")]
+    pub listen_addr: SocketAddrV6,
 
-    /// Multicast address used to find the SP connected to this port.
-    // TODO: The multicast address used should be a single address, not a
-    // per-port address. For now we configure it per-port to make dev/test on a
-    // single system easier; we can run multiple simulated SPs that all listen
-    // to different multicast addresses on one host.
-    pub multicast_addr: SocketAddrV6,
+    /// Discovery address used to find the SP connected to this port.
+    #[serde(default = "crate::default_discovery_addr")]
+    pub discovery_addr: SocketAddrV6,
+
+    /// Name of the interface for this switch port. The interface should be
+    /// bound to the correct VLAN tag for this port per RFD 250.
+    ///
+    /// This field is optional to allow for test / CI setups where we're binding
+    /// to localhost (and don't know the name of the loopback interface, since
+    /// it may vary based on our host OS); if it is not supplied, `listen_addr`
+    /// and `discovery_addr` will be used without a `scope_id`.
+    #[serde(default)]
+    pub interface: Option<String>,
+}
+
+/// Configuration of a single port of the management network switch.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+pub struct SwitchPortDescription {
+    #[serde(flatten)]
+    pub config: SwitchPortConfig,
 
     /// Map defining the logical identifier of the SP connected to this port for
     /// each of the possible locations where MGS is running (see
@@ -86,7 +99,7 @@ pub(super) struct LocationMap {
 impl LocationMap {
     pub(super) async fn run_discovery(
         config: ValidatedLocationConfig,
-        ports: HashMap<SwitchPort, SwitchPortConfig>,
+        ports: HashMap<SwitchPort, SwitchPortDescription>,
         sockets: Arc<HashMap<SwitchPort, SingleSp>>,
         log: &Logger,
     ) -> Result<Self, String> {
@@ -178,14 +191,14 @@ struct ValidatedLocationDeterminationConfig {
     sp_port_2: HashSet<String>,
 }
 
-impl TryFrom<(&'_ HashMap<SwitchPort, SwitchPortConfig>, LocationConfig)>
+impl TryFrom<(&'_ HashMap<SwitchPort, SwitchPortDescription>, LocationConfig)>
     for ValidatedLocationConfig
 {
     type Error = StartupError;
 
     fn try_from(
         (ports, config): (
-            &HashMap<SwitchPort, SwitchPortConfig>,
+            &HashMap<SwitchPort, SwitchPortDescription>,
             LocationConfig,
         ),
     ) -> Result<Self, Self::Error> {
@@ -318,7 +331,7 @@ impl TryFrom<(&'_ HashMap<SwitchPort, SwitchPortConfig>, LocationConfig)>
 /// port. Our spawner is responsible for collecting/using those messages.
 async fn discover_sps(
     sockets: &HashMap<SwitchPort, SingleSp>,
-    port_config: HashMap<SwitchPort, SwitchPortConfig>,
+    port_config: HashMap<SwitchPort, SwitchPortDescription>,
     mut location_determination: Vec<ValidatedLocationDeterminationConfig>,
     refined_locations: mpsc::Sender<(SwitchPort, HashSet<String>)>,
     log: &Logger,
@@ -452,9 +465,12 @@ mod tests {
     fn test_config_validation() {
         let bad_ports = HashMap::from([(
             SwitchPort(0),
-            SwitchPortConfig {
-                data_link_addr: "[::1]:0".parse().unwrap(),
-                multicast_addr: "[::1]:0".parse().unwrap(),
+            SwitchPortDescription {
+                config: SwitchPortConfig {
+                    listen_addr: "[::1]:0".parse().unwrap(),
+                    discovery_addr: "[::1]:0".parse().unwrap(),
+                    interface: None,
+                },
                 location: HashMap::from([
                     (String::from("a"), SpIdentifier::new(SpType::Sled, 0)),
                     // missing "b", has extraneous "c"
@@ -520,9 +536,12 @@ mod tests {
         // of the errors we check for (mismatched / typo'd names, etc.).
         let good_ports = HashMap::from([(
             SwitchPort(0),
-            SwitchPortConfig {
-                data_link_addr: "[::1]:0".parse().unwrap(),
-                multicast_addr: "[::1]:0".parse().unwrap(),
+            SwitchPortDescription {
+                config: SwitchPortConfig {
+                    listen_addr: "[::1]:0".parse().unwrap(),
+                    discovery_addr: "[::1]:0".parse().unwrap(),
+                    interface: None,
+                },
                 location: HashMap::from([
                     (String::from("a"), SpIdentifier::new(SpType::Sled, 0)),
                     (String::from("b"), SpIdentifier::new(SpType::Sled, 1)),

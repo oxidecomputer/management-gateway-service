@@ -40,7 +40,6 @@ use slog::Logger;
 use std::io::Cursor;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV6;
 use std::str;
@@ -59,9 +58,6 @@ mod update;
 use self::update::start_component_update;
 use self::update::start_sp_update;
 use self::update::update_status;
-
-pub const DISCOVERY_MULTICAST_ADDR: Ipv6Addr =
-    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
 // Once we've discovered an SP, continue to send discovery packets on this
 // interval to detect changes.
@@ -113,9 +109,7 @@ impl Drop for SingleSp {
 
 impl SingleSp {
     /// Construct a new `SingleSp` that will periodically attempt to discover an
-    /// SP reachable at `discovery_addr` (typically
-    /// [`DISCOVERY_MULTICAST_ADDR`], but possibly different in test /
-    /// development setups).
+    /// SP reachable at `discovery_addr`.
     pub fn new(
         socket: UdpSocket,
         discovery_addr: SocketAddrV6,
