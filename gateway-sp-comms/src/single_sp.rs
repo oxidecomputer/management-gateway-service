@@ -9,7 +9,9 @@
 use crate::communicator::ResponseKindExt;
 use crate::error::BadResponseType;
 use crate::error::SpCommunicationError;
+use crate::error::StartupError;
 use crate::error::UpdateError;
+use crate::SwitchPortConfig;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
@@ -109,14 +111,21 @@ impl Drop for SingleSp {
 
 impl SingleSp {
     /// Construct a new `SingleSp` that will periodically attempt to discover an
-    /// SP reachable at `discovery_addr`.
-    pub fn new(
-        socket: UdpSocket,
-        discovery_addr: SocketAddrV6,
-        max_attempts: usize,
+    /// SP reachable on the port specified by `config`.
+    ///
+    /// This function currently blocks until `config.interface` exists (if it is
+    /// `Some(_)`. If that interface name never exists, this function never
+    /// returns.
+    //
+    // TODO This assumes something else is responsible for creating the
+    // interface we're supposed to use; if it needs to be us (or if we need to
+    // do extra work to use it) we need to do more here.
+    pub async fn new(
+        config: SwitchPortConfig,
+        max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         log: Logger,
-    ) -> Self {
+    ) -> Result<Self, StartupError> {
         // SPs don't support pipelining, so any command we send to `Inner` that
         // involves contacting an SP will effectively block until it completes.
         // We use a more-or-less arbitrary chanel size of 8 here to allow (a)
@@ -125,18 +134,35 @@ impl SingleSp {
         // caller.
         let (cmds_tx, cmds_rx) = mpsc::channel(8);
         let (sp_addr_tx, sp_addr_rx) = watch::channel(None);
+
+        let scope_id = match config.interface.as_deref() {
+            Some(interface) => {
+                wait_for_interface_scope_id(interface, &log).await
+            }
+            None => 0,
+        };
+
+        let mut listen_addr = config.listen_addr;
+        let mut discovery_addr = config.discovery_addr;
+        listen_addr.set_scope_id(scope_id);
+        discovery_addr.set_scope_id(scope_id);
+
+        let socket = UdpSocket::bind(listen_addr)
+            .await
+            .map_err(|err| StartupError::UdpBind { addr: listen_addr, err })?;
+
         let inner = Inner::new(
             log.clone(),
             socket,
             sp_addr_tx,
             discovery_addr,
-            max_attempts,
+            max_attempts_per_rpc,
             per_attempt_timeout,
             cmds_rx,
         );
         let inner_task = tokio::spawn(inner.run());
 
-        Self { cmds_tx, sp_addr_rx, inner_task, log }
+        Ok(Self { cmds_tx, sp_addr_rx, inner_task, log })
     }
 
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
@@ -413,6 +439,34 @@ impl SingleSp {
     }
 }
 
+// Helper wrapper around `if_nametoindex()` that retries indefinitely if the
+// lookup fails.
+async fn wait_for_interface_scope_id(interface: &str, log: &Logger) -> u32 {
+    // We're going to constantly spin waiting for `config.interface` to exist;
+    // how long do we sleep between attempts?
+    const SLEEP_BETWEEN_RETRY: Duration = Duration::from_secs(5);
+
+    loop {
+        match nix::net::if_::if_nametoindex(interface) {
+            Ok(id) => return id,
+            Err(err) => {
+                // TODO This assumes something else is responsible for
+                // creating the interface we're supposed to use; if it needs
+                // to be us (or if we need to do extra work to use it) we
+                // need to do more here.
+                info!(
+                    log,
+                    "if_nametoindex failed; will retry after {:?}",
+                    SLEEP_BETWEEN_RETRY;
+                    "interface" => interface,
+                    "err" => %err,
+                );
+                tokio::time::sleep(SLEEP_BETWEEN_RETRY).await;
+            }
+        }
+    }
+}
+
 // Helper function to unpack an inventory page packet's TLV device
 // descriptions into `out`.
 fn decode_tlv_devices(
@@ -684,7 +738,7 @@ struct Inner {
     socket: UdpSocket,
     sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
     discovery_addr: SocketAddrV6,
-    max_attempts: usize,
+    max_attempts_per_rpc: usize,
     per_attempt_timeout: Duration,
     serial_console_tx: Option<mpsc::Sender<(u64, Vec<u8>)>>,
     cmds_rx: mpsc::Receiver<InnerCommand>,
@@ -698,7 +752,7 @@ impl Inner {
         socket: UdpSocket,
         sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
         discovery_addr: SocketAddrV6,
-        max_attempts: usize,
+        max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         cmds_rx: mpsc::Receiver<InnerCommand>,
     ) -> Self {
@@ -707,7 +761,7 @@ impl Inner {
             socket,
             sp_addr_tx,
             discovery_addr,
-            max_attempts,
+            max_attempts_per_rpc,
             per_attempt_timeout,
             serial_console_tx: None,
             cmds_rx,
@@ -717,6 +771,12 @@ impl Inner {
     }
 
     async fn run(mut self) {
+        // If discovery fails (typically due to timeout, but also possible due
+        // to misconfiguration where we can't send packets at all), how long do
+        // we wait before retrying? If failure is due to misconfiguration, we
+        // will never succeed - how do we cope with that?
+        const SLEEP_BETWEEN_DISCOVERY_RETRY: Duration = Duration::from_secs(1);
+
         let mut incoming_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
 
         let maybe_known_addr = *self.sp_addr_tx.borrow();
@@ -732,11 +792,17 @@ impl Inner {
                 loop {
                     match self.discover(&mut incoming_buf).await {
                         Ok(addr) => {
-                            debug!(self.log, "SP discovered"; "addr" => %addr);
                             break addr;
                         }
                         Err(err) => {
-                            debug!(self.log, "discovery failed"; "err" => %err);
+                            info!(
+                                self.log,
+                                "discovery failed";
+                                "err" => %err,
+                                "addr" => %self.discovery_addr,
+                            );
+                            tokio::time::sleep(SLEEP_BETWEEN_DISCOVERY_RETRY)
+                                .await;
                             continue;
                         }
                     }
@@ -954,7 +1020,7 @@ impl Inner {
         };
         let outgoing_buf = &outgoing_buf[..n];
 
-        for attempt in 1..=self.max_attempts {
+        for attempt in 1..=self.max_attempts_per_rpc {
             trace!(
                 self.log, "sending request to SP";
                 "request" => ?request,
@@ -975,7 +1041,9 @@ impl Inner {
             }
         }
 
-        Err(SpCommunicationError::ExhaustedNumAttempts(self.max_attempts))
+        Err(SpCommunicationError::ExhaustedNumAttempts(
+            self.max_attempts_per_rpc,
+        ))
     }
 
     async fn rpc_call_one_attempt(

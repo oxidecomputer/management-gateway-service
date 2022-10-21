@@ -34,7 +34,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 
 #[serde_as]
@@ -117,24 +116,16 @@ impl ManagementSwitch {
         // instead of `usize`.
         let mut ports = HashMap::with_capacity(config.port.len());
         for (port, port_config) in config.port {
-            let addr = port_config.config.listen_addr;
-            let socket = UdpSocket::bind(addr)
-                .await
-                .map_err(|err| StartupError::UdpBind { addr, err })?;
+            let single_sp = SingleSp::new(
+                port_config.config.clone(),
+                config.rpc_max_attempts,
+                Duration::from_millis(config.rpc_per_attempt_timeout_millis),
+                log.new(o!("switch_port" => port)),
+            )
+            .await?;
 
             let port = SwitchPort(port);
-            sockets.insert(
-                port,
-                SingleSp::new(
-                    socket,
-                    port_config.config.discovery_addr,
-                    config.rpc_max_attempts,
-                    Duration::from_millis(
-                        config.rpc_per_attempt_timeout_millis,
-                    ),
-                    log.new(o!("switch_port" => port.0)),
-                ),
-            );
+            sockets.insert(port, single_sp);
             ports.insert(port, port_config);
         }
 

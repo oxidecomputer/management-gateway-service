@@ -15,6 +15,7 @@ use gateway_messages::SpComponent;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::SingleSp;
+use gateway_sp_comms::SwitchPortConfig;
 use slog::info;
 use slog::o;
 use slog::Drain;
@@ -24,7 +25,6 @@ use std::fs;
 use std::net::SocketAddrV6;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::net::UdpSocket;
 use uuid::Uuid;
 
 mod usart;
@@ -80,22 +80,6 @@ enum Command {
     /// Discover a connected SP.
     Discover,
 
-    /// Send a command to a connected SP.
-    Sp {
-        /// Address of the SP.
-        ///
-        /// If not provided, we attempt to discover an SP via the normal
-        /// discovery mechanism (the same as the `discover` subcommand).
-        #[clap(long)]
-        addr: Option<SocketAddrV6>,
-
-        #[clap(subcommand)]
-        command: SpCommand,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum SpCommand {
     /// Ask SP for its current state.
     State,
 
@@ -170,59 +154,31 @@ async fn main() -> Result<()> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!("component" => "faux-mgs"));
 
-    let scope_id = match args.interface {
-        Some(iface) => {
-            // If `iface` is already an integer, just use it. Otherwise, run it
-            // through `if_nametoindex()` to work around
-            // https://github.com/rust-lang/rust/issues/65976.
-            match iface.parse::<u32>() {
-                Ok(n) => n,
-                Err(_) => nix::net::if_::if_nametoindex(iface.as_str())
-                    .with_context(|| {
-                        format!("failed to find scope ID for interface {iface}")
-                    })?,
-            }
-        }
-        None => 0,
-    };
-
-    let mut listen_addr = args.listen_addr;
-    listen_addr.set_scope_id(scope_id);
-    let socket = UdpSocket::bind(listen_addr).await.with_context(|| {
-        format!("failed to bind UDP socket to {}", args.listen_addr)
-    })?;
-
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
 
-    let mut discovery_addr = args.discovery_addr;
-    discovery_addr.set_scope_id(scope_id);
-    let command = match args.command {
-        Command::Discover => {
-            info!(
-                log, "attempting SP discovery";
-                "discovery_addr" => %discovery_addr,
-            );
-            None
-        }
-        Command::Sp { addr, command } => {
-            if let Some(addr) = addr {
-                discovery_addr = addr;
-            }
-            Some(command)
-        }
-    };
+    if let Some(interface) = args.interface.as_ref() {
+        info!(log, "binding to {} on {}", args.discovery_addr, interface);
+    } else {
+        info!(log, "binding to {}", args.discovery_addr);
+    }
 
     let sp = SingleSp::new(
-        socket,
-        discovery_addr,
+        SwitchPortConfig {
+            listen_addr: args.listen_addr,
+            discovery_addr: args.discovery_addr,
+            interface: args.interface,
+        },
         args.max_attempts,
         per_attempt_timeout,
         log.clone(),
-    );
+    )
+    .await
+    .with_context(|| "failed to create single SP communicator")?;
 
-    match command {
-        None => {
+    match args.command {
+        Command::Discover => {
+            info!(log, "attempting SP discovery");
             // "None" command indicates only discovery was requested; loop until
             // discovery completes, then log the result.
             let mut addr_watch = sp.sp_addr_watch().clone();
@@ -243,10 +199,10 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(SpCommand::State) => {
+        Command::State => {
             info!(log, "{:?}", sp.state().await?);
         }
-        Some(SpCommand::Inventory) => {
+        Command::Inventory => {
             let inventory = sp.inventory().await?;
             println!(
                 "{:<16} {:<12} {:<16} {:<}",
@@ -263,7 +219,7 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Some(SpCommand::UsartAttach { raw, stdin_buffer_time_millis }) => {
+        Command::UsartAttach { raw, stdin_buffer_time_millis } => {
             usart::run(
                 sp,
                 raw,
@@ -272,11 +228,11 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Some(SpCommand::UsartDetach) => {
+        Command::UsartDetach => {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
         }
-        Some(SpCommand::Update { component, slot, image }) => {
+        Command::Update { component, slot, image } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| {
                     anyhow!("invalid component name: {}", component)
@@ -295,7 +251,7 @@ async fn main() -> Result<()> {
                 },
             )?;
         }
-        Some(SpCommand::UpdateStatus { component }) => {
+        Command::UpdateStatus { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| anyhow!("invalid component name: {component}"))?;
             let status =
@@ -358,14 +314,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(SpCommand::UpdateAbort { component, update_id }) => {
+        Command::UpdateAbort { component, update_id } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| anyhow!("invalid component name: {component}"))?;
             sp.update_abort(sp_component, update_id).await.with_context(
                 || format!("aborting update to {} failed", component),
             )?;
         }
-        Some(SpCommand::PowerState { new_power_state }) => {
+        Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
                 sp.set_power_state(state).await.with_context(|| {
                     format!("failed to set power state to {state:?}")
@@ -379,7 +335,7 @@ async fn main() -> Result<()> {
                 info!(log, "SP power state = {state:?}");
             }
         }
-        Some(SpCommand::Reset) => {
+        Command::Reset => {
             sp.reset_prepare().await?;
             info!(log, "SP is prepared to reset");
             sp.reset_trigger().await?;
