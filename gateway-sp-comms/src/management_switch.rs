@@ -20,8 +20,8 @@ pub use self::location_map::SwitchPortConfig;
 pub use self::location_map::SwitchPortDescription;
 use self::location_map::ValidatedLocationConfig;
 
+use crate::error::ConfigError;
 use crate::error::Error;
-use crate::error::StartupError;
 use crate::single_sp::SingleSp;
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
@@ -108,7 +108,7 @@ impl ManagementSwitch {
     pub(crate) async fn new(
         config: SwitchConfig,
         log: &Logger,
-    ) -> Result<Self, StartupError> {
+    ) -> Result<Self, ConfigError> {
         // begin by binding to all our configured ports; insert them into a map
         // keyed by the switch port they're listening on
         let mut sockets = HashMap::with_capacity(config.port.len());
@@ -121,10 +121,9 @@ impl ManagementSwitch {
                 config.rpc_max_attempts,
                 Duration::from_millis(config.rpc_per_attempt_timeout_millis),
                 log.new(o!("switch_port" => port)),
-            )
-            .await?;
-
+            );
             let port = SwitchPort(port);
+
             sockets.insert(port, single_sp);
             ports.insert(port, port_config);
         }
@@ -133,7 +132,7 @@ impl ManagementSwitch {
         let local_ignition_controller_port =
             SwitchPort(config.local_ignition_controller_port);
         if !ports.contains_key(&local_ignition_controller_port) {
-            return Err(StartupError::InvalidConfig {
+            return Err(ConfigError::InvalidConfig {
                 reasons: vec![format!(
                     "missing local ignition controller port {}",
                     local_ignition_controller_port.0

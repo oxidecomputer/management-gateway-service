@@ -6,7 +6,7 @@
 
 use super::SpIdentifier;
 use super::SwitchPort;
-use crate::error::StartupError;
+use crate::error::ConfigError;
 use crate::single_sp::SingleSp;
 use futures::stream::FuturesUnordered;
 use futures::Stream;
@@ -16,6 +16,7 @@ use serde::Deserialize;
 use serde::Serialize;
 use slog::debug;
 use slog::info;
+use slog::warn;
 use slog::Logger;
 use std::collections::HashMap;
 use std::collections::HashSet;
@@ -194,7 +195,7 @@ struct ValidatedLocationDeterminationConfig {
 impl TryFrom<(&'_ HashMap<SwitchPort, SwitchPortDescription>, LocationConfig)>
     for ValidatedLocationConfig
 {
-    type Error = StartupError;
+    type Error = ConfigError;
 
     fn try_from(
         (ports, config): (
@@ -317,7 +318,7 @@ impl TryFrom<(&'_ HashMap<SwitchPort, SwitchPortDescription>, LocationConfig)>
         if reasons.is_empty() {
             Ok(Self { names, determination })
         } else {
-            Err(StartupError::InvalidConfig { reasons })
+            Err(ConfigError::InvalidConfig { reasons })
         }
     }
 }
@@ -340,16 +341,34 @@ async fn discover_sps(
     // SP address for each switch port in `sockets`.
     let mut futs = FuturesUnordered::new();
     for (switch_port, _config) in port_config {
+        let log = log.clone();
         futs.push(async move {
             // all ports in `port_config` also get sockets bound to them;
             // unwrapping this lookup is fine
             let sp = sockets.get(&switch_port).unwrap();
 
-            let mut addr_watch = sp.sp_addr_watch().clone();
+            // Wait for local startup to complete (finding our interface,
+            // binding a socket, etc.).
+            if let Err(err) = sp.wait_for_startup_completion().await {
+                warn!(
+                    log,
+                    "SP communicator startup failed; giving up on this port";
+                    "switch_port" => ?switch_port,
+                    "err" => %err,
+                );
+                return (switch_port, None);
+            }
+
+            // `sp_addr_watch()` can only fail if startup fails, which we just
+            // checked; this is safe to unwrap.
+            let mut addr_watch = sp.sp_addr_watch().unwrap().clone();
+
             loop {
                 let current = *addr_watch.borrow();
                 match current {
-                    Some((_addr, sp_port)) => return (switch_port, sp_port),
+                    Some((_addr, sp_port)) => {
+                        return (switch_port, Some(sp_port))
+                    }
                     None => {
                         addr_watch.changed().await.unwrap();
                     }
@@ -360,6 +379,12 @@ async fn discover_sps(
 
     // Wait for responses.
     while let Some((switch_port, sp_port)) = futs.next().await {
+        // Skip switch ports where we failed to start our communicator.
+        let sp_port = match sp_port {
+            Some(sp_port) => sp_port,
+            None => continue,
+        };
+
         // See if this port can participate in location determination.
         let pos = match location_determination
             .iter()
@@ -511,7 +536,7 @@ mod tests {
         let err = ValidatedLocationConfig::try_from((&bad_ports, bad_config))
             .unwrap_err();
         let reasons = match err {
-            StartupError::InvalidConfig { reasons } => reasons,
+            ConfigError::InvalidConfig { reasons } => reasons,
             other => panic!("unexpected error {}", other),
         };
 

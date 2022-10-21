@@ -55,6 +55,7 @@ use tokio::time;
 use tokio::time::timeout;
 use uuid::Uuid;
 
+mod startup;
 mod update;
 
 use self::update::start_component_update;
@@ -97,8 +98,7 @@ pub struct SpDevice {
 
 #[derive(Debug)]
 pub struct SingleSp {
-    cmds_tx: mpsc::Sender<InnerCommand>,
-    sp_addr_rx: watch::Receiver<Option<(SocketAddrV6, SpPort)>>,
+    state: startup::State,
     inner_task: JoinHandle<()>,
     log: Logger,
 }
@@ -113,64 +113,57 @@ impl SingleSp {
     /// Construct a new `SingleSp` that will periodically attempt to discover an
     /// SP reachable on the port specified by `config`.
     ///
-    /// This function currently blocks until `config.interface` exists (if it is
-    /// `Some(_)`. If that interface name never exists, this function never
-    /// returns.
-    //
-    // TODO This assumes something else is responsible for creating the
-    // interface we're supposed to use; if it needs to be us (or if we need to
-    // do extra work to use it) we need to do more here.
-    pub async fn new(
+    /// This function returns immediately, but returns an object that is
+    /// initially (and possibly always) unusable: until we complete any local
+    /// setup for our UDP socket, methods of the returned `SingleSp` will fail.
+    /// The local setup includes:
+    ///
+    /// 1. Waiting for an interface with the name specified by
+    ///    `config.interface` to exist (if `config.interface` is `Some(_)`). We
+    ///    determine this via `if_nametoindex()`. This step never fails, but
+    ///    will block forever waiting for the interface.
+    /// 2. Binding a UDP socket to `config.listen_addr` (with a `scope_id`
+    ///    determined by the previous step). If this bind fails (e.g., because
+    ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
+    ///    a "UDP bind failed" error from all methods forever.
+    pub fn new(
         config: SwitchPortConfig,
         max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         log: Logger,
-    ) -> Result<Self, StartupError> {
-        // SPs don't support pipelining, so any command we send to `Inner` that
-        // involves contacting an SP will effectively block until it completes.
-        // We use a more-or-less arbitrary chanel size of 8 here to allow (a)
-        // non-SP commands (e.g., detaching the serial console) and (b) a small
-        // number of enqueued SP commands to be submitted without blocking the
-        // caller.
-        let (cmds_tx, cmds_rx) = mpsc::channel(8);
-        let (sp_addr_tx, sp_addr_rx) = watch::channel(None);
-
-        let scope_id = match config.interface.as_deref() {
-            Some(interface) => {
-                wait_for_interface_scope_id(interface, &log).await
-            }
-            None => 0,
-        };
-
-        let mut listen_addr = config.listen_addr;
-        let mut discovery_addr = config.discovery_addr;
-        listen_addr.set_scope_id(scope_id);
-        discovery_addr.set_scope_id(scope_id);
-
-        let socket = UdpSocket::bind(listen_addr)
-            .await
-            .map_err(|err| StartupError::UdpBind { addr: listen_addr, err })?;
-
-        let inner = Inner::new(
-            log.clone(),
-            socket,
-            sp_addr_tx,
-            discovery_addr,
+    ) -> Self {
+        let (state, run_startup) = startup::State::new(
+            config,
             max_attempts_per_rpc,
             per_attempt_timeout,
-            cmds_rx,
+            log.clone(),
         );
-        let inner_task = tokio::spawn(inner.run());
 
-        Ok(Self { cmds_tx, sp_addr_rx, inner_task, log })
+        let inner_task = tokio::spawn(async move {
+            // If `run_startup` returns `None`, it has failed, and we'll return
+            // errors from all of our methods below. Otherwise, it gave us an
+            // `Inner`, and we can start it up.
+            if let Some(inner) = run_startup.await {
+                inner.run().await;
+            }
+        });
+
+        Self { state, inner_task, log }
+    }
+
+    pub async fn wait_for_startup_completion(
+        &self,
+    ) -> Result<(), StartupError> {
+        self.state.wait_for_startup_completion().await
     }
 
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
     /// SP's address.
     pub fn sp_addr_watch(
         &self,
-    ) -> &watch::Receiver<Option<(SocketAddrV6, SpPort)>> {
-        &self.sp_addr_rx
+    ) -> Result<&watch::Receiver<Option<(SocketAddrV6, SpPort)>>, StartupError>
+    {
+        self.state.sp_addr_rx()
     }
 
     /// Request the state of an ignition target.
@@ -285,6 +278,8 @@ impl SingleSp {
         slot: u16,
         image: Vec<u8>,
     ) -> Result<(), UpdateError> {
+        let cmds_tx = self.state.cmds_tx()?;
+
         if image.is_empty() {
             return Err(UpdateError::ImageEmpty);
         }
@@ -301,15 +296,10 @@ impl SingleSp {
                     ),
                 ));
             }
-            start_sp_update(&self.cmds_tx, update_id, image, &self.log).await
+            start_sp_update(cmds_tx, update_id, image, &self.log).await
         } else {
             start_component_update(
-                &self.cmds_tx,
-                component,
-                update_id,
-                slot,
-                image,
-                &self.log,
+                cmds_tx, component, update_id, slot, image, &self.log,
             )
             .await
         }
@@ -320,7 +310,8 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<UpdateStatus> {
-        update_status(&self.cmds_tx, component).await
+        let cmds_tx = self.state.cmds_tx()?;
+        update_status(cmds_tx, component).await
     }
 
     /// Abort an in-progress update.
@@ -398,11 +389,12 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<AttachedSerialConsole> {
+        let cmds_tx = self.state.cmds_tx()?;
         let (tx, rx) = oneshot::channel();
 
         // `Inner::run()` doesn't exit until we are dropped, so unwrapping here
         // only panics if it itself panicked.
-        self.cmds_tx
+        cmds_tx
             .send(InnerCommand::SerialConsoleAttach(component, tx))
             .await
             .unwrap();
@@ -412,18 +404,19 @@ impl SingleSp {
         Ok(AttachedSerialConsole {
             key: attachment.key,
             rx: attachment.incoming,
-            inner_tx: self.cmds_tx.clone(),
+            inner_tx: cmds_tx.clone(),
             log: self.log.clone(),
         })
     }
 
     /// Detach any existing attached serial console connection.
     pub async fn serial_console_detach(&self) -> Result<()> {
+        let cmds_tx = self.state.cmds_tx()?;
         let (tx, rx) = oneshot::channel();
 
         // `Inner::run()` doesn't exit until we are dropped, so unwrapping here
         // only panics if it itself panicked.
-        self.cmds_tx
+        cmds_tx
             .send(InnerCommand::SerialConsoleDetach(None, tx))
             .await
             .unwrap();
@@ -435,35 +428,8 @@ impl SingleSp {
         &self,
         kind: RequestKind,
     ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
-        rpc(&self.cmds_tx, kind, None).await.result
-    }
-}
-
-// Helper wrapper around `if_nametoindex()` that retries indefinitely if the
-// lookup fails.
-async fn wait_for_interface_scope_id(interface: &str, log: &Logger) -> u32 {
-    // We're going to constantly spin waiting for `config.interface` to exist;
-    // how long do we sleep between attempts?
-    const SLEEP_BETWEEN_RETRY: Duration = Duration::from_secs(5);
-
-    loop {
-        match nix::net::if_::if_nametoindex(interface) {
-            Ok(id) => return id,
-            Err(err) => {
-                // TODO This assumes something else is responsible for
-                // creating the interface we're supposed to use; if it needs
-                // to be us (or if we need to do extra work to use it) we
-                // need to do more here.
-                info!(
-                    log,
-                    "if_nametoindex failed; will retry after {:?}",
-                    SLEEP_BETWEEN_RETRY;
-                    "interface" => interface,
-                    "err" => %err,
-                );
-                tokio::time::sleep(SLEEP_BETWEEN_RETRY).await;
-            }
-        }
+        let cmds_tx = self.state.cmds_tx()?;
+        rpc(cmds_tx, kind, None).await.result
     }
 }
 
