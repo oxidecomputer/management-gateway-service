@@ -174,17 +174,17 @@ async fn main() -> Result<()> {
         log.clone(),
     );
 
+    // Wait for `sp` to finish starting up.
+    sp.wait_for_startup_completion()
+        .await
+        .with_context(|| "SP communicator startup failed")?;
+
     match args.command {
         Command::Discover => {
             info!(log, "attempting SP discovery");
 
-            // Wait for `sp` to finish starting up.
-            sp.wait_for_startup_completion()
-                .await
-                .with_context(|| "SP communicator startup failed")?;
-
-            // `sp_addr_watch()` can only fail if startup fails, which we just
-            // checked; this is safe to unwrap.
+            // `sp_addr_watch()` can only fail if startup fails, which we waited
+            // for and checked above; this is safe to unwrap.
             let mut addr_watch = sp.sp_addr_watch().unwrap().clone();
 
             // "None" command indicates only discovery was requested; loop until
