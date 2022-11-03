@@ -5,8 +5,8 @@
 // Copyright 2022 Oxide Computer Company
 
 use crate::error::BadResponseType;
+use crate::error::ConfigError;
 use crate::error::Error;
-use crate::error::StartupError;
 use crate::management_switch::ManagementSwitch;
 use crate::management_switch::SwitchPort;
 use crate::single_sp::AttachedSerialConsole;
@@ -58,7 +58,7 @@ impl Communicator {
     pub async fn new(
         config: SwitchConfig,
         log: &Logger,
-    ) -> Result<Self, StartupError> {
+    ) -> Result<Self, ConfigError> {
         let log = log.new(o!("component" => "SpCommunicator"));
         let switch = ManagementSwitch::new(config, &log).await?;
 

@@ -11,8 +11,20 @@ use std::net::SocketAddrV6;
 use std::time::Duration;
 use thiserror::Error;
 
+#[derive(Debug, Clone, Error)]
+pub enum StartupError {
+    #[error("waiting for interface to exist: {0}")]
+    WaitingForInterface(String),
+    #[error("waiting to bind to listening address: {0}")]
+    WaitingToBind(SocketAddrV6),
+    #[error("error binding to UDP address {addr}: {err}")]
+    UdpBind { addr: SocketAddrV6, err: String },
+}
+
 #[derive(Debug, Error)]
 pub enum SpCommunicationError {
+    #[error("interface startup incomplete or failed: {0}")]
+    StartupError(#[from] StartupError),
     #[error("failed to send UDP packet to {addr}: {err}")]
     UdpSendTo { addr: SocketAddrV6, err: io::Error },
     #[error("failed to recv UDP packet: {0}")]
@@ -35,6 +47,8 @@ pub enum SpCommunicationError {
 
 #[derive(Debug, Error)]
 pub enum UpdateError {
+    #[error("interface startup incomplete or failed: {0}")]
+    StartupError(#[from] StartupError),
     #[error("update image cannot be empty")]
     ImageEmpty,
     #[error("update image is too large")]
@@ -54,13 +68,9 @@ pub enum UpdateError {
 }
 
 #[derive(Debug, Error)]
-pub enum StartupError {
-    #[error("error binding to UDP address {addr}: {err}")]
-    UdpBind { addr: SocketAddrV6, err: io::Error },
+pub enum ConfigError {
     #[error("invalid configuration file: {}", .reasons.join(", "))]
     InvalidConfig { reasons: Vec<String> },
-    #[error("error communicating with SP: {0}")]
-    SpCommunicationFailed(#[from] SpCommunicationError),
 }
 
 #[derive(Debug, Error)]

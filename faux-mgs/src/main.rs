@@ -15,7 +15,7 @@ use gateway_messages::SpComponent;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::SingleSp;
-use gateway_sp_comms::DISCOVERY_MULTICAST_ADDR;
+use gateway_sp_comms::SwitchPortConfig;
 use slog::info;
 use slog::o;
 use slog::Drain;
@@ -25,7 +25,6 @@ use std::fs;
 use std::net::SocketAddrV6;
 use std::path::PathBuf;
 use std::time::Duration;
-use tokio::net::UdpSocket;
 use uuid::Uuid;
 
 mod usart;
@@ -43,18 +42,18 @@ struct Args {
     log_level: Level,
 
     /// Address to bind to locally.
-    ///
-    /// May need an interface specification (e.g., `[::%2]:0`), depending
-    /// on the host OS and network setup between the host and SP.
     #[clap(long, default_value = "[::]:0")]
-    local_addr: SocketAddrV6,
+    listen_addr: SocketAddrV6,
 
+    /// Address to use to discover the SP. May be a specific SP's address to
+    /// bypass multicast discovery.
+    #[clap(long, default_value_t = gateway_sp_comms::default_discovery_addr())]
+    discovery_addr: SocketAddrV6,
+
+    /// Interface to specify as the scope ID for both `listen_addr` and
+    /// `discovery_addr`.
     #[clap(long)]
     interface: Option<String>,
-
-    /// Listening port for the `mgmt-gateway` task on the SP.
-    #[clap(long, short, default_value = "11111")]
-    discovery_port: u16,
 
     /// Maximum number of attempts to make when sending requests to the SP.
     #[clap(long, default_value = "5")]
@@ -81,22 +80,6 @@ enum Command {
     /// Discover a connected SP.
     Discover,
 
-    /// Send a command to a connected SP.
-    Sp {
-        /// Address of the SP.
-        ///
-        /// If not provided, we attempt to discover an SP via the normal
-        /// discovery mechanism (the same as the `discover` subcommand).
-        #[clap(long)]
-        addr: Option<SocketAddrV6>,
-
-        #[clap(subcommand)]
-        command: SpCommand,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum SpCommand {
     /// Ask SP for its current state.
     State,
 
@@ -171,64 +154,41 @@ async fn main() -> Result<()> {
     let drain = slog_async::Async::new(drain).build().fuse();
     let log = Logger::root(drain, o!("component" => "faux-mgs"));
 
-    let socket = UdpSocket::bind(args.local_addr).await.with_context(|| {
-        format!("failed to bind UDP socket to {}", args.local_addr)
-    })?;
-
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
 
-    let scope_id = match args.interface {
-        Some(iface) => {
-            // If `iface` is already an integer, just use it. Otherwise, run it
-            // through `if_nametoindex()` to work around
-            // https://github.com/rust-lang/rust/issues/65976.
-            match iface.parse::<u32>() {
-                Ok(n) => n,
-                Err(_) => nix::net::if_::if_nametoindex(iface.as_str())
-                    .with_context(|| {
-                        format!("failed to find scope ID for interface {iface}")
-                    })?,
-            }
-        }
-        None => 0,
-    };
-
-    let mut discovery_addr = SocketAddrV6::new(
-        DISCOVERY_MULTICAST_ADDR,
-        args.discovery_port,
-        0,
-        scope_id,
-    );
-    let command = match args.command {
-        Command::Discover => {
-            info!(
-                log, "attempting SP discovery";
-                "discovery_addr" => %discovery_addr,
-            );
-            None
-        }
-        Command::Sp { addr, command } => {
-            if let Some(addr) = addr {
-                discovery_addr = addr;
-            }
-            Some(command)
-        }
-    };
+    if let Some(interface) = args.interface.as_ref() {
+        info!(log, "binding to {} on {}", args.discovery_addr, interface);
+    } else {
+        info!(log, "binding to {}", args.discovery_addr);
+    }
 
     let sp = SingleSp::new(
-        socket,
-        discovery_addr,
+        SwitchPortConfig {
+            listen_addr: args.listen_addr,
+            discovery_addr: args.discovery_addr,
+            interface: args.interface,
+        },
         args.max_attempts,
         per_attempt_timeout,
         log.clone(),
     );
 
-    match command {
-        None => {
+    // Wait for `sp` to finish starting up.
+    sp.wait_for_startup_completion()
+        .await
+        .with_context(|| "SP communicator startup failed")?;
+
+    match args.command {
+        Command::Discover => {
+            info!(log, "attempting SP discovery");
+
+            // `sp_addr_watch()` can only fail if startup fails, which we waited
+            // for and checked above; this is safe to unwrap.
+            let mut addr_watch = sp.sp_addr_watch().unwrap().clone();
+
             // "None" command indicates only discovery was requested; loop until
             // discovery completes, then log the result.
-            let mut addr_watch = sp.sp_addr_watch().clone();
             loop {
                 let current = *addr_watch.borrow();
                 match current {
@@ -246,10 +206,10 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(SpCommand::State) => {
+        Command::State => {
             info!(log, "{:?}", sp.state().await?);
         }
-        Some(SpCommand::Inventory) => {
+        Command::Inventory => {
             let inventory = sp.inventory().await?;
             println!(
                 "{:<16} {:<12} {:<16} {:<}",
@@ -266,7 +226,7 @@ async fn main() -> Result<()> {
                 );
             }
         }
-        Some(SpCommand::UsartAttach { raw, stdin_buffer_time_millis }) => {
+        Command::UsartAttach { raw, stdin_buffer_time_millis } => {
             usart::run(
                 sp,
                 raw,
@@ -275,11 +235,11 @@ async fn main() -> Result<()> {
             )
             .await?;
         }
-        Some(SpCommand::UsartDetach) => {
+        Command::UsartDetach => {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
         }
-        Some(SpCommand::Update { component, slot, image }) => {
+        Command::Update { component, slot, image } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| {
                     anyhow!("invalid component name: {}", component)
@@ -298,7 +258,7 @@ async fn main() -> Result<()> {
                 },
             )?;
         }
-        Some(SpCommand::UpdateStatus { component }) => {
+        Command::UpdateStatus { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| anyhow!("invalid component name: {component}"))?;
             let status =
@@ -361,14 +321,14 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Some(SpCommand::UpdateAbort { component, update_id }) => {
+        Command::UpdateAbort { component, update_id } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| anyhow!("invalid component name: {component}"))?;
             sp.update_abort(sp_component, update_id).await.with_context(
                 || format!("aborting update to {} failed", component),
             )?;
         }
-        Some(SpCommand::PowerState { new_power_state }) => {
+        Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
                 sp.set_power_state(state).await.with_context(|| {
                     format!("failed to set power state to {state:?}")
@@ -382,7 +342,7 @@ async fn main() -> Result<()> {
                 info!(log, "SP power state = {state:?}");
             }
         }
-        Some(SpCommand::Reset) => {
+        Command::Reset => {
             sp.reset_prepare().await?;
             info!(log, "SP is prepared to reset");
             sp.reset_trigger().await?;

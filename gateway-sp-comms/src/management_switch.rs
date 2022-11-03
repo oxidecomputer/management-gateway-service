@@ -17,10 +17,11 @@ pub use self::location_map::LocationConfig;
 pub use self::location_map::LocationDeterminationConfig;
 use self::location_map::LocationMap;
 pub use self::location_map::SwitchPortConfig;
+pub use self::location_map::SwitchPortDescription;
 use self::location_map::ValidatedLocationConfig;
 
+use crate::error::ConfigError;
 use crate::error::Error;
-use crate::error::StartupError;
 use crate::single_sp::SingleSp;
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
@@ -33,7 +34,6 @@ use std::collections::HashMap;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use std::time::Duration;
-use tokio::net::UdpSocket;
 use tokio::task::JoinHandle;
 
 #[serde_as]
@@ -44,7 +44,7 @@ pub struct SwitchConfig {
     pub rpc_per_attempt_timeout_millis: u64,
     pub location: LocationConfig,
     #[serde_as(as = "HashMap<DisplayFromStr, _>")]
-    pub port: HashMap<usize, SwitchPortConfig>,
+    pub port: HashMap<usize, SwitchPortDescription>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Deserialize, Serialize)]
@@ -108,7 +108,7 @@ impl ManagementSwitch {
     pub(crate) async fn new(
         config: SwitchConfig,
         log: &Logger,
-    ) -> Result<Self, StartupError> {
+    ) -> Result<Self, ConfigError> {
         // begin by binding to all our configured ports; insert them into a map
         // keyed by the switch port they're listening on
         let mut sockets = HashMap::with_capacity(config.port.len());
@@ -116,24 +116,15 @@ impl ManagementSwitch {
         // instead of `usize`.
         let mut ports = HashMap::with_capacity(config.port.len());
         for (port, port_config) in config.port {
-            let addr = port_config.data_link_addr;
-            let socket = UdpSocket::bind(addr)
-                .await
-                .map_err(|err| StartupError::UdpBind { addr, err })?;
-
-            let port = SwitchPort(port);
-            sockets.insert(
-                port,
-                SingleSp::new(
-                    socket,
-                    port_config.multicast_addr,
-                    config.rpc_max_attempts,
-                    Duration::from_millis(
-                        config.rpc_per_attempt_timeout_millis,
-                    ),
-                    log.new(o!("switch_port" => port.0)),
-                ),
+            let single_sp = SingleSp::new(
+                port_config.config.clone(),
+                config.rpc_max_attempts,
+                Duration::from_millis(config.rpc_per_attempt_timeout_millis),
+                log.new(o!("switch_port" => port)),
             );
+            let port = SwitchPort(port);
+
+            sockets.insert(port, single_sp);
             ports.insert(port, port_config);
         }
 
@@ -141,7 +132,7 @@ impl ManagementSwitch {
         let local_ignition_controller_port =
             SwitchPort(config.local_ignition_controller_port);
         if !ports.contains_key(&local_ignition_controller_port) {
-            return Err(StartupError::InvalidConfig {
+            return Err(ConfigError::InvalidConfig {
                 reasons: vec![format!(
                     "missing local ignition controller port {}",
                     local_ignition_controller_port.0

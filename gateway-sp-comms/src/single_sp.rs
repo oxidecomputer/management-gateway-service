@@ -9,7 +9,9 @@
 use crate::communicator::ResponseKindExt;
 use crate::error::BadResponseType;
 use crate::error::SpCommunicationError;
+use crate::error::StartupError;
 use crate::error::UpdateError;
+use crate::SwitchPortConfig;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
@@ -40,7 +42,6 @@ use slog::Logger;
 use std::io::Cursor;
 use std::io::Seek;
 use std::io::SeekFrom;
-use std::net::Ipv6Addr;
 use std::net::SocketAddr;
 use std::net::SocketAddrV6;
 use std::str;
@@ -54,14 +55,12 @@ use tokio::time;
 use tokio::time::timeout;
 use uuid::Uuid;
 
+mod startup;
 mod update;
 
 use self::update::start_component_update;
 use self::update::start_sp_update;
 use self::update::update_status;
-
-pub const DISCOVERY_MULTICAST_ADDR: Ipv6Addr =
-    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
 
 // Once we've discovered an SP, continue to send discovery packets on this
 // interval to detect changes.
@@ -99,8 +98,7 @@ pub struct SpDevice {
 
 #[derive(Debug)]
 pub struct SingleSp {
-    cmds_tx: mpsc::Sender<InnerCommand>,
-    sp_addr_rx: watch::Receiver<Option<(SocketAddrV6, SpPort)>>,
+    state: startup::State,
     inner_task: JoinHandle<()>,
     log: Logger,
 }
@@ -113,44 +111,65 @@ impl Drop for SingleSp {
 
 impl SingleSp {
     /// Construct a new `SingleSp` that will periodically attempt to discover an
-    /// SP reachable at `discovery_addr` (typically
-    /// [`DISCOVERY_MULTICAST_ADDR`], but possibly different in test /
-    /// development setups).
+    /// SP reachable on the port specified by `config`.
+    ///
+    /// This function returns immediately, but returns an object that is
+    /// initially (and possibly always) unusable: until we complete any local
+    /// setup for our UDP socket, methods of the returned `SingleSp` will fail.
+    /// The local setup includes:
+    ///
+    /// 1. Waiting for an interface with the name specified by
+    ///    `config.interface` to exist (if `config.interface` is `Some(_)`). We
+    ///    determine this via `if_nametoindex()`. This step never fails, but
+    ///    will block forever waiting for the interface.
+    /// 2. Binding a UDP socket to `config.listen_addr` (with a `scope_id`
+    ///    determined by the previous step). If this bind fails (e.g., because
+    ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
+    ///    a "UDP bind failed" error from all methods forever.
     pub fn new(
-        socket: UdpSocket,
-        discovery_addr: SocketAddrV6,
-        max_attempts: usize,
+        config: SwitchPortConfig,
+        max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         log: Logger,
     ) -> Self {
-        // SPs don't support pipelining, so any command we send to `Inner` that
-        // involves contacting an SP will effectively block until it completes.
-        // We use a more-or-less arbitrary chanel size of 8 here to allow (a)
-        // non-SP commands (e.g., detaching the serial console) and (b) a small
-        // number of enqueued SP commands to be submitted without blocking the
-        // caller.
-        let (cmds_tx, cmds_rx) = mpsc::channel(8);
-        let (sp_addr_tx, sp_addr_rx) = watch::channel(None);
-        let inner = Inner::new(
-            log.clone(),
-            socket,
-            sp_addr_tx,
-            discovery_addr,
-            max_attempts,
+        let (state, run_startup) = startup::State::new(
+            config,
+            max_attempts_per_rpc,
             per_attempt_timeout,
-            cmds_rx,
+            log.clone(),
         );
-        let inner_task = tokio::spawn(inner.run());
 
-        Self { cmds_tx, sp_addr_rx, inner_task, log }
+        let inner_task = tokio::spawn(async move {
+            // If `run_startup` returns `None`, it has failed, and we'll return
+            // errors from all of our methods below. Otherwise, it gave us an
+            // `Inner`, and we can start it up.
+            if let Some(inner) = run_startup.await {
+                inner.run().await;
+            }
+        });
+
+        Self { state, inner_task, log }
+    }
+
+    /// Block until all our local setup (see [`SingleSp::new()`] is complete.
+    pub async fn wait_for_startup_completion(
+        &self,
+    ) -> Result<(), StartupError> {
+        self.state.wait_for_startup_completion().await
     }
 
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
     /// SP's address.
+    ///
+    /// This function only returns an error if startup has failed; if startup
+    /// has succeeded, always returns `Ok(_)` even if no SP has been discovered
+    /// yet (in which case the returned receiver will be holding the value
+    /// `None`).
     pub fn sp_addr_watch(
         &self,
-    ) -> &watch::Receiver<Option<(SocketAddrV6, SpPort)>> {
-        &self.sp_addr_rx
+    ) -> Result<&watch::Receiver<Option<(SocketAddrV6, SpPort)>>, StartupError>
+    {
+        self.state.sp_addr_rx()
     }
 
     /// Request the state of an ignition target.
@@ -265,6 +284,8 @@ impl SingleSp {
         slot: u16,
         image: Vec<u8>,
     ) -> Result<(), UpdateError> {
+        let cmds_tx = self.state.cmds_tx()?;
+
         if image.is_empty() {
             return Err(UpdateError::ImageEmpty);
         }
@@ -281,15 +302,10 @@ impl SingleSp {
                     ),
                 ));
             }
-            start_sp_update(&self.cmds_tx, update_id, image, &self.log).await
+            start_sp_update(cmds_tx, update_id, image, &self.log).await
         } else {
             start_component_update(
-                &self.cmds_tx,
-                component,
-                update_id,
-                slot,
-                image,
-                &self.log,
+                cmds_tx, component, update_id, slot, image, &self.log,
             )
             .await
         }
@@ -300,7 +316,8 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<UpdateStatus> {
-        update_status(&self.cmds_tx, component).await
+        let cmds_tx = self.state.cmds_tx()?;
+        update_status(cmds_tx, component).await
     }
 
     /// Abort an in-progress update.
@@ -378,11 +395,12 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<AttachedSerialConsole> {
+        let cmds_tx = self.state.cmds_tx()?;
         let (tx, rx) = oneshot::channel();
 
         // `Inner::run()` doesn't exit until we are dropped, so unwrapping here
         // only panics if it itself panicked.
-        self.cmds_tx
+        cmds_tx
             .send(InnerCommand::SerialConsoleAttach(component, tx))
             .await
             .unwrap();
@@ -392,18 +410,19 @@ impl SingleSp {
         Ok(AttachedSerialConsole {
             key: attachment.key,
             rx: attachment.incoming,
-            inner_tx: self.cmds_tx.clone(),
+            inner_tx: cmds_tx.clone(),
             log: self.log.clone(),
         })
     }
 
     /// Detach any existing attached serial console connection.
     pub async fn serial_console_detach(&self) -> Result<()> {
+        let cmds_tx = self.state.cmds_tx()?;
         let (tx, rx) = oneshot::channel();
 
         // `Inner::run()` doesn't exit until we are dropped, so unwrapping here
         // only panics if it itself panicked.
-        self.cmds_tx
+        cmds_tx
             .send(InnerCommand::SerialConsoleDetach(None, tx))
             .await
             .unwrap();
@@ -415,7 +434,8 @@ impl SingleSp {
         &self,
         kind: RequestKind,
     ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
-        rpc(&self.cmds_tx, kind, None).await.result
+        let cmds_tx = self.state.cmds_tx()?;
+        rpc(cmds_tx, kind, None).await.result
     }
 }
 
@@ -690,7 +710,7 @@ struct Inner {
     socket: UdpSocket,
     sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
     discovery_addr: SocketAddrV6,
-    max_attempts: usize,
+    max_attempts_per_rpc: usize,
     per_attempt_timeout: Duration,
     serial_console_tx: Option<mpsc::Sender<(u64, Vec<u8>)>>,
     cmds_rx: mpsc::Receiver<InnerCommand>,
@@ -704,7 +724,7 @@ impl Inner {
         socket: UdpSocket,
         sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
         discovery_addr: SocketAddrV6,
-        max_attempts: usize,
+        max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         cmds_rx: mpsc::Receiver<InnerCommand>,
     ) -> Self {
@@ -713,7 +733,7 @@ impl Inner {
             socket,
             sp_addr_tx,
             discovery_addr,
-            max_attempts,
+            max_attempts_per_rpc,
             per_attempt_timeout,
             serial_console_tx: None,
             cmds_rx,
@@ -723,6 +743,12 @@ impl Inner {
     }
 
     async fn run(mut self) {
+        // If discovery fails (typically due to timeout, but also possible due
+        // to misconfiguration where we can't send packets at all), how long do
+        // we wait before retrying? If failure is due to misconfiguration, we
+        // will never succeed - how do we cope with that?
+        const SLEEP_BETWEEN_DISCOVERY_RETRY: Duration = Duration::from_secs(1);
+
         let mut incoming_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
 
         let maybe_known_addr = *self.sp_addr_tx.borrow();
@@ -738,11 +764,17 @@ impl Inner {
                 loop {
                     match self.discover(&mut incoming_buf).await {
                         Ok(addr) => {
-                            debug!(self.log, "SP discovered"; "addr" => %addr);
                             break addr;
                         }
                         Err(err) => {
-                            debug!(self.log, "discovery failed"; "err" => %err);
+                            info!(
+                                self.log,
+                                "discovery failed";
+                                "err" => %err,
+                                "addr" => %self.discovery_addr,
+                            );
+                            tokio::time::sleep(SLEEP_BETWEEN_DISCOVERY_RETRY)
+                                .await;
                             continue;
                         }
                     }
@@ -960,7 +992,7 @@ impl Inner {
         };
         let outgoing_buf = &outgoing_buf[..n];
 
-        for attempt in 1..=self.max_attempts {
+        for attempt in 1..=self.max_attempts_per_rpc {
             trace!(
                 self.log, "sending request to SP";
                 "request" => ?request,
@@ -981,7 +1013,9 @@ impl Inner {
             }
         }
 
-        Err(SpCommunicationError::ExhaustedNumAttempts(self.max_attempts))
+        Err(SpCommunicationError::ExhaustedNumAttempts(
+            self.max_attempts_per_rpc,
+        ))
     }
 
     async fn rpc_call_one_attempt(
