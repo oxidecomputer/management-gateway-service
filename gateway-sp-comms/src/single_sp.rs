@@ -6,11 +6,10 @@
 
 //! Interface for communicating with a single SP.
 
-use crate::communicator::ResponseKindExt;
-use crate::error::BadResponseType;
 use crate::error::SpCommunicationError;
 use crate::error::StartupError;
 use crate::error::UpdateError;
+use crate::sp_response_ext::SpResponseExt;
 use crate::SwitchPortConfig;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
@@ -19,18 +18,18 @@ use gateway_messages::BulkIgnitionState;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
+use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
+use gateway_messages::Message;
+use gateway_messages::MessageKind;
+use gateway_messages::MgsRequest;
 use gateway_messages::PowerState;
-use gateway_messages::Request;
-use gateway_messages::RequestHeader;
-use gateway_messages::RequestKind;
-use gateway_messages::ResponseError;
-use gateway_messages::ResponseKind;
 use gateway_messages::SpComponent;
-use gateway_messages::SpMessage;
-use gateway_messages::SpMessageKind;
+use gateway_messages::SpError;
 use gateway_messages::SpPort;
+use gateway_messages::SpRequest;
+use gateway_messages::SpResponse;
 use gateway_messages::SpState;
 use gateway_messages::UpdateStatus;
 use slog::debug;
@@ -176,7 +175,7 @@ impl SingleSp {
     ///
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_state(&self, target: u8) -> Result<IgnitionState> {
-        self.rpc(RequestKind::IgnitionState { target }).await.and_then(
+        self.rpc(MgsRequest::IgnitionState { target }).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_ignition_state().map_err(Into::into)
             },
@@ -187,7 +186,7 @@ impl SingleSp {
     ///
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn bulk_ignition_state(&self) -> Result<BulkIgnitionState> {
-        self.rpc(RequestKind::BulkIgnitionState).await.and_then(
+        self.rpc(MgsRequest::BulkIgnitionState).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_bulk_ignition_state().map_err(Into::into)
             },
@@ -202,7 +201,7 @@ impl SingleSp {
         target: u8,
         command: IgnitionCommand,
     ) -> Result<()> {
-        self.rpc(RequestKind::IgnitionCommand { target, command })
+        self.rpc(MgsRequest::IgnitionCommand { target, command })
             .await
             .and_then(|(_peer, response, _data)| {
                 response.expect_ignition_command_ack().map_err(Into::into)
@@ -211,7 +210,7 @@ impl SingleSp {
 
     /// Request the state of the SP.
     pub async fn state(&self) -> Result<SpState> {
-        self.rpc(RequestKind::SpState).await.and_then(
+        self.rpc(MgsRequest::SpState).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_sp_state().map_err(Into::into)
             },
@@ -230,7 +229,7 @@ impl SingleSp {
             let device_index = devices.len() as u32;
 
             let (page, data) = self
-                .rpc(RequestKind::Inventory { device_index })
+                .rpc(MgsRequest::Inventory { device_index })
                 .await
                 .and_then(|(_peer, response, data)| {
                     response
@@ -298,7 +297,7 @@ impl SingleSp {
                 // the caller requested a slot other than 0.
                 return Err(UpdateError::Communication(
                     SpCommunicationError::SpError(
-                        ResponseError::InvalidSlotForComponent,
+                        SpError::InvalidSlotForComponent,
                     ),
                 ));
             }
@@ -326,7 +325,7 @@ impl SingleSp {
         component: SpComponent,
         update_id: Uuid,
     ) -> Result<()> {
-        self.rpc(RequestKind::UpdateAbort { component, id: update_id.into() })
+        self.rpc(MgsRequest::UpdateAbort { component, id: update_id.into() })
             .await
             .and_then(|(_peer, response, _data)| {
                 response.expect_update_abort_ack().map_err(Into::into)
@@ -335,7 +334,7 @@ impl SingleSp {
 
     /// Get the current power state.
     pub async fn power_state(&self) -> Result<PowerState> {
-        self.rpc(RequestKind::GetPowerState).await.and_then(
+        self.rpc(MgsRequest::GetPowerState).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_power_state().map_err(Into::into)
             },
@@ -344,7 +343,7 @@ impl SingleSp {
 
     /// Set the current power state.
     pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
-        self.rpc(RequestKind::SetPowerState(power_state)).await.and_then(
+        self.rpc(MgsRequest::SetPowerState(power_state)).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_set_power_state_ack().map_err(Into::into)
             },
@@ -362,7 +361,7 @@ impl SingleSp {
     /// needed the reset for has happened (e.g., checking the SP's version, in
     /// the case of updates).
     pub async fn reset_prepare(&self) -> Result<()> {
-        self.rpc(RequestKind::ResetPrepare).await.and_then(
+        self.rpc(MgsRequest::ResetPrepare).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_sys_reset_prepare_ack().map_err(Into::into)
             },
@@ -375,15 +374,15 @@ impl SingleSp {
     pub async fn reset_trigger(&self) -> Result<()> {
         // Reset trigger should retry until we get back an error indicating the
         // SP wasn't expecting a reset trigger (because it has reset!).
-        match self.rpc(RequestKind::ResetTrigger).await {
+        match self.rpc(MgsRequest::ResetTrigger).await {
             Ok((_peer, response, _data)) => {
-                Err(SpCommunicationError::BadResponseType(BadResponseType {
+                Err(SpCommunicationError::BadResponseType {
                     expected: "system-reset",
                     got: response.name(),
-                }))
+                })
             }
             Err(SpCommunicationError::SpError(
-                ResponseError::ResetTriggerWithoutPrepare,
+                SpError::ResetTriggerWithoutPrepare,
             )) => Ok(()),
             Err(other) => Err(other),
         }
@@ -432,8 +431,8 @@ impl SingleSp {
 
     pub(crate) async fn rpc(
         &self,
-        kind: RequestKind,
-    ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
+        kind: MgsRequest,
+    ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
         let cmds_tx = self.state.cmds_tx()?;
         rpc(cmds_tx, kind, None).await.result
     }
@@ -507,9 +506,9 @@ fn decode_tlv_devices(
 
 async fn rpc_with_trailing_data(
     inner_tx: &mpsc::Sender<InnerCommand>,
-    kind: RequestKind,
+    kind: MgsRequest,
     our_trailing_data: Cursor<Vec<u8>>,
-) -> (Result<(SocketAddrV6, ResponseKind, Vec<u8>)>, Cursor<Vec<u8>>) {
+) -> (Result<(SocketAddrV6, SpResponse, Vec<u8>)>, Cursor<Vec<u8>>) {
     let RpcResponse { result, our_trailing_data } =
         rpc(inner_tx, kind, Some(our_trailing_data)).await;
 
@@ -520,7 +519,7 @@ async fn rpc_with_trailing_data(
 
 async fn rpc(
     inner_tx: &mpsc::Sender<InnerCommand>,
-    kind: RequestKind,
+    kind: MgsRequest,
     our_trailing_data: Option<Cursor<Vec<u8>>>,
 ) -> RpcResponse {
     let (resp_tx, resp_rx) = oneshot::channel();
@@ -581,7 +580,7 @@ impl AttachedSerialConsoleSend {
         while remaining_data > 0 {
             let (result, new_data) = rpc_with_trailing_data(
                 &self.inner_tx,
-                RequestKind::SerialConsoleWrite { offset: self.tx_offset },
+                MgsRequest::SerialConsoleWrite { offset: self.tx_offset },
                 data,
             )
             .await;
@@ -670,14 +669,14 @@ impl AttachedSerialConsoleRecv {
 // exchanged with the SP.
 #[derive(Debug)]
 struct RpcRequest {
-    kind: RequestKind,
+    kind: MgsRequest,
     our_trailing_data: Option<Cursor<Vec<u8>>>,
     response_tx: oneshot::Sender<RpcResponse>,
 }
 
 #[derive(Debug)]
 struct RpcResponse {
-    result: Result<(SocketAddrV6, ResponseKind, Vec<u8>)>,
+    result: Result<(SocketAddrV6, SpResponse, Vec<u8>)>,
     our_trailing_data: Option<Cursor<Vec<u8>>>,
 }
 
@@ -714,7 +713,7 @@ struct Inner {
     per_attempt_timeout: Duration,
     serial_console_tx: Option<mpsc::Sender<(u64, Vec<u8>)>>,
     cmds_rx: mpsc::Receiver<InnerCommand>,
-    request_id: u32,
+    message_id: u32,
     serial_console_connection_key: u64,
 }
 
@@ -737,7 +736,7 @@ impl Inner {
             per_attempt_timeout,
             serial_console_tx: None,
             cmds_rx,
-            request_id: 0,
+            message_id: 0,
             serial_console_connection_key: 0,
         }
     }
@@ -836,7 +835,7 @@ impl Inner {
         let (addr, response, _data) = self
             .rpc_call(
                 self.discovery_addr,
-                RequestKind::Discover,
+                MgsRequest::Discover,
                 None,
                 incoming_buf,
             )
@@ -901,7 +900,7 @@ impl Inner {
 
     fn handle_incoming_message(
         &mut self,
-        result: Result<(SocketAddrV6, SpMessage, &[u8])>,
+        result: Result<(SocketAddrV6, Message, &[u8])>,
     ) {
         let (peer, message, sp_trailing_data) = match result {
             Ok((peer, message, sp_trailing_data)) => {
@@ -933,15 +932,23 @@ impl Inner {
         }
 
         match message.kind {
-            SpMessageKind::Response { request_id, result } => {
+            MessageKind::MgsRequest(_) | MessageKind::MgsResponse(_) => {
+                warn!(
+                    self.log, "ignoring non-SP message";
+                    "message" => ?message,
+                );
+            }
+            MessageKind::SpResponse(_) => {
                 warn!(
                     self.log,
                     "ignoring unexpected RPC response";
-                    "request_id" => request_id,
-                    "result" => ?result,
+                    "message" => ?message,
                 );
             }
-            SpMessageKind::SerialConsole { component, offset } => {
+            MessageKind::SpRequest(SpRequest::SerialConsole {
+                component,
+                offset,
+            }) => {
                 self.forward_serial_console(
                     component,
                     offset,
@@ -954,18 +961,18 @@ impl Inner {
     async fn rpc_call(
         &mut self,
         addr: SocketAddrV6,
-        kind: RequestKind,
+        kind: MgsRequest,
         our_trailing_data: Option<&mut Cursor<Vec<u8>>>,
         incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) -> Result<(SocketAddrV6, ResponseKind, Vec<u8>)> {
+    ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
         // Build and serialize our request once.
-        self.request_id += 1;
-        let request = Request {
-            header: RequestHeader {
-                version: version::V1,
-                request_id: self.request_id,
+        self.message_id += 1;
+        let request = Message {
+            header: Header {
+                version: version::V2,
+                message_id: self.message_id,
             },
-            kind,
+            kind: MessageKind::MgsRequest(kind),
         };
 
         let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
@@ -1002,7 +1009,7 @@ impl Inner {
             match self
                 .rpc_call_one_attempt(
                     addr,
-                    request.header.request_id,
+                    request.header.message_id,
                     outgoing_buf,
                     incoming_buf,
                 )
@@ -1021,10 +1028,10 @@ impl Inner {
     async fn rpc_call_one_attempt(
         &mut self,
         addr: SocketAddrV6,
-        request_id: u32,
+        message_id: u32,
         serialized_request: &[u8],
         incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) -> Result<Option<(SocketAddrV6, ResponseKind, Vec<u8>)>> {
+    ) -> Result<Option<(SocketAddrV6, SpResponse, Vec<u8>)>> {
         // We consider an RPC attempt to be our attempt to contact the SP. It's
         // possible for the SP to respond and say it's busy; we shouldn't count
         // that as a failed UDP RPC attempt, so we loop within this "one
@@ -1044,31 +1051,29 @@ impl Inner {
                 Err(_elapsed) => return Ok(None),
             };
 
-            let (peer, response, sp_trailing_data) = match result {
-                Ok((peer, response, data)) => (peer, response, data),
+            let (peer, message, sp_trailing_data) = match result {
+                Ok((peer, message, data)) => (peer, message, data),
                 Err(err) => {
                     warn!(
-                        self.log, "error receiving response";
+                        self.log, "error receiving message";
                         "err" => %err,
                     );
                     return Ok(None);
                 }
             };
 
-            let result = match response.kind {
-                SpMessageKind::Response { request_id: response_id, result } => {
-                    if response_id == request_id {
-                        result
-                    } else {
-                        debug!(
-                            self.log, "ignoring unexpected response";
-                            "id" => response_id,
-                            "peer" => %peer,
-                        );
-                        return Ok(None);
-                    }
+            let response = match message.kind {
+                MessageKind::MgsRequest(_) | MessageKind::MgsResponse(_) => {
+                    warn!(
+                        self.log, "ignoring non-SP message";
+                        "message" => ?message,
+                    );
+                    return Ok(None);
                 }
-                SpMessageKind::SerialConsole { component, offset } => {
+                MessageKind::SpRequest(SpRequest::SerialConsole {
+                    component,
+                    offset,
+                }) => {
                     self.forward_serial_console(
                         component,
                         offset,
@@ -1076,17 +1081,36 @@ impl Inner {
                     );
                     continue;
                 }
+                MessageKind::SpResponse(response) => {
+                    if message_id == message.header.message_id {
+                        response
+                    } else {
+                        debug!(
+                            self.log, "ignoring unexpected response";
+                            "id" => message.header.message_id,
+                            "peer" => %peer,
+                        );
+                        return Ok(None);
+                    }
+                }
             };
 
-            match result {
-                Err(ResponseError::Busy) => {
+            match response {
+                SpResponse::Error(SpError::Busy) => {
                     // Our SP busy policy never gives up, so we can unwrap.
                     let backoff_sleep = busy_sp_backoff.next_backoff().unwrap();
                     time::sleep(backoff_sleep).await;
                     continue;
                 }
-                other => {
-                    return Ok(Some((peer, other?, sp_trailing_data.to_vec())))
+                SpResponse::Error(err) => {
+                    return Err(err.into());
+                }
+                _ => {
+                    return Ok(Some((
+                        peer,
+                        response,
+                        sp_trailing_data.to_vec(),
+                    )))
                 }
             }
         }
@@ -1143,14 +1167,14 @@ impl Inner {
             // actually talk to an SP, but we already know we're attached to it.
             // If we asked it to attach again, it would send back this error.
             return Err(SpCommunicationError::SpError(
-                ResponseError::SerialConsoleAlreadyAttached,
+                SpError::SerialConsoleAlreadyAttached,
             ));
         }
 
         let (_peer, response, _data) = self
             .rpc_call(
                 sp_addr,
-                RequestKind::SerialConsoleAttach(component),
+                MgsRequest::SerialConsoleAttach(component),
                 None,
                 incoming_buf,
             )
@@ -1174,7 +1198,7 @@ impl Inner {
         let (_peer, response, _data) = self
             .rpc_call(
                 sp_addr,
-                RequestKind::SerialConsoleDetach,
+                MgsRequest::SerialConsoleDetach,
                 None,
                 incoming_buf,
             )
@@ -1205,7 +1229,7 @@ async fn recv<'a>(
     socket: &UdpSocket,
     incoming_buf: &'a mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
     log: &Logger,
-) -> Result<(SocketAddrV6, SpMessage, &'a [u8])> {
+) -> Result<(SocketAddrV6, Message, &'a [u8])> {
     let (n, peer) = socket
         .recv_from(&mut incoming_buf[..])
         .await
@@ -1225,7 +1249,7 @@ async fn recv<'a>(
     };
 
     let (message, sp_trailing_data) =
-        gateway_messages::deserialize::<SpMessage>(&incoming_buf[..n])
+        gateway_messages::deserialize::<Message>(&incoming_buf[..n])
             .map_err(|err| SpCommunicationError::Deserialize { peer, err })?;
 
     trace!(

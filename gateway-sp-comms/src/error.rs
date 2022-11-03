@@ -5,7 +5,7 @@
 // Copyright 2022 Oxide Computer Company
 
 use crate::SpIdentifier;
-use gateway_messages::ResponseError;
+use gateway_messages::SpError;
 use std::io;
 use std::net::SocketAddrV6;
 use std::time::Duration;
@@ -33,10 +33,10 @@ pub enum SpCommunicationError {
     Deserialize { peer: SocketAddrV6, err: gateway_messages::HubpackError },
     #[error("RPC call failed (gave up after {0} attempts)")]
     ExhaustedNumAttempts(usize),
-    #[error(transparent)]
-    BadResponseType(#[from] BadResponseType),
+    #[error("bogus SP response type: expected {expected:?} but got {got:?}")]
+    BadResponseType { expected: &'static str, got: &'static str },
     #[error("Error response from SP: {0}")]
-    SpError(#[from] ResponseError),
+    SpError(#[from] SpError),
     #[error("Bogus serial console state; detach and reattach")]
     BogusSerialConsoleState,
     #[error("SP claimed more inventory devices than we can accept")]
@@ -99,11 +99,4 @@ pub enum Error {
     SpCommunicationFailed(#[from] SpCommunicationError),
     #[error("updating SP failed: {0}")]
     UpdateFailed(#[from] UpdateError),
-}
-
-#[derive(Debug, Error)]
-#[error("bogus SP response type: expected {expected:?} but got {got:?}")]
-pub struct BadResponseType {
-    pub expected: &'static str,
-    pub got: &'static str,
 }

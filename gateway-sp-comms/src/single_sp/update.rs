@@ -7,11 +7,11 @@
 use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
-use crate::communicator::ResponseKindExt;
 use crate::error::UpdateError;
 use crate::hubris_archive::HubrisArchive;
+use crate::sp_response_ext::SpResponseExt;
 use gateway_messages::ComponentUpdatePrepare;
-use gateway_messages::RequestKind;
+use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::UpdateChunk;
@@ -71,7 +71,7 @@ pub(super) async fn start_sp_update(
     );
     super::rpc(
         cmds_tx,
-        RequestKind::SpUpdatePrepare(SpUpdatePrepare {
+        MgsRequest::SpUpdatePrepare(SpUpdatePrepare {
             id: update_id.into(),
             aux_flash_size,
             aux_flash_chck,
@@ -243,7 +243,7 @@ pub(super) async fn start_component_update(
     );
     super::rpc(
         cmds_tx,
-        RequestKind::ComponentUpdatePrepare(ComponentUpdatePrepare {
+        MgsRequest::ComponentUpdatePrepare(ComponentUpdatePrepare {
             component,
             id: update_id.into(),
             slot,
@@ -409,7 +409,7 @@ pub(super) async fn update_status(
     cmds_tx: &mpsc::Sender<InnerCommand>,
     component: SpComponent,
 ) -> Result<UpdateStatus> {
-    super::rpc(cmds_tx, RequestKind::UpdateStatus(component), None)
+    super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
         .await
         .result
         .and_then(|(_peer, response, _data)| {
@@ -459,7 +459,7 @@ async fn send_single_update_chunk(
     let update_chunk = UpdateChunk { component, id, offset };
     let (result, data) = super::rpc_with_trailing_data(
         cmds_tx,
-        RequestKind::UpdateChunk(update_chunk),
+        MgsRequest::UpdateChunk(update_chunk),
         data,
     )
     .await;

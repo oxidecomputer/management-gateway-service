@@ -16,6 +16,7 @@ mod communicator;
 mod hubris_archive;
 mod management_switch;
 mod single_sp;
+mod sp_response_ext;
 mod timeout;
 
 use std::net::Ipv6Addr;
