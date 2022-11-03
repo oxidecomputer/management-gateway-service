@@ -14,18 +14,18 @@ use crate::DeviceDescriptionHeader;
 use crate::DeviceInventoryPage;
 use crate::DevicePresence;
 use crate::DiscoverResponse;
+use crate::Header;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
+use crate::Message;
+use crate::MessageKind;
+use crate::MgsRequest;
 use crate::PowerState;
-use crate::RequestHeader;
-use crate::RequestKind;
-use crate::ResponseError;
-use crate::ResponseKind;
 use crate::SerializedSize;
 use crate::SpComponent;
-use crate::SpMessage;
-use crate::SpMessageKind;
+use crate::SpError;
 use crate::SpPort;
+use crate::SpResponse;
 use crate::SpState;
 use crate::SpUpdatePrepare;
 use crate::UpdateChunk;
@@ -70,20 +70,20 @@ pub trait SpHandler {
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<DiscoverResponse, ResponseError>;
+    ) -> Result<DiscoverResponse, SpError>;
 
     fn ignition_state(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
         target: u8,
-    ) -> Result<IgnitionState, ResponseError>;
+    ) -> Result<IgnitionState, SpError>;
 
     fn bulk_ignition_state(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<BulkIgnitionState, ResponseError>;
+    ) -> Result<BulkIgnitionState, SpError>;
 
     fn ignition_command(
         &mut self,
@@ -91,27 +91,27 @@ pub trait SpHandler {
         port: SpPort,
         target: u8,
         command: IgnitionCommand,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn sp_state(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<SpState, ResponseError>;
+    ) -> Result<SpState, SpError>;
 
     fn sp_update_prepare(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
         update: SpUpdatePrepare,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn component_update_prepare(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
         update: ComponentUpdatePrepare,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn update_chunk(
         &mut self,
@@ -119,14 +119,14 @@ pub trait SpHandler {
         port: SpPort,
         chunk: UpdateChunk,
         data: &[u8],
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn update_status(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
         component: SpComponent,
-    ) -> Result<UpdateStatus, ResponseError>;
+    ) -> Result<UpdateStatus, SpError>;
 
     fn update_abort(
         &mut self,
@@ -134,27 +134,27 @@ pub trait SpHandler {
         port: SpPort,
         component: SpComponent,
         id: UpdateId,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn power_state(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<PowerState, ResponseError>;
+    ) -> Result<PowerState, SpError>;
 
     fn set_power_state(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
         power_state: PowerState,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn serial_console_attach(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
         component: SpComponent,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     /// The returned u64 should be the offset we want to receive in the next
     /// call to `serial_console_write()`; i.e., the furthest offset we've
@@ -165,26 +165,26 @@ pub trait SpHandler {
         port: SpPort,
         offset: u64,
         data: &[u8],
-    ) -> Result<u64, ResponseError>;
+    ) -> Result<u64, SpError>;
 
     fn serial_console_detach(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     fn reset_prepare(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<(), ResponseError>;
+    ) -> Result<(), SpError>;
 
     // On success, this method cannot return (it should perform a reset).
     fn reset_trigger(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<Infallible, ResponseError>;
+    ) -> Result<Infallible, SpError>;
 
     /// Number of devices returned in the inventory of this SP.
     fn num_devices(&mut self, sender: SocketAddrV6, port: SpPort) -> u32;
@@ -219,27 +219,25 @@ pub fn handle_message<H: SpHandler>(
 ) -> usize {
     // Try to peel the header off first, allowing us to check the version and
     // get the request ID (even if we fail to parse the rest of the request).
-    let (request_id, result) = read_request_header(data);
+    let (message_id, result) = read_request_header(data);
 
     // If we were able to peel off the header, chain the rest of the data
     // then chain the rest of the data
     // through to the handler.
-    let (result, outgoing_trailing_data) = match result {
+    let (response, outgoing_trailing_data) = match result {
         Ok(request_kind_data) => {
             handle_message_impl(sender, port, request_kind_data, handler)
         }
-        Err(err) => (Err(err), None),
+        Err(err) => (SpResponse::Error(err), None),
     };
 
-    // We control `SpMessage` and know all cases can successfully serialize
-    // into `self.buf`.
-    let response = SpMessage {
-        version: version::V1,
-        kind: SpMessageKind::Response { request_id, result },
+    let response = Message {
+        header: Header { version: version::V2, message_id },
+        kind: MessageKind::SpResponse(response),
     };
 
-    // We know `response` is well-formed and fits into `out` (since it's
-    // statically sized for `SpMessage`), so we can unwrap serialization.
+    // We know `response` is well-formed and fits into `out`, so we can unwrap
+    // serialization.
     let mut n = match hubpack::serialize(&mut out[..], &response) {
         Ok(n) => n,
         Err(_) => panic!(),
@@ -325,56 +323,74 @@ fn encode_device_inventory<H: SpHandler>(
     total_tlv_len
 }
 
-/// Read the request header from the front of `data`, returning the request ID
+/// Read the request header from the front of `data`, returning the message ID
 /// we should use in our response (pulled from the header if possible, or a
 /// sentinel if not) and either the remainder of the request data or an error.
-fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], ResponseError>) {
-    let (header, request_kind_data) =
-        match hubpack::deserialize::<RequestHeader>(data) {
-            Ok((header, request_kind_data)) => (header, request_kind_data),
-            Err(_) => {
-                return (
-                    // We don't know the request ID, but need to reply with
-                    // something - fill in 0xffff_ffff.
-                    u32::MAX,
-                    Err(ResponseError::BadRequest(
-                        BadRequestReason::DeserializationError,
-                    )),
-                );
-            }
-        };
+fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], SpError>) {
+    let (header, request_kind_data) = match hubpack::deserialize::<Header>(data)
+    {
+        Ok((header, request_kind_data)) => (header, request_kind_data),
+        Err(_) => {
+            return (
+                // We don't know the request ID, but need to reply with
+                // something - fill in 0xffff_ffff.
+                u32::MAX,
+                Err(SpError::BadRequest(
+                    BadRequestReason::DeserializationError,
+                )),
+            );
+        }
+    };
 
     // Check the message version.
-    let result = if header.version == version::V1 {
+    let result = if header.version == version::V2 {
         Ok(request_kind_data)
     } else {
-        Err(ResponseError::BadRequest(BadRequestReason::WrongVersion {
-            sp: version::V1,
+        Err(SpError::BadRequest(BadRequestReason::WrongVersion {
+            sp: version::V2,
             request: header.version,
         }))
     };
 
-    (header.request_id, result)
+    (header.message_id, result)
 }
 
-/// Parses the remainder of a request (after `version` and `request_id`, which
-/// are handled by `read_request_header`) and calls `handler`.
+/// Parses the remainder of a message (after the header, which is handled by
+/// `read_request_header`), and calls `handler`.
 ///
-/// If the response kind needs to generate trailing data, returns `(Ok(_),
-/// Some(_)`, and our caller is responsible for handling that generation.
-/// Otherwise, returns `(result, None)`.
+/// If the response kind needs to generate trailing data, returns `(_, Some(_)`,
+/// and our caller is responsible for handling that generation. Otherwise,
+/// returns `(_, None)`.
 fn handle_message_impl<H: SpHandler>(
     sender: SocketAddrV6,
     port: SpPort,
     request_kind_data: &[u8],
     handler: &mut H,
-) -> (Result<ResponseKind, ResponseError>, Option<OutgoingTrailingData>) {
+) -> (SpResponse, Option<OutgoingTrailingData>) {
     let (kind, leftover) =
-        match hubpack::deserialize::<RequestKind>(request_kind_data) {
-            Ok((kind, leftover)) => (kind, leftover),
+        match hubpack::deserialize::<MessageKind>(request_kind_data) {
+            Ok((MessageKind::MgsRequest(kind), leftover)) => (kind, leftover),
+            Ok((MessageKind::MgsResponse(_), _)) => {
+                // TODO: Once we have SP requests that expect MGS responses, we
+                // need to flesh out this branch.
+                return (
+                    SpResponse::Error(SpError::BadRequest(
+                        BadRequestReason::DeserializationError,
+                    )),
+                    None,
+                );
+            }
+            Ok((MessageKind::SpRequest(_) | MessageKind::SpResponse(_), _)) => {
+                return (
+                    SpResponse::Error(SpError::BadRequest(
+                        BadRequestReason::WrongDirection,
+                    )),
+                    None,
+                );
+            }
             Err(_) => {
                 return (
-                    Err(ResponseError::BadRequest(
+                    SpResponse::Error(SpError::BadRequest(
                         BadRequestReason::DeserializationError,
                     )),
                     None,
@@ -385,12 +401,13 @@ fn handle_message_impl<H: SpHandler>(
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
     let trailing_data = match &kind {
-        RequestKind::UpdateChunk(_)
-        | RequestKind::SerialConsoleWrite { .. } => leftover,
+        MgsRequest::UpdateChunk(_) | MgsRequest::SerialConsoleWrite { .. } => {
+            leftover
+        }
         _ => {
             if !leftover.is_empty() {
                 return (
-                    Err(ResponseError::BadRequest(
+                    SpResponse::Error(SpError::BadRequest(
                         BadRequestReason::UnexpectedTrailingData,
                     )),
                     None,
@@ -409,67 +426,67 @@ fn handle_message_impl<H: SpHandler>(
     // that needs it.
     let mut outgoing_trailing_data = None;
     let result = match kind {
-        RequestKind::Discover => {
-            handler.discover(sender, port).map(ResponseKind::Discover)
+        MgsRequest::Discover => {
+            handler.discover(sender, port).map(SpResponse::Discover)
         }
-        RequestKind::IgnitionState { target } => handler
+        MgsRequest::IgnitionState { target } => handler
             .ignition_state(sender, port, target)
-            .map(ResponseKind::IgnitionState),
-        RequestKind::BulkIgnitionState => handler
+            .map(SpResponse::IgnitionState),
+        MgsRequest::BulkIgnitionState => handler
             .bulk_ignition_state(sender, port)
-            .map(ResponseKind::BulkIgnitionState),
-        RequestKind::IgnitionCommand { target, command } => handler
+            .map(SpResponse::BulkIgnitionState),
+        MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(sender, port, target, command)
-            .map(|()| ResponseKind::IgnitionCommandAck),
-        RequestKind::SpState => {
-            handler.sp_state(sender, port).map(ResponseKind::SpState)
+            .map(|()| SpResponse::IgnitionCommandAck),
+        MgsRequest::SpState => {
+            handler.sp_state(sender, port).map(SpResponse::SpState)
         }
-        RequestKind::SpUpdatePrepare(update) => handler
+        MgsRequest::SpUpdatePrepare(update) => handler
             .sp_update_prepare(sender, port, update)
-            .map(|()| ResponseKind::SpUpdatePrepareAck),
-        RequestKind::ComponentUpdatePrepare(update) => handler
+            .map(|()| SpResponse::SpUpdatePrepareAck),
+        MgsRequest::ComponentUpdatePrepare(update) => handler
             .component_update_prepare(sender, port, update)
-            .map(|()| ResponseKind::ComponentUpdatePrepareAck),
-        RequestKind::UpdateChunk(chunk) => handler
+            .map(|()| SpResponse::ComponentUpdatePrepareAck),
+        MgsRequest::UpdateChunk(chunk) => handler
             .update_chunk(sender, port, chunk, trailing_data)
-            .map(|()| ResponseKind::UpdateChunkAck),
-        RequestKind::UpdateStatus(component) => handler
+            .map(|()| SpResponse::UpdateChunkAck),
+        MgsRequest::UpdateStatus(component) => handler
             .update_status(sender, port, component)
-            .map(ResponseKind::UpdateStatus),
-        RequestKind::UpdateAbort { component, id } => handler
+            .map(SpResponse::UpdateStatus),
+        MgsRequest::UpdateAbort { component, id } => handler
             .update_abort(sender, port, component, id)
-            .map(|()| ResponseKind::UpdateAbortAck),
-        RequestKind::SerialConsoleAttach(component) => handler
+            .map(|()| SpResponse::UpdateAbortAck),
+        MgsRequest::SerialConsoleAttach(component) => handler
             .serial_console_attach(sender, port, component)
-            .map(|()| ResponseKind::SerialConsoleAttachAck),
-        RequestKind::SerialConsoleWrite { offset } => handler
+            .map(|()| SpResponse::SerialConsoleAttachAck),
+        MgsRequest::SerialConsoleWrite { offset } => handler
             .serial_console_write(sender, port, offset, trailing_data)
-            .map(|n| ResponseKind::SerialConsoleWriteAck {
+            .map(|n| SpResponse::SerialConsoleWriteAck {
                 furthest_ingested_offset: n,
             }),
-        RequestKind::SerialConsoleDetach => handler
+        MgsRequest::SerialConsoleDetach => handler
             .serial_console_detach(sender, port)
-            .map(|()| ResponseKind::SerialConsoleDetachAck),
-        RequestKind::GetPowerState => {
-            handler.power_state(sender, port).map(ResponseKind::PowerState)
+            .map(|()| SpResponse::SerialConsoleDetachAck),
+        MgsRequest::GetPowerState => {
+            handler.power_state(sender, port).map(SpResponse::PowerState)
         }
-        RequestKind::SetPowerState(power_state) => handler
+        MgsRequest::SetPowerState(power_state) => handler
             .set_power_state(sender, port, power_state)
-            .map(|()| ResponseKind::SetPowerStateAck),
-        RequestKind::ResetPrepare => handler
+            .map(|()| SpResponse::SetPowerStateAck),
+        MgsRequest::ResetPrepare => handler
             .reset_prepare(sender, port)
-            .map(|()| ResponseKind::ResetPrepareAck),
-        RequestKind::ResetTrigger => {
+            .map(|()| SpResponse::ResetPrepareAck),
+        MgsRequest::ResetTrigger => {
             handler.reset_trigger(sender, port).map(|infallible| {
                 // A bit of type system magic here; `reset_trigger`'s
                 // success type (`Infallible`) cannot be instantiated. We can
                 // provide an empty match to teach the type system that an
                 // `Infallible` (which can't exist) can be converted to a
-                // `ResponseKind` (or any other type!).
+                // `SpResponse` (or any other type!).
                 match infallible {}
             })
         }
-        RequestKind::Inventory { device_index } => {
+        MgsRequest::Inventory { device_index } => {
             let total_devices = handler.num_devices(sender, port);
             // If a caller asks for an index past our end, clamp it.
             let device_index = u32::min(device_index, total_devices);
@@ -480,14 +497,19 @@ fn handle_message_impl<H: SpHandler>(
                     device_index,
                     total_devices,
                 });
-            Ok(ResponseKind::Inventory(DeviceInventoryPage {
+            Ok(SpResponse::Inventory(DeviceInventoryPage {
                 device_index,
                 total_devices,
             }))
         }
     };
 
-    (result, outgoing_trailing_data)
+    let response = match result {
+        Ok(response) => response,
+        Err(err) => SpResponse::Error(err),
+    };
+
+    (response, outgoing_trailing_data)
 }
 
 enum OutgoingTrailingData {
@@ -496,11 +518,9 @@ enum OutgoingTrailingData {
 
 #[cfg(test)]
 mod tests {
-    use serde::Serialize;
-
     use super::*;
-    use crate::Request;
     use crate::SerializedSize;
+    use serde::Serialize;
 
     struct FakeHandler;
 
@@ -510,7 +530,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             port: SpPort,
-        ) -> Result<DiscoverResponse, ResponseError> {
+        ) -> Result<DiscoverResponse, SpError> {
             Ok(DiscoverResponse { sp_port: port })
         }
 
@@ -519,7 +539,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _target: u8,
-        ) -> Result<IgnitionState, ResponseError> {
+        ) -> Result<IgnitionState, SpError> {
             todo!()
         }
 
@@ -527,7 +547,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<BulkIgnitionState, ResponseError> {
+        ) -> Result<BulkIgnitionState, SpError> {
             todo!()
         }
 
@@ -537,7 +557,7 @@ mod tests {
             _port: SpPort,
             _target: u8,
             _command: IgnitionCommand,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -545,7 +565,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<SpState, ResponseError> {
+        ) -> Result<SpState, SpError> {
             todo!()
         }
 
@@ -554,7 +574,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _update: SpUpdatePrepare,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -563,7 +583,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _update: ComponentUpdatePrepare,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -573,7 +593,7 @@ mod tests {
             _port: SpPort,
             _chunk: UpdateChunk,
             _data: &[u8],
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -582,7 +602,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _component: SpComponent,
-        ) -> Result<UpdateStatus, ResponseError> {
+        ) -> Result<UpdateStatus, SpError> {
             todo!()
         }
 
@@ -592,7 +612,7 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
             _id: UpdateId,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -600,7 +620,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<PowerState, ResponseError> {
+        ) -> Result<PowerState, SpError> {
             todo!()
         }
 
@@ -609,7 +629,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _power_state: PowerState,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -618,7 +638,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _component: SpComponent,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -628,7 +648,7 @@ mod tests {
             _port: SpPort,
             _offset: u64,
             _data: &[u8],
-        ) -> Result<u64, ResponseError> {
+        ) -> Result<u64, SpError> {
             todo!()
         }
 
@@ -636,7 +656,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -644,7 +664,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<(), ResponseError> {
+        ) -> Result<(), SpError> {
             todo!()
         }
 
@@ -652,7 +672,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<Infallible, ResponseError> {
+        ) -> Result<Infallible, SpError> {
             todo!()
         }
 
@@ -675,12 +695,12 @@ mod tests {
         SocketAddrV6 { ip: smoltcp::wire::Ipv6Address::LOOPBACK, port: 123 }
     }
 
-    fn call_handle_message<Req>(req: Req) -> SpMessage
+    fn call_handle_message<Msg>(msg: Msg) -> Message
     where
-        Req: Serialize + SerializedSize,
+        Msg: Serialize + SerializedSize,
     {
-        let mut req_buf = vec![0; Req::MAX_SIZE];
-        let m = crate::serialize(&mut req_buf, &req).unwrap();
+        let mut req_buf = vec![0; Msg::MAX_SIZE];
+        let m = crate::serialize(&mut req_buf, &msg).unwrap();
 
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
         let n = handle_message(
@@ -691,62 +711,53 @@ mod tests {
             &mut buf,
         );
 
-        let (resp, _) = crate::deserialize::<SpMessage>(&buf[..n]).unwrap();
+        let (resp, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
         resp
     }
 
     // Smoke test that a valid request returns an `Ok(_)` response.
     #[test]
     fn handle_valid_request() {
-        let req = Request {
-            header: RequestHeader {
-                version: version::V1,
-                request_id: 0x01020304,
-            },
-            kind: RequestKind::Discover,
+        let req = Message {
+            header: Header { version: version::V2, message_id: 0x01020304 },
+            kind: MessageKind::MgsRequest(MgsRequest::Discover),
         };
 
         let resp = call_handle_message(req);
 
         assert_eq!(
             resp,
-            SpMessage {
-                version: version::V1,
-                kind: SpMessageKind::Response {
-                    request_id: req.header.request_id,
-                    result: Ok(ResponseKind::Discover(DiscoverResponse {
-                        sp_port: SpPort::One
-                    }))
-                }
+            Message {
+                header: Header {
+                    version: version::V2,
+                    message_id: req.header.message_id,
+                },
+                kind: MessageKind::SpResponse(SpResponse::Discover(
+                    DiscoverResponse { sp_port: SpPort::One }
+                ))
             }
         );
     }
 
     #[test]
     fn bad_version() {
-        let req = Request {
-            header: RequestHeader {
-                version: 0x0badf00d,
-                request_id: 0x01020304,
-            },
-            kind: RequestKind::Discover,
+        let req = Message {
+            header: Header { version: 0x0badf00d, message_id: 0x01020304 },
+            kind: MessageKind::MgsRequest(MgsRequest::Discover),
         };
 
         let resp = call_handle_message(req);
 
         assert_eq!(
             resp,
-            SpMessage {
-                version: version::V1,
-                kind: SpMessageKind::Response {
-                    request_id: 0x01020304,
-                    result: Err(ResponseError::BadRequest(
-                        BadRequestReason::WrongVersion {
-                            sp: version::V1,
-                            request: 0x0badf00d
-                        }
-                    )),
-                }
+            Message {
+                header: Header { version: version::V2, message_id: 0x01020304 },
+                kind: MessageKind::SpResponse(SpResponse::Error(
+                    SpError::BadRequest(BadRequestReason::WrongVersion {
+                        sp: version::V2,
+                        request: 0x0badf00d
+                    })
+                )),
             }
         );
     }
@@ -754,14 +765,11 @@ mod tests {
     #[test]
     fn bad_request_header() {
         // Valid request...
-        let req = Request {
-            header: RequestHeader {
-                version: version::V1,
-                request_id: 0x01020304,
-            },
-            kind: RequestKind::Discover,
+        let req = Message {
+            header: Header { version: version::V2, message_id: 0x01020304 },
+            kind: MessageKind::MgsRequest(MgsRequest::Discover),
         };
-        let mut req_buf = vec![0; Request::MAX_SIZE];
+        let mut req_buf = vec![0; Message::MAX_SIZE];
         let _ = crate::serialize(&mut req_buf, &req).unwrap();
 
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
@@ -774,7 +782,7 @@ mod tests {
             &mut FakeHandler,
             &mut buf,
         );
-        let (resp1, _) = crate::deserialize::<SpMessage>(&buf[..n]).unwrap();
+        let (resp1, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
 
         // ... or only the first 7 bytes (incomplete request ID field)
         let n = handle_message(
@@ -784,20 +792,20 @@ mod tests {
             &mut FakeHandler,
             &mut buf,
         );
-        let (resp2, _) = crate::deserialize::<SpMessage>(&buf[..n]).unwrap();
+        let (resp2, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
 
         assert_eq!(resp1, resp2);
         assert_eq!(
             resp1,
-            SpMessage {
-                version: version::V1,
-                kind: SpMessageKind::Response {
+            Message {
+                header: Header {
+                    version: version::V2,
                     // Header is incomplete, so we don't know the request ID.
-                    request_id: 0xffff_ffff,
-                    result: Err(ResponseError::BadRequest(
-                        BadRequestReason::DeserializationError
-                    )),
-                }
+                    message_id: 0xffff_ffff,
+                },
+                kind: MessageKind::SpResponse(SpResponse::Error(
+                    SpError::BadRequest(BadRequestReason::DeserializationError)
+                )),
             }
         );
     }
@@ -807,14 +815,14 @@ mod tests {
         #[derive(SerializedSize, Serialize)]
         struct FakeRequest {
             version: u32,
-            request_id: u32,
+            message_id: u32,
             kind: u8,
         }
 
         let req = FakeRequest {
-            version: version::V1,
-            request_id: 0x01020304,
-            // Hubpack encodes the real `RequestKind` enum using an initial byte
+            version: version::V2,
+            message_id: 0x01020304,
+            // Hubpack encodes the real `MessageKind` enum using an initial byte
             // to identify the variant; send a byte that is past the end of our
             // enum (assuming we never have 256 cases).
             kind: 0xff,
@@ -824,14 +832,11 @@ mod tests {
 
         assert_eq!(
             resp,
-            SpMessage {
-                version: version::V1,
-                kind: SpMessageKind::Response {
-                    request_id: 0x01020304,
-                    result: Err(ResponseError::BadRequest(
-                        BadRequestReason::DeserializationError
-                    )),
-                }
+            Message {
+                header: Header { version: version::V2, message_id: 0x01020304 },
+                kind: MessageKind::SpResponse(SpResponse::Error(
+                    SpError::BadRequest(BadRequestReason::DeserializationError)
+                ))
             }
         );
     }
