@@ -1248,9 +1248,24 @@ async fn recv<'a>(
         }
     };
 
-    let (message, sp_trailing_data) =
-        gateway_messages::deserialize::<Message>(&incoming_buf[..n])
+    // Peel off the header first to check the version.
+    let (header, sp_trailing_data) =
+        gateway_messages::deserialize::<Header>(&incoming_buf[..n])
             .map_err(|err| SpCommunicationError::Deserialize { peer, err })?;
+
+    if header.version != version::V2 {
+        return Err(SpCommunicationError::VersionMismatch {
+            sp: header.version,
+            mgs: version::V2,
+        });
+    }
+
+    // Parse the remainder of the message and reassemble a `Message`.
+    let (kind, sp_trailing_data) =
+        gateway_messages::deserialize::<MessageKind>(sp_trailing_data)
+            .map_err(|err| SpCommunicationError::Deserialize { peer, err })?;
+
+    let message = Message { header, kind };
 
     trace!(
         log, "received message from SP";

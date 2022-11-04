@@ -43,6 +43,8 @@ pub enum SpCommunicationError {
     InventoryTooLarge,
     #[error("Invalid inventory pagination state")]
     InvalidInventoryPagination,
+    #[error("Protocol version mismatch: SP version {sp}, MGS version {mgs}")]
+    VersionMismatch { sp: u32, mgs: u32 },
 }
 
 #[derive(Debug, Error)]
