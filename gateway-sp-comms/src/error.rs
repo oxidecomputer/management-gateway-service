@@ -12,6 +12,18 @@ use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error)]
+pub enum HostPhase2Error {
+    #[error("host image with hash {hash} unavailable")]
+    NoImage { hash: String },
+    #[error("invalid offset for host image {hash}: {offset}")]
+    BadOffset { hash: String, offset: u64 },
+    #[error(
+        "error getting data for host image {hash} at offset {offset}: {err}"
+    )]
+    Other { hash: String, offset: u64, err: String },
+}
+
+#[derive(Debug, Clone, Error)]
 pub enum StartupError {
     #[error("waiting for interface to exist: {0}")]
     WaitingForInterface(String),

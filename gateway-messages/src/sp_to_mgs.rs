@@ -34,6 +34,9 @@ pub enum SpRequest {
         /// the serial console session was attached.
         offset: u64,
     },
+    /// Request a single packet-worth of a host phase 2 image (identified by
+    /// `hash`) starting at `offset`.
+    HostPhase2Data { hash: [u8; 32], offset: u64 },
 }
 
 #[derive(

@@ -6,11 +6,13 @@
 
 //! Interface for communicating with a single SP.
 
+use crate::error::HostPhase2Error;
 use crate::error::SpCommunicationError;
 use crate::error::StartupError;
 use crate::error::UpdateError;
 use crate::sp_response_ext::SpResponseExt;
 use crate::SwitchPortConfig;
+use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
@@ -23,7 +25,9 @@ use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::Message;
 use gateway_messages::MessageKind;
+use gateway_messages::MgsError;
 use gateway_messages::MgsRequest;
+use gateway_messages::MgsResponse;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
@@ -95,6 +99,16 @@ pub struct SpDevice {
     pub presence: DevicePresence,
 }
 
+#[async_trait]
+pub trait HostPhase2Provider: Send + Sync + 'static {
+    async fn read_phase2_data(
+        &self,
+        hash: [u8; 32],
+        offset: u64,
+        out: &mut [u8],
+    ) -> Result<usize, HostPhase2Error>;
+}
+
 #[derive(Debug)]
 pub struct SingleSp {
     state: startup::State,
@@ -125,16 +139,18 @@ impl SingleSp {
     ///    determined by the previous step). If this bind fails (e.g., because
     ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
     ///    a "UDP bind failed" error from all methods forever.
-    pub fn new(
+    pub fn new<T: HostPhase2Provider>(
         config: SwitchPortConfig,
         max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
+        host_phase2_provider: T,
         log: Logger,
     ) -> Self {
         let (state, run_startup) = startup::State::new(
             config,
             max_attempts_per_rpc,
             per_attempt_timeout,
+            host_phase2_provider,
             log.clone(),
         );
 
@@ -704,7 +720,7 @@ enum InnerCommand {
     SerialConsoleDetach(Option<u64>, oneshot::Sender<Result<()>>),
 }
 
-struct Inner {
+struct Inner<T> {
     log: Logger,
     socket: UdpSocket,
     sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
@@ -715,9 +731,10 @@ struct Inner {
     cmds_rx: mpsc::Receiver<InnerCommand>,
     message_id: u32,
     serial_console_connection_key: u64,
+    host_phase2_provider: T,
 }
 
-impl Inner {
+impl<T: HostPhase2Provider> Inner<T> {
     fn new(
         log: Logger,
         socket: UdpSocket,
@@ -726,6 +743,7 @@ impl Inner {
         max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         cmds_rx: mpsc::Receiver<InnerCommand>,
+        host_phase2_provider: T,
     ) -> Self {
         Self {
             log,
@@ -738,6 +756,7 @@ impl Inner {
             cmds_rx,
             message_id: 0,
             serial_console_connection_key: 0,
+            host_phase2_provider,
         }
     }
 
@@ -796,7 +815,7 @@ impl Inner {
                 }
 
                 result = recv(&self.socket, &mut incoming_buf, &self.log) => {
-                    self.handle_incoming_message(result);
+                    self.handle_incoming_message(result).await;
                     discovery_idle.reset();
                 }
 
@@ -898,7 +917,7 @@ impl Inner {
         }
     }
 
-    fn handle_incoming_message(
+    async fn handle_incoming_message(
         &mut self,
         result: Result<(SocketAddrV6, Message, &[u8])>,
     ) {
@@ -945,16 +964,108 @@ impl Inner {
                     "message" => ?message,
                 );
             }
-            MessageKind::SpRequest(SpRequest::SerialConsole {
-                component,
-                offset,
-            }) => {
+            MessageKind::SpRequest(request) => {
+                self.handle_sp_request(
+                    peer,
+                    message.header.message_id,
+                    request,
+                    sp_trailing_data,
+                )
+                .await
+            }
+        }
+    }
+
+    async fn handle_sp_request(
+        &mut self,
+        addr: SocketAddrV6,
+        message_id: u32,
+        request: SpRequest,
+        sp_trailing_data: &[u8],
+    ) {
+        match request {
+            SpRequest::SerialConsole { component, offset } => {
                 self.forward_serial_console(
                     component,
                     offset,
                     sp_trailing_data,
                 );
             }
+            SpRequest::HostPhase2Data { hash, offset } => {
+                if !sp_trailing_data.is_empty() {
+                    warn!(
+                        self.log,
+                        "ignoring unexpected trailing data in host phase2 request";
+                        "length" => sp_trailing_data.len(),
+                    );
+                }
+                self.send_host_phase2_data(addr, message_id, hash, offset)
+                    .await;
+            }
+        }
+    }
+
+    async fn send_host_phase2_data(
+        &self,
+        addr: SocketAddrV6,
+        message_id: u32,
+        hash: [u8; 32],
+        offset: u64,
+    ) {
+        // We will optimistically attempt to serialize a successful response
+        // directly into an outgoing buffer. If our phase2 data provider cannot
+        // give us the data, we'll bail out and reserialize an error response.
+        let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+
+        // Optimistically serialize a success response, so we can fetch host
+        // phase 2 data into the remainder of the buffer.
+        let mut message = Message {
+            header: Header { version: version::V2, message_id },
+            kind: MessageKind::MgsResponse(MgsResponse::HostPhase2Data {
+                hash,
+                offset,
+            }),
+        };
+
+        let mut n =
+            gateway_messages::serialize(&mut outgoing_buf, &message).unwrap();
+
+        match self
+            .host_phase2_provider
+            .read_phase2_data(hash, offset, &mut outgoing_buf[n..])
+            .await
+        {
+            Ok(m) => {
+                n += m;
+            }
+            Err(err) => {
+                warn!(
+                    self.log, "cannot fulfill SP request for host phase 2 data";
+                    "err" => %err,
+                );
+                let error_kind = match err {
+                    HostPhase2Error::NoImage { .. }
+                    | HostPhase2Error::Other { .. } => {
+                        MgsError::HostPhase2Unavailable { hash }
+                    }
+                    HostPhase2Error::BadOffset { .. } => {
+                        MgsError::HostPhase2ImageBadOffset { hash, offset }
+                    }
+                };
+                message.kind =
+                    MessageKind::MgsResponse(MgsResponse::Error(error_kind));
+
+                n = gateway_messages::serialize(&mut outgoing_buf, &message)
+                    .unwrap();
+            }
+        }
+
+        let serialized_message = &outgoing_buf[..n];
+        if let Err(err) = send(&self.socket, addr, serialized_message).await {
+            warn!(
+                self.log, "failed to respond to SP host phase 2 data request";
+                "err" => %err,
+            );
         }
     }
 
@@ -1070,15 +1181,14 @@ impl Inner {
                     );
                     return Ok(None);
                 }
-                MessageKind::SpRequest(SpRequest::SerialConsole {
-                    component,
-                    offset,
-                }) => {
-                    self.forward_serial_console(
-                        component,
-                        offset,
+                MessageKind::SpRequest(request) => {
+                    self.handle_sp_request(
+                        peer,
+                        message.header.message_id,
+                        request,
                         sp_trailing_data,
-                    );
+                    )
+                    .await;
                     continue;
                 }
                 MessageKind::SpResponse(response) => {

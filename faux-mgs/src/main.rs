@@ -16,6 +16,7 @@ use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SwitchPortConfig;
+use host_phase2::DirectoryHostPhase2Provider;
 use slog::info;
 use slog::o;
 use slog::Drain;
@@ -27,6 +28,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
+mod host_phase2;
 mod usart;
 
 /// Command line program that can send MGS messages to a single SP.
@@ -100,6 +102,9 @@ enum Command {
     /// Detach any other attached USART connection.
     UsartDetach,
 
+    /// Serve host phase 2 images.
+    ServeHostPhase2 { directory: PathBuf },
+
     /// Upload a new image to the SP or one of its components.
     ///
     /// To update the SP itself:
@@ -163,6 +168,13 @@ async fn main() -> Result<()> {
         info!(log, "binding to {}", args.discovery_addr);
     }
 
+    let host_phase2_provider =
+        if let Command::ServeHostPhase2 { directory } = &args.command {
+            DirectoryHostPhase2Provider::new(Some(&directory), &log).await?
+        } else {
+            DirectoryHostPhase2Provider::new(None, &log).await?
+        };
+
     let sp = SingleSp::new(
         SwitchPortConfig {
             listen_addr: args.listen_addr,
@@ -171,6 +183,7 @@ async fn main() -> Result<()> {
         },
         args.max_attempts,
         per_attempt_timeout,
+        host_phase2_provider,
         log.clone(),
     );
 
@@ -238,6 +251,12 @@ async fn main() -> Result<()> {
         Command::UsartDetach => {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
+        }
+        Command::ServeHostPhase2 { .. } => {
+            info!(log, "serving host phase 2 images (ctrl-c to stop)");
+            loop {
+                tokio::time::sleep(Duration::from_secs(1024)).await;
+            }
         }
         Command::Update { component, slot, image } => {
             let sp_component = SpComponent::try_from(component.as_str())

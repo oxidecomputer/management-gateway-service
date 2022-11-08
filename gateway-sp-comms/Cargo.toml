@@ -5,6 +5,7 @@ edition = "2018"
 license = "MPL-2.0"
 
 [dependencies]
+async-trait = "0.1"
 backoff = { version = "0.4.0", features = ["tokio"] }
 futures = "0.3.24"
 nix = { version = "0.25", default-features = false, features = ["net"] }

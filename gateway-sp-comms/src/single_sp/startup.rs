@@ -6,6 +6,7 @@
 
 //! Helper functionality for async startup of a `SingleSp`.
 
+use super::HostPhase2Provider;
 use super::Inner;
 use super::InnerCommand;
 use crate::error::StartupError;
@@ -52,12 +53,13 @@ pub(super) struct State {
 }
 
 impl State {
-    pub(super) fn new(
+    pub(super) fn new<T: HostPhase2Provider>(
         config: SwitchPortConfig,
         max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
+        host_phase2_provider: T,
         log: Logger,
-    ) -> (Self, impl Future<Output = Option<Inner>>) {
+    ) -> (Self, impl Future<Output = Option<Inner<T>>>) {
         let initial_state = if let Some(interface) = config.interface.clone() {
             StartupState::WaitingForInterface(interface)
         } else {
@@ -133,6 +135,7 @@ impl State {
                 max_attempts_per_rpc,
                 per_attempt_timeout,
                 cmds_rx,
+                host_phase2_provider,
             ))
         };
 
