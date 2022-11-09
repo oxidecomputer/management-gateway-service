@@ -170,9 +170,9 @@ async fn main() -> Result<()> {
 
     let host_phase2_provider =
         if let Command::ServeHostPhase2 { directory } = &args.command {
-            DirectoryHostPhase2Provider::new(Some(directory), &log).await?
+            DirectoryHostPhase2Provider::new(directory, &log).await?
         } else {
-            DirectoryHostPhase2Provider::new(None, &log).await?
+            DirectoryHostPhase2Provider::default()
         };
 
     let sp = SingleSp::new(

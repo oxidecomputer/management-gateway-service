@@ -24,6 +24,7 @@ use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
 
+#[derive(Default)]
 pub(crate) struct DirectoryHostPhase2Provider {
     // Map of hash -> file on disk; assumes files don't change between when
     // we're created and scan for them and when the SP requests them. This would
@@ -33,14 +34,7 @@ pub(crate) struct DirectoryHostPhase2Provider {
 }
 
 impl DirectoryHostPhase2Provider {
-    pub(super) async fn new(path: Option<&Path>, log: &Logger) -> Result<Self> {
-        // If we're given a path of `None`, return successfully and serve no
-        // images.
-        let path = match path {
-            Some(path) => path,
-            None => return Ok(Self { images: HashMap::new() }),
-        };
-
+    pub(super) async fn new(path: &Path, log: &Logger) -> Result<Self> {
         let dir_iter = fs::read_dir(path).await.with_context(|| {
             format!("failed to open directory {} for reading", path.display())
         })?;
