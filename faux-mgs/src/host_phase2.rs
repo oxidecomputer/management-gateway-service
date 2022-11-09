@@ -14,6 +14,7 @@ use slog::warn;
 use slog::Logger;
 use std::collections::HashMap;
 use std::convert;
+use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs;
 use tokio::fs::File;
@@ -108,6 +109,25 @@ impl DirectoryHostPhase2Provider {
                     }
                 };
 
+                // TODO: When the host requests a phase 2 image by hash, it's
+                // the hash of the file _after_ its 4 KiB header (that header
+                // includes the hash itself). For now in faux-mgs, we'll just
+                // skip over the first 4 KiB when computing the hash of files
+                // we're going to serve. In real MGS, we probably want to do
+                // something smarter here: maybe compute the hash (skipping 4
+                // KiB) and then check against the hash in the header itself?
+                match file.seek(SeekFrom::Start(4096)).await {
+                    Ok(_) => (),
+                    Err(err) => {
+                        warn!(
+                            log, "failed to seek to offset 4096 in {}",
+                            path.display();
+                            "err" => %err,
+                        );
+                        return None;
+                    }
+                }
+
                 let mut hasher = Sha256::new();
                 let mut buf = [0; 4096];
                 let digest = loop {
@@ -157,7 +177,7 @@ impl HostPhase2Provider for DirectoryHostPhase2Provider {
 
         let mut file = file.lock().await;
 
-        file.seek(std::io::SeekFrom::Start(offset)).await.map_err(|err| {
+        file.seek(SeekFrom::Start(offset)).await.map_err(|err| {
             HostPhase2Error::Other {
                 hash: hex::encode(hash),
                 offset,
