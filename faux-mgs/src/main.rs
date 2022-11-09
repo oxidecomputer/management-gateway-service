@@ -44,7 +44,7 @@ struct Args {
     log_level: Level,
 
     /// Address to bind to locally.
-    #[clap(long, default_value = "[::]:0")]
+    #[clap(long, default_value_t = gateway_sp_comms::default_listen_addr())]
     listen_addr: SocketAddrV6,
 
     /// Address to use to discover the SP. May be a specific SP's address to
