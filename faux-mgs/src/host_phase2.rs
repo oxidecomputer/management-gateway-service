@@ -134,7 +134,7 @@ impl DirectoryHostPhase2Provider {
             info!(
                 log, "host phase 2 directory found file";
                 "path" => path.display(),
-                "hash" => hex::encode(&digest),
+                "hash" => hex::encode(digest),
             );
             images.insert(digest.into(), Mutex::new(file));
         }

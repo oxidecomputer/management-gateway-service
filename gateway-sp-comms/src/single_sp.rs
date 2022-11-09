@@ -735,6 +735,9 @@ struct Inner<T> {
 }
 
 impl<T: HostPhase2Provider> Inner<T> {
+    // This is a private function; squishing the number of arguments down seems
+    // like more trouble than it's worth.
+    #[allow(clippy::too_many_arguments)]
     fn new(
         log: Logger,
         socket: UdpSocket,
