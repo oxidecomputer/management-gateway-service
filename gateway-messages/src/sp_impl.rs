@@ -736,6 +736,28 @@ mod tests {
         fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
             todo!()
         }
+
+        fn mgs_response_error(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _message_id: u32,
+            _err: MgsError,
+        ) {
+            todo!()
+        }
+
+        fn mgs_response_host_phase2_data(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _message_id: u32,
+            _hash: [u8; 32],
+            _offset: u64,
+            _data: &[u8],
+        ) {
+            todo!()
+        }
     }
 
     #[cfg(feature = "std")]
