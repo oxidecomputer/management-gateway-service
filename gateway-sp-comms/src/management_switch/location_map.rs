@@ -537,7 +537,6 @@ mod tests {
             .unwrap_err();
         let reasons = match err {
             ConfigError::InvalidConfig { reasons } => reasons,
-            other => panic!("unexpected error {}", other),
         };
 
         assert_eq!(
