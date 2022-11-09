@@ -163,9 +163,9 @@ async fn main() -> Result<()> {
         Duration::from_millis(args.per_attempt_timeout_millis);
 
     if let Some(interface) = args.interface.as_ref() {
-        info!(log, "binding to {} on {}", args.discovery_addr, interface);
+        info!(log, "binding to {} on {}", args.listen_addr, interface);
     } else {
-        info!(log, "binding to {}", args.discovery_addr);
+        info!(log, "binding to {}", args.listen_addr);
     }
 
     let host_phase2_provider =

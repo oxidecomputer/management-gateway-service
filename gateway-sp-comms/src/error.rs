@@ -7,6 +7,7 @@
 use crate::SpIdentifier;
 use gateway_messages::SpError;
 use std::io;
+use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
 use std::time::Duration;
 use thiserror::Error;
@@ -31,6 +32,8 @@ pub enum StartupError {
     WaitingToBind(SocketAddrV6),
     #[error("error binding to UDP address {addr}: {err}")]
     UdpBind { addr: SocketAddrV6, err: String },
+    #[error("error joining UDP multicast group {group}: {err}")]
+    JoinMulticast { group: Ipv6Addr, err: String },
 }
 
 #[derive(Debug, Error)]

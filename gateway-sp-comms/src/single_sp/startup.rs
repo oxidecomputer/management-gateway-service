@@ -11,6 +11,7 @@ use super::Inner;
 use super::InnerCommand;
 use crate::error::StartupError;
 use crate::SwitchPortConfig;
+use crate::SP_TO_MGS_MULTICAST_ADDR;
 use futures::Future;
 use gateway_messages::SpPort;
 use once_cell::sync::OnceCell;
@@ -107,6 +108,21 @@ impl State {
                     return None;
                 }
             };
+
+            // Join the multicast group SPs use to send us requests.
+            if let Err(err) =
+                socket.join_multicast_v6(&SP_TO_MGS_MULTICAST_ADDR, scope_id)
+            {
+                startup_tx.send_modify(|s| {
+                    *s = StartupState::Complete(Err(
+                        StartupError::JoinMulticast {
+                            group: SP_TO_MGS_MULTICAST_ADDR,
+                            err: err.to_string(),
+                        },
+                    ));
+                });
+                return None;
+            }
 
             // Binding succeeded; we have successfully started up and can
             // now construct an `Inner` with which our parent `SingleSp` can

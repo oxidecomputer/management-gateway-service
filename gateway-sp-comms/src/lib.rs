@@ -45,14 +45,17 @@ pub use single_sp::SpInventory;
 pub use timeout::Elapsed;
 pub use timeout::Timeout;
 
-const DISCOVERY_MULTICAST_ADDR: Ipv6Addr =
-    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0, 1);
+const SP_TO_MGS_MULTICAST_ADDR: Ipv6Addr =
+    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1de, 1);
+const MGS_TO_SP_MULTICAST_ADDR: Ipv6Addr =
+    Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1de, 2);
+
 const SP_PORT: u16 = 11111;
 const MGS_PORT: u16 = 22222;
 
 /// Default address to discover an SP via UDP multicast.
 pub fn default_discovery_addr() -> SocketAddrV6 {
-    SocketAddrV6::new(DISCOVERY_MULTICAST_ADDR, SP_PORT, 0, 0)
+    SocketAddrV6::new(MGS_TO_SP_MULTICAST_ADDR, SP_PORT, 0, 0)
 }
 
 /// Default address to use when binding our local socket.
