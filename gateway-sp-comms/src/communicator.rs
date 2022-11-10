@@ -9,6 +9,7 @@ use crate::error::Error;
 use crate::management_switch::ManagementSwitch;
 use crate::management_switch::SwitchPort;
 use crate::single_sp::AttachedSerialConsole;
+use crate::single_sp::HostPhase2Provider;
 use crate::single_sp::SpInventory;
 use crate::Elapsed;
 use crate::SpIdentifier;
@@ -50,12 +51,14 @@ pub struct Communicator {
 }
 
 impl Communicator {
-    pub async fn new(
+    pub async fn new<T: HostPhase2Provider + Clone>(
         config: SwitchConfig,
+        host_phase2_provider: T,
         log: &Logger,
     ) -> Result<Self, ConfigError> {
         let log = log.new(o!("component" => "SpCommunicator"));
-        let switch = ManagementSwitch::new(config, &log).await?;
+        let switch =
+            ManagementSwitch::new(config, host_phase2_provider, &log).await?;
 
         info!(&log, "started SP communicator");
         Ok(Self { switch })

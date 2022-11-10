@@ -16,6 +16,7 @@ use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SwitchPortConfig;
+use host_phase2::DirectoryHostPhase2Provider;
 use slog::info;
 use slog::o;
 use slog::Drain;
@@ -27,6 +28,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
+mod host_phase2;
 mod usart;
 
 /// Command line program that can send MGS messages to a single SP.
@@ -42,7 +44,7 @@ struct Args {
     log_level: Level,
 
     /// Address to bind to locally.
-    #[clap(long, default_value = "[::]:0")]
+    #[clap(long, default_value_t = gateway_sp_comms::default_listen_addr())]
     listen_addr: SocketAddrV6,
 
     /// Address to use to discover the SP. May be a specific SP's address to
@@ -99,6 +101,9 @@ enum Command {
 
     /// Detach any other attached USART connection.
     UsartDetach,
+
+    /// Serve host phase 2 images.
+    ServeHostPhase2 { directory: PathBuf },
 
     /// Upload a new image to the SP or one of its components.
     ///
@@ -158,10 +163,17 @@ async fn main() -> Result<()> {
         Duration::from_millis(args.per_attempt_timeout_millis);
 
     if let Some(interface) = args.interface.as_ref() {
-        info!(log, "binding to {} on {}", args.discovery_addr, interface);
+        info!(log, "binding to {} on {}", args.listen_addr, interface);
     } else {
-        info!(log, "binding to {}", args.discovery_addr);
+        info!(log, "binding to {}", args.listen_addr);
     }
+
+    let host_phase2_provider =
+        if let Command::ServeHostPhase2 { directory } = &args.command {
+            DirectoryHostPhase2Provider::new(directory, &log).await?
+        } else {
+            DirectoryHostPhase2Provider::default()
+        };
 
     let sp = SingleSp::new(
         SwitchPortConfig {
@@ -171,6 +183,7 @@ async fn main() -> Result<()> {
         },
         args.max_attempts,
         per_attempt_timeout,
+        host_phase2_provider,
         log.clone(),
     );
 
@@ -238,6 +251,12 @@ async fn main() -> Result<()> {
         Command::UsartDetach => {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
+        }
+        Command::ServeHostPhase2 { .. } => {
+            info!(log, "serving host phase 2 images (ctrl-c to stop)");
+            loop {
+                tokio::time::sleep(Duration::from_secs(1024)).await;
+            }
         }
         Command::Update { component, slot, image } => {
             let sp_component = SpComponent::try_from(component.as_str())

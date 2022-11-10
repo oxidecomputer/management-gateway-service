@@ -22,6 +22,7 @@ use self::location_map::ValidatedLocationConfig;
 
 use crate::error::ConfigError;
 use crate::error::Error;
+use crate::single_sp::HostPhase2Provider;
 use crate::single_sp::SingleSp;
 use once_cell::sync::OnceCell;
 use serde::Deserialize;
@@ -105,8 +106,9 @@ impl Drop for ManagementSwitch {
 }
 
 impl ManagementSwitch {
-    pub(crate) async fn new(
+    pub(crate) async fn new<T: HostPhase2Provider + Clone>(
         config: SwitchConfig,
+        host_phase2_provider: T,
         log: &Logger,
     ) -> Result<Self, ConfigError> {
         // begin by binding to all our configured ports; insert them into a map
@@ -120,6 +122,7 @@ impl ManagementSwitch {
                 port_config.config.clone(),
                 config.rpc_max_attempts,
                 Duration::from_millis(config.rpc_per_attempt_timeout_millis),
+                host_phase2_provider.clone(),
                 log.new(o!("switch_port" => port)),
             );
             let port = SwitchPort(port);

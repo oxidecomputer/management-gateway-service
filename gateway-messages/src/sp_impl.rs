@@ -19,7 +19,9 @@ use crate::IgnitionCommand;
 use crate::IgnitionState;
 use crate::Message;
 use crate::MessageKind;
+use crate::MgsError;
 use crate::MgsRequest;
+use crate::MgsResponse;
 use crate::PowerState;
 use crate::SerializedSize;
 use crate::SpComponent;
@@ -200,6 +202,24 @@ pub trait SpHandler {
     /// Implementors are allowed to panic if `index` is not in range (i.e., is
     /// greater than or equal to the value returned by `num_devices()`).
     fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
+
+    fn mgs_response_error(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        message_id: u32,
+        err: MgsError,
+    );
+
+    fn mgs_response_host_phase2_data(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        message_id: u32,
+        hash: [u8; 32],
+        offset: u64,
+        data: &[u8],
+    );
 }
 
 /// Handle a single incoming message.
@@ -222,13 +242,23 @@ pub fn handle_message<H: SpHandler>(
     let (message_id, result) = read_request_header(data);
 
     // If we were able to peel off the header, chain the rest of the data
-    // then chain the rest of the data
-    // through to the handler.
-    let (response, outgoing_trailing_data) = match result {
-        Ok(request_kind_data) => {
-            handle_message_impl(sender, port, request_kind_data, handler)
+    // then chain the rest of the data through to the handler.
+    let maybe_response = match result {
+        Ok(request_kind_data) => handle_message_impl(
+            sender,
+            port,
+            message_id,
+            request_kind_data,
+            handler,
+        ),
+        Err(err) => Some((SpResponse::Error(err), None)),
+    };
+
+    let (response, outgoing_trailing_data) = match maybe_response {
+        Some((response, outgoing_trailing_data)) => {
+            (response, outgoing_trailing_data)
         }
-        Err(err) => (SpResponse::Error(err), None),
+        None => return 0,
     };
 
     let response = Message {
@@ -364,40 +394,63 @@ fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], SpError>) {
 fn handle_message_impl<H: SpHandler>(
     sender: SocketAddrV6,
     port: SpPort,
+    message_id: u32,
     request_kind_data: &[u8],
     handler: &mut H,
-) -> (SpResponse, Option<OutgoingTrailingData>) {
-    let (kind, leftover) =
-        match hubpack::deserialize::<MessageKind>(request_kind_data) {
-            Ok((MessageKind::MgsRequest(kind), leftover)) => (kind, leftover),
-            Ok((MessageKind::MgsResponse(_), _)) => {
-                // TODO: Once we have SP requests that expect MGS responses, we
-                // need to flesh out this branch.
-                return (
-                    SpResponse::Error(SpError::BadRequest(
-                        BadRequestReason::DeserializationError,
-                    )),
-                    None,
-                );
-            }
-            Ok((MessageKind::SpRequest(_) | MessageKind::SpResponse(_), _)) => {
-                return (
-                    SpResponse::Error(SpError::BadRequest(
-                        BadRequestReason::WrongDirection,
-                    )),
-                    None,
-                );
-            }
-            Err(_) => {
-                return (
-                    SpResponse::Error(SpError::BadRequest(
-                        BadRequestReason::DeserializationError,
-                    )),
-                    None,
-                );
-            }
-        };
+) -> Option<(SpResponse, Option<OutgoingTrailingData>)> {
+    match hubpack::deserialize::<MessageKind>(request_kind_data) {
+        Ok((MessageKind::MgsRequest(kind), leftover)) => {
+            Some(handle_mgs_request(sender, port, handler, kind, leftover))
+        }
+        Ok((MessageKind::MgsResponse(kind), leftover)) => {
+            handle_mgs_response(
+                sender, port, message_id, handler, kind, leftover,
+            );
+            None
+        }
+        Ok((MessageKind::SpRequest(_) | MessageKind::SpResponse(_), _)) => {
+            Some((
+                SpResponse::Error(SpError::BadRequest(
+                    BadRequestReason::WrongDirection,
+                )),
+                None,
+            ))
+        }
+        Err(_) => Some((
+            SpResponse::Error(SpError::BadRequest(
+                BadRequestReason::DeserializationError,
+            )),
+            None,
+        )),
+    }
+}
 
+fn handle_mgs_response<H: SpHandler>(
+    sender: SocketAddrV6,
+    port: SpPort,
+    message_id: u32,
+    handler: &mut H,
+    kind: MgsResponse,
+    leftover: &[u8],
+) {
+    match kind {
+        MgsResponse::Error(err) => {
+            handler.mgs_response_error(sender, port, message_id, err)
+        }
+        MgsResponse::HostPhase2Data { hash, offset } => handler
+            .mgs_response_host_phase2_data(
+                sender, port, message_id, hash, offset, leftover,
+            ),
+    }
+}
+
+fn handle_mgs_request<H: SpHandler>(
+    sender: SocketAddrV6,
+    port: SpPort,
+    handler: &mut H,
+    kind: MgsRequest,
+    leftover: &[u8],
+) -> (SpResponse, Option<OutgoingTrailingData>) {
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
     let trailing_data = match &kind {
@@ -524,7 +577,8 @@ mod tests {
 
     struct FakeHandler;
 
-    // Only implements `discover()`.
+    // Only implements `discover()`; all other methods are left as
+    // `unimplemented!()` since no tests are intended to call them.
     impl SpHandler for FakeHandler {
         fn discover(
             &mut self,
@@ -540,7 +594,7 @@ mod tests {
             _port: SpPort,
             _target: u8,
         ) -> Result<IgnitionState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn bulk_ignition_state(
@@ -548,7 +602,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<BulkIgnitionState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn ignition_command(
@@ -558,7 +612,7 @@ mod tests {
             _target: u8,
             _command: IgnitionCommand,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn sp_state(
@@ -566,7 +620,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<SpState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn sp_update_prepare(
@@ -575,7 +629,7 @@ mod tests {
             _port: SpPort,
             _update: SpUpdatePrepare,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn component_update_prepare(
@@ -584,7 +638,7 @@ mod tests {
             _port: SpPort,
             _update: ComponentUpdatePrepare,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn update_chunk(
@@ -594,7 +648,7 @@ mod tests {
             _chunk: UpdateChunk,
             _data: &[u8],
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn update_status(
@@ -603,7 +657,7 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
         ) -> Result<UpdateStatus, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn update_abort(
@@ -613,7 +667,7 @@ mod tests {
             _component: SpComponent,
             _id: UpdateId,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn power_state(
@@ -621,7 +675,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<PowerState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn set_power_state(
@@ -630,7 +684,7 @@ mod tests {
             _port: SpPort,
             _power_state: PowerState,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn serial_console_attach(
@@ -639,7 +693,7 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn serial_console_write(
@@ -649,7 +703,7 @@ mod tests {
             _offset: u64,
             _data: &[u8],
         ) -> Result<u64, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn serial_console_detach(
@@ -657,7 +711,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn reset_prepare(
@@ -665,7 +719,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn reset_trigger(
@@ -673,15 +727,37 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<Infallible, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn num_devices(&mut self, _sender: SocketAddrV6, _port: SpPort) -> u32 {
-            todo!()
+            unimplemented!()
         }
 
         fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
-            todo!()
+            unimplemented!()
+        }
+
+        fn mgs_response_error(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _message_id: u32,
+            _err: MgsError,
+        ) {
+            unimplemented!()
+        }
+
+        fn mgs_response_host_phase2_data(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _message_id: u32,
+            _hash: [u8; 32],
+            _offset: u64,
+            _data: &[u8],
+        ) {
+            unimplemented!()
         }
     }
 

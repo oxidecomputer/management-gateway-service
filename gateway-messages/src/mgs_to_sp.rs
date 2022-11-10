@@ -58,6 +58,13 @@ pub enum MgsRequest {
 )]
 pub enum MgsResponse {
     Error(MgsError),
+    /// Sent in response to an `SpRequest::HostPhase2Data` request. Followed by
+    /// trailing data consisting of a chunk of the requested host phase 2 image
+    /// starting at `offset`.
+    HostPhase2Data {
+        hash: [u8; 32],
+        offset: u64,
+    },
 }
 
 #[derive(
@@ -66,6 +73,10 @@ pub enum MgsResponse {
 pub enum MgsError {
     /// The request from the SP was invalid.
     BadRequest(BadRequestReason),
+    /// The requested host phase 2 image is not available.
+    HostPhase2Unavailable { hash: [u8; 32] },
+    /// The requested host phase 2 offset is beyond the end of the image.
+    HostPhase2ImageBadOffset { hash: [u8; 32], offset: u64 },
 }
 
 #[derive(
