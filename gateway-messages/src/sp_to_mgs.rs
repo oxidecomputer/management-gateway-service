@@ -68,6 +68,7 @@ pub enum SpResponse {
     /// descriptions. See TODO FIXME for details.
     Inventory(DeviceInventoryPage),
     Error(SpError),
+    SetStartupOptionsAck,
 }
 
 #[derive(

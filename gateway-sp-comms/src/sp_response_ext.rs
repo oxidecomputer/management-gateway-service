@@ -65,6 +65,9 @@ pub(crate) trait SpResponseExt {
     fn expect_inventory(
         self,
     ) -> Result<DeviceInventoryPage, SpCommunicationError>;
+
+    fn expect_set_startup_options_ack(self)
+        -> Result<(), SpCommunicationError>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -102,6 +105,9 @@ impl SpResponseExt for SpResponse {
             Self::ResetPrepareAck => response_kind_names::RESET_PREPARE_ACK,
             Self::Inventory(_) => response_kind_names::INVENTORY,
             Self::Error(_) => response_kind_names::ERROR,
+            Self::SetStartupOptionsAck => {
+                response_kind_names::SET_STARTUP_OPTIONS_ACK
+            }
         }
     }
 
@@ -309,6 +315,19 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_set_startup_options_ack(
+        self,
+    ) -> Result<(), SpCommunicationError> {
+        match self {
+            Self::SetStartupOptionsAck => Ok(()),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::SET_STARTUP_OPTIONS_ACK,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -334,4 +353,5 @@ mod response_kind_names {
     pub(super) const RESET_PREPARE_ACK: &str = "reset_prepare_ack";
     pub(super) const INVENTORY: &str = "inventory";
     pub(super) const ERROR: &str = "error";
+    pub(super) const SET_STARTUP_OPTIONS_ACK: &str = "set_startup_options_ack";
 }

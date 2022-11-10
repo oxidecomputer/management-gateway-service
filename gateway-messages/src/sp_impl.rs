@@ -30,6 +30,7 @@ use crate::SpPort;
 use crate::SpResponse;
 use crate::SpState;
 use crate::SpUpdatePrepare;
+use crate::StartupOptions;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
@@ -202,6 +203,13 @@ pub trait SpHandler {
     /// Implementors are allowed to panic if `index` is not in range (i.e., is
     /// greater than or equal to the value returned by `num_devices()`).
     fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
+
+    fn set_startup_options(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        startup_options: StartupOptions,
+    ) -> Result<(), SpError>;
 
     fn mgs_response_error(
         &mut self,
@@ -555,6 +563,9 @@ fn handle_mgs_request<H: SpHandler>(
                 total_devices,
             }))
         }
+        MgsRequest::SetStartupOptions(startup_options) => handler
+            .set_startup_options(sender, port, startup_options)
+            .map(|()| SpResponse::SetStartupOptionsAck),
     };
 
     let response = match result {
