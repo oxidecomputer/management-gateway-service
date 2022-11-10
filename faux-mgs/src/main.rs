@@ -12,6 +12,7 @@ use clap::Parser;
 use clap::Subcommand;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
+use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::SingleSp;
@@ -84,6 +85,9 @@ enum Command {
 
     /// Ask SP for its current state.
     State,
+
+    /// Set startup options on an SP.
+    SetStartupOptions { options: u64 },
 
     /// Ask SP for its inventory.
     Inventory,
@@ -221,6 +225,13 @@ async fn main() -> Result<()> {
         }
         Command::State => {
             info!(log, "{:?}", sp.state().await?);
+        }
+        Command::SetStartupOptions { options } => {
+            let options =
+                StartupOptions::from_bits(options).with_context(|| {
+                    format!("invalid startup options bits: {options:#x}")
+                })?;
+            sp.set_startup_options(options).await?;
         }
         Command::Inventory => {
             let inventory = sp.inventory().await?;
