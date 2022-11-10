@@ -577,7 +577,8 @@ mod tests {
 
     struct FakeHandler;
 
-    // Only implements `discover()`.
+    // Only implements `discover()`; all other methods are left as
+    // `unimplemented!()` since no tests are intended to call them.
     impl SpHandler for FakeHandler {
         fn discover(
             &mut self,
@@ -593,7 +594,7 @@ mod tests {
             _port: SpPort,
             _target: u8,
         ) -> Result<IgnitionState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn bulk_ignition_state(
@@ -601,7 +602,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<BulkIgnitionState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn ignition_command(
@@ -611,7 +612,7 @@ mod tests {
             _target: u8,
             _command: IgnitionCommand,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn sp_state(
@@ -619,7 +620,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<SpState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn sp_update_prepare(
@@ -628,7 +629,7 @@ mod tests {
             _port: SpPort,
             _update: SpUpdatePrepare,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn component_update_prepare(
@@ -637,7 +638,7 @@ mod tests {
             _port: SpPort,
             _update: ComponentUpdatePrepare,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn update_chunk(
@@ -647,7 +648,7 @@ mod tests {
             _chunk: UpdateChunk,
             _data: &[u8],
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn update_status(
@@ -656,7 +657,7 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
         ) -> Result<UpdateStatus, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn update_abort(
@@ -666,7 +667,7 @@ mod tests {
             _component: SpComponent,
             _id: UpdateId,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn power_state(
@@ -674,7 +675,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<PowerState, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn set_power_state(
@@ -683,7 +684,7 @@ mod tests {
             _port: SpPort,
             _power_state: PowerState,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn serial_console_attach(
@@ -692,7 +693,7 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn serial_console_write(
@@ -702,7 +703,7 @@ mod tests {
             _offset: u64,
             _data: &[u8],
         ) -> Result<u64, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn serial_console_detach(
@@ -710,7 +711,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn reset_prepare(
@@ -718,7 +719,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<(), SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn reset_trigger(
@@ -726,15 +727,15 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
         ) -> Result<Infallible, SpError> {
-            todo!()
+            unimplemented!()
         }
 
         fn num_devices(&mut self, _sender: SocketAddrV6, _port: SpPort) -> u32 {
-            todo!()
+            unimplemented!()
         }
 
         fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
-            todo!()
+            unimplemented!()
         }
 
         fn mgs_response_error(
@@ -744,7 +745,7 @@ mod tests {
             _message_id: u32,
             _err: MgsError,
         ) {
-            todo!()
+            unimplemented!()
         }
 
         fn mgs_response_host_phase2_data(
@@ -756,7 +757,7 @@ mod tests {
             _offset: u64,
             _data: &[u8],
         ) {
-            todo!()
+            unimplemented!()
         }
     }
 
