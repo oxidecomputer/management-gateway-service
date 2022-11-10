@@ -5,6 +5,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;
+use futures::io::AllowStdIo;
 use gateway_sp_comms::error::HostPhase2Error;
 use gateway_sp_comms::HostPhase2Provider;
 use sha2::Digest;
@@ -18,11 +19,13 @@ use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs;
 use tokio::fs::File;
+use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeekExt;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
+use tokio_util::compat::FuturesAsyncWriteCompatExt;
 
 #[derive(Default)]
 pub(crate) struct DirectoryHostPhase2Provider {
@@ -122,19 +125,15 @@ impl DirectoryHostPhase2Provider {
                     }
                 }
 
-                let mut hasher = Sha256::new();
-                let mut buf = [0; 4096];
-                let digest = loop {
-                    match file.read(&mut buf).await {
-                        Ok(0) => break hasher.finalize(),
-                        Ok(n) => hasher.update(&buf[..n]),
-                        Err(err) => {
-                            warn!(
-                                log, "error reading {}", path.display();
-                                "err" => %err,
-                            );
-                            return None;
-                        }
+                let mut hasher = AllowStdIo::new(Sha256::new()).compat_write();
+                let digest = match io::copy(&mut file, &mut hasher).await {
+                    Ok(_) => hasher.into_inner().into_inner().finalize(),
+                    Err(err) => {
+                        warn!(
+                            log, "error reading {}", path.display();
+                            "err" => %err,
+                        );
+                        return None;
                     }
                 };
 
