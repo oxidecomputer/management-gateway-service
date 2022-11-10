@@ -51,6 +51,7 @@ pub enum MgsRequest {
     Inventory {
         device_index: u32,
     },
+    GetStartupOptions,
     SetStartupOptions(StartupOptions),
 }
 

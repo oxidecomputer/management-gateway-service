@@ -287,6 +287,18 @@ impl SingleSp {
         Ok(SpInventory { devices })
     }
 
+    /// Get the current startup options of the target SP.
+    ///
+    /// Startup options are only meaningful for sleds and will only take effect
+    /// the next time the sled starts up.
+    pub async fn get_startup_options(&self) -> Result<StartupOptions> {
+        self.rpc(MgsRequest::GetStartupOptions).await.and_then(
+            |(_peer, response, _data)| {
+                response.expect_startup_options().map_err(Into::into)
+            },
+        )
+    }
+
     /// Set startup options on the target SP.
     ///
     /// Startup options are only meaningful for sleds and will only take effect

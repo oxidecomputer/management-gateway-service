@@ -8,6 +8,7 @@ use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::SpComponent;
+use crate::StartupOptions;
 use crate::UpdateId;
 use bitflags::bitflags;
 use core::fmt;
@@ -68,6 +69,7 @@ pub enum SpResponse {
     /// descriptions. See TODO FIXME for details.
     Inventory(DeviceInventoryPage),
     Error(SpError),
+    StartupOptions(StartupOptions),
     SetStartupOptionsAck,
 }
 

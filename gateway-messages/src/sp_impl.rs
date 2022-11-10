@@ -204,6 +204,12 @@ pub trait SpHandler {
     /// greater than or equal to the value returned by `num_devices()`).
     fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
 
+    fn get_startup_options(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+    ) -> Result<StartupOptions, SpError>;
+
     fn set_startup_options(
         &mut self,
         sender: SocketAddrV6,
@@ -563,6 +569,9 @@ fn handle_mgs_request<H: SpHandler>(
                 total_devices,
             }))
         }
+        MgsRequest::GetStartupOptions => handler
+            .get_startup_options(sender, port)
+            .map(SpResponse::StartupOptions),
         MgsRequest::SetStartupOptions(startup_options) => handler
             .set_startup_options(sender, port, startup_options)
             .map(|()| SpResponse::SetStartupOptionsAck),
@@ -746,6 +755,23 @@ mod tests {
         }
 
         fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
+            unimplemented!()
+        }
+
+        fn get_startup_options(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<StartupOptions, SpError> {
+            unimplemented!()
+        }
+
+        fn set_startup_options(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _startup_options: StartupOptions,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
 

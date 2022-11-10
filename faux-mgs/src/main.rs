@@ -86,8 +86,8 @@ enum Command {
     /// Ask SP for its current state.
     State,
 
-    /// Set startup options on an SP.
-    SetStartupOptions { options: u64 },
+    /// Get or set startup options on an SP.
+    StartupOptions { options: Option<u64> },
 
     /// Ask SP for its inventory.
     Inventory,
@@ -226,12 +226,18 @@ async fn main() -> Result<()> {
         Command::State => {
             info!(log, "{:?}", sp.state().await?);
         }
-        Command::SetStartupOptions { options } => {
-            let options =
-                StartupOptions::from_bits(options).with_context(|| {
-                    format!("invalid startup options bits: {options:#x}")
-                })?;
-            sp.set_startup_options(options).await?;
+        Command::StartupOptions { options } => {
+            if let Some(options) = options {
+                let options =
+                    StartupOptions::from_bits(options).with_context(|| {
+                        format!("invalid startup options bits: {options:#x}")
+                    })?;
+                sp.set_startup_options(options).await?;
+                println!("successfully set startup options to {options:?}");
+            } else {
+                let options = sp.get_startup_options().await?;
+                println!("startup options: {options:?}");
+            }
         }
         Command::Inventory => {
             let inventory = sp.inventory().await?;
