@@ -241,38 +241,34 @@ pub trait SpHandler {
 /// The incoming message is described by `sender` (the remote address of the
 /// sender), `port` (the local port the message arived on), and `data` (the raw
 /// message). It will be deserialized, and the appropriate method will be called
-/// on `handler` to craft a response. The response will then be serialized into
-/// `out`, and returned `Ok(n)` value specifies length of the serialized
-/// response.
+/// on `handler` to craft a response.
+///
+/// If the message warrants a response, the response will then be serialized
+/// into `out`, the length of the serialized response is returned. If the
+/// message does not warrant a response, `out` remains unchanged and `None` is
+/// returned.
 pub fn handle_message<H: SpHandler>(
     sender: SocketAddrV6,
     port: SpPort,
     data: &[u8],
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
-) -> usize {
+) -> Option<usize> {
     // Try to peel the header off first, allowing us to check the version and
     // get the request ID (even if we fail to parse the rest of the request).
     let (message_id, result) = read_request_header(data);
 
     // If we were able to peel off the header, chain the rest of the data
     // then chain the rest of the data through to the handler.
-    let maybe_response = match result {
+    let (response, outgoing_trailing_data) = match result {
         Ok(request_kind_data) => handle_message_impl(
             sender,
             port,
             message_id,
             request_kind_data,
             handler,
-        ),
-        Err(err) => Some((SpResponse::Error(err), None)),
-    };
-
-    let (response, outgoing_trailing_data) = match maybe_response {
-        Some((response, outgoing_trailing_data)) => {
-            (response, outgoing_trailing_data)
-        }
-        None => return 0,
+        )?,
+        Err(err) => (SpResponse::Error(err), None),
     };
 
     let response = Message {
@@ -301,7 +297,7 @@ pub fn handle_message<H: SpHandler>(
         None => 0,
     };
 
-    n
+    Some(n)
 }
 
 /// Pack as many device description TLV triples as we can into `out`, starting
@@ -822,7 +818,8 @@ mod tests {
             &req_buf[..m],
             &mut FakeHandler,
             &mut buf,
-        );
+        )
+        .unwrap();
 
         let (resp, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
         resp
@@ -894,7 +891,8 @@ mod tests {
             &req_buf[..3],
             &mut FakeHandler,
             &mut buf,
-        );
+        )
+        .unwrap();
         let (resp1, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
 
         // ... or only the first 7 bytes (incomplete request ID field)
@@ -904,7 +902,8 @@ mod tests {
             &req_buf[..7],
             &mut FakeHandler,
             &mut buf,
-        );
+        )
+        .unwrap();
         let (resp2, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
 
         assert_eq!(resp1, resp2);
