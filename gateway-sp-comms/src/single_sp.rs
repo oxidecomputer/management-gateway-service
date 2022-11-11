@@ -35,6 +35,7 @@ use gateway_messages::SpPort;
 use gateway_messages::SpRequest;
 use gateway_messages::SpResponse;
 use gateway_messages::SpState;
+use gateway_messages::StartupOptions;
 use gateway_messages::UpdateStatus;
 use slog::debug;
 use slog::error;
@@ -284,6 +285,33 @@ impl SingleSp {
         }
 
         Ok(SpInventory { devices })
+    }
+
+    /// Get the current startup options of the target SP.
+    ///
+    /// Startup options are only meaningful for sleds and will only take effect
+    /// the next time the sled starts up.
+    pub async fn get_startup_options(&self) -> Result<StartupOptions> {
+        self.rpc(MgsRequest::GetStartupOptions).await.and_then(
+            |(_peer, response, _data)| {
+                response.expect_startup_options().map_err(Into::into)
+            },
+        )
+    }
+
+    /// Set startup options on the target SP.
+    ///
+    /// Startup options are only meaningful for sleds and will only take effect
+    /// the next time the sled starts up.
+    pub async fn set_startup_options(
+        &self,
+        startup_options: StartupOptions,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::SetStartupOptions(startup_options)).await.and_then(
+            |(_peer, response, _data)| {
+                response.expect_set_startup_options_ack().map_err(Into::into)
+            },
+        )
     }
 
     /// Update a component of the SP (or the SP itself!).

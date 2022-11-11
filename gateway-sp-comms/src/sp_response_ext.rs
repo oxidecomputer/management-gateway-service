@@ -10,6 +10,7 @@ use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
 use gateway_messages::SpResponse;
 use gateway_messages::SpState;
+use gateway_messages::StartupOptions;
 use gateway_messages::UpdateStatus;
 
 // When we send a request we expect a specific kind of response; the boilerplate
@@ -65,6 +66,13 @@ pub(crate) trait SpResponseExt {
     fn expect_inventory(
         self,
     ) -> Result<DeviceInventoryPage, SpCommunicationError>;
+
+    fn expect_startup_options(
+        self,
+    ) -> Result<StartupOptions, SpCommunicationError>;
+
+    fn expect_set_startup_options_ack(self)
+        -> Result<(), SpCommunicationError>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -102,6 +110,10 @@ impl SpResponseExt for SpResponse {
             Self::ResetPrepareAck => response_kind_names::RESET_PREPARE_ACK,
             Self::Inventory(_) => response_kind_names::INVENTORY,
             Self::Error(_) => response_kind_names::ERROR,
+            Self::StartupOptions(_) => response_kind_names::STARTUP_OPTIONS,
+            Self::SetStartupOptionsAck => {
+                response_kind_names::SET_STARTUP_OPTIONS_ACK
+            }
         }
     }
 
@@ -309,6 +321,32 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_startup_options(
+        self,
+    ) -> Result<StartupOptions, SpCommunicationError> {
+        match self {
+            Self::StartupOptions(options) => Ok(options),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::STARTUP_OPTIONS,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_set_startup_options_ack(
+        self,
+    ) -> Result<(), SpCommunicationError> {
+        match self {
+            Self::SetStartupOptionsAck => Ok(()),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::SET_STARTUP_OPTIONS_ACK,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -334,4 +372,6 @@ mod response_kind_names {
     pub(super) const RESET_PREPARE_ACK: &str = "reset_prepare_ack";
     pub(super) const INVENTORY: &str = "inventory";
     pub(super) const ERROR: &str = "error";
+    pub(super) const STARTUP_OPTIONS: &str = "startup_options";
+    pub(super) const SET_STARTUP_OPTIONS_ACK: &str = "set_startup_options_ack";
 }
