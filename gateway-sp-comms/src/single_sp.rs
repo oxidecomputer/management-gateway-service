@@ -16,6 +16,8 @@ use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
+use gateway_messages::vsc7448_port_status::PortStatus;
+use gateway_messages::vsc7448_port_status::PortStatusError;
 use gateway_messages::BulkIgnitionState;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;

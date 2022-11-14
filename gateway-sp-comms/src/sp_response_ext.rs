@@ -71,6 +71,8 @@ pub(crate) trait SpResponseExt {
 
     fn expect_set_startup_options_ack(self)
         -> Result<(), SpCommunicationError>;
+
+    fn expect_component_details(self) -> Result<TlvPage, SpCommunicationError>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -112,6 +114,7 @@ impl SpResponseExt for SpResponse {
             Self::SetStartupOptionsAck => {
                 response_kind_names::SET_STARTUP_OPTIONS_ACK
             }
+            Self::ComponentDetails(_) => response_kind_names::COMPONENT_DETAILS,
         }
     }
 
@@ -343,6 +346,17 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_component_details(self) -> Result<TlvPage, SpCommunicationError> {
+        match self {
+            Self::ComponentDetails(page) => Ok(page),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::COMPONENT_DETAILS,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -370,4 +384,5 @@ mod response_kind_names {
     pub(super) const ERROR: &str = "error";
     pub(super) const STARTUP_OPTIONS: &str = "startup_options";
     pub(super) const SET_STARTUP_OPTIONS_ACK: &str = "set_startup_options_ack";
+    pub(super) const COMPONENT_DETAILS: &str = "component_details";
 }

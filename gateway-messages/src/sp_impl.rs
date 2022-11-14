@@ -8,6 +8,7 @@ use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
 use crate::BulkIgnitionState;
+use crate::ComponentDetails;
 use crate::ComponentUpdatePrepare;
 use crate::DeviceCapabilities;
 use crate::DeviceDescriptionHeader;
@@ -204,6 +205,28 @@ pub trait SpHandler {
     /// greater than or equal to the value returned by `num_devices()`).
     fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
 
+    /// Number of informational elements returned in the details for the given
+    /// component.
+    fn num_component_details(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<u32, SpError>;
+
+    /// Get detailed information for the given component.
+    ///
+    /// # Panics
+    ///
+    /// Implementors are allowed to panic if `index` is not in range (i.e., is
+    /// greater than or equal to the value returned by `device_description()`
+    /// for this component).
+    fn component_details(
+        &mut self,
+        component: SpComponent,
+        index: u32,
+    ) -> ComponentDetails;
+
     fn get_startup_options(
         &mut self,
         sender: SocketAddrV6,
@@ -294,6 +317,17 @@ pub fn handle_message<H: SpHandler>(
             total_devices,
             handler,
         ),
+        Some(OutgoingTrailingData::ComponentDetails {
+            component,
+            offset,
+            total,
+        }) => encode_component_details(
+            &mut out[n..],
+            component,
+            offset,
+            total,
+            handler,
+        ),
         None => 0,
     };
 
@@ -358,6 +392,43 @@ fn encode_device_inventory<H: SpHandler>(
         }
 
         device_index += 1;
+    }
+
+    total_tlv_len
+}
+
+/// Pack as many component details TLV triples as we can into `out`, starting
+/// at `offset`.
+fn encode_component_details<H: SpHandler>(
+    mut out: &mut [u8],
+    component: SpComponent,
+    mut offset: u32,
+    total: u32,
+    handler: &mut H,
+) -> usize {
+    let mut total_tlv_len = 0;
+    while offset < total {
+        let details = handler.component_details(component, offset);
+
+        match tlv::encode::<_, ()>(out, details.tag(), |buf| {
+            details.serialize(buf).map_err(|err| match err {
+                hubpack::error::Error::Overrun => (),
+                // We control the types returned by `component_details`; no
+                // hubpack errors other than the buffer being too short are
+                // possible.
+                _ => panic!(),
+            })
+        }) {
+            Ok(n) => {
+                total_tlv_len += n;
+                out = &mut out[n..];
+            }
+            // If we can't fit this `details` into `out`, we're done.
+            Err(tlv::EncodeError::Custom(()))
+            | Err(tlv::EncodeError::BufferTooSmall) => break,
+        }
+
+        offset += 1;
     }
 
     total_tlv_len
@@ -571,6 +642,24 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SetStartupOptions(startup_options) => handler
             .set_startup_options(sender, port, startup_options)
             .map(|()| SpResponse::SetStartupOptionsAck),
+        MgsRequest::ComponentDetails { component, offset } => handler
+            .num_component_details(sender, port, component)
+            .map(|total_items| {
+                // If a caller asks for an index past our end, clamp it.
+                let offset = u32::min(offset, total_items);
+                // We need to pack TLV-encoded component details as our
+                // outgoing trailing data.
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ComponentDetails {
+                        component,
+                        offset,
+                        total: total_items,
+                    });
+                SpResponse::ComponentDetails(TlvPage {
+                    offset,
+                    total: total_items,
+                })
+            }),
     };
 
     let response = match result {
@@ -583,6 +672,7 @@ fn handle_mgs_request<H: SpHandler>(
 
 enum OutgoingTrailingData {
     DeviceInventory { device_index: u32, total_devices: u32 },
+    ComponentDetails { component: SpComponent, offset: u32, total: u32 },
 }
 
 #[cfg(test)]
@@ -751,6 +841,23 @@ mod tests {
         }
 
         fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
+            unimplemented!()
+        }
+
+        fn num_component_details(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<u32, SpError> {
+            unimplemented!()
+        }
+
+        fn component_details(
+            &mut self,
+            _component: SpComponent,
+            _index: u32,
+        ) -> ComponentDetails {
             unimplemented!()
         }
 
