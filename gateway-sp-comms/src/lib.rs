@@ -28,6 +28,7 @@ pub mod error;
 
 pub use communicator::Communicator;
 pub use communicator::FuturesUnorderedImpl;
+pub use gateway_messages;
 pub use management_switch::LocationConfig;
 pub use management_switch::LocationDeterminationConfig;
 pub use management_switch::SpIdentifier;

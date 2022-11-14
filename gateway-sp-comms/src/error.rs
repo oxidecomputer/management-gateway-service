@@ -5,6 +5,7 @@
 // Copyright 2022 Oxide Computer Company
 
 use crate::SpIdentifier;
+use gateway_messages::tlv;
 use gateway_messages::SpError;
 use std::io;
 use std::net::Ipv6Addr;
@@ -54,12 +55,14 @@ pub enum SpCommunicationError {
     SpError(#[from] SpError),
     #[error("Bogus serial console state; detach and reattach")]
     BogusSerialConsoleState,
-    #[error("SP claimed more inventory devices than we can accept")]
-    InventoryTooLarge,
-    #[error("Invalid inventory pagination state")]
-    InvalidInventoryPagination,
     #[error("Protocol version mismatch: SP version {sp}, MGS version {mgs}")]
     VersionMismatch { sp: u32, mgs: u32 },
+    #[error("failed to deserialize TLV value for tag {tag:?}: {err}")]
+    TlvDeserialize { tag: tlv::Tag, err: gateway_messages::HubpackError },
+    #[error("failed to decode TLV triple: {0}")]
+    TlvDecode(#[from] tlv::DecodeError),
+    #[error("invalid TLV pagination: {reason}")]
+    TlvPagination { reason: &'static str },
 }
 
 #[derive(Debug, Error)]
