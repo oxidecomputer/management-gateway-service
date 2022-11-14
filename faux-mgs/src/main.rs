@@ -92,6 +92,9 @@ enum Command {
     /// Ask SP for its inventory.
     Inventory,
 
+    /// Ask SP for details of a component.
+    ComponentDetails { component: String },
+
     /// Attach to the SP's USART.
     UsartAttach {
         /// Put the local terminal in raw mode.
@@ -254,6 +257,16 @@ async fn main() -> Result<()> {
                     d.description,
                     d.capabilities,
                 );
+            }
+        }
+        Command::ComponentDetails { component } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| {
+                    anyhow!("invalid component name: {}", component)
+                })?;
+            let details = sp.component_details(sp_component).await?;
+            for entry in details.entries {
+                println!("{entry:?}");
             }
         }
         Command::UsartAttach { raw, stdin_buffer_time_millis } => {
