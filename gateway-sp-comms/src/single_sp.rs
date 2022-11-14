@@ -259,21 +259,21 @@ impl SingleSp {
             // page we asked for, and is the total_devices correct? If this is
             // the first page, "correct" just means "reasonable"; if this is the
             // second or later page, it should match every other page.
-            if page.device_index != device_index {
+            if page.offset != device_index {
                 return Err(SpCommunicationError::InvalidInventoryPagination);
             }
             let total_devices = if let Some(n) = page0_total_devices {
-                if n != page.total_devices as usize {
+                if n != page.total as usize {
                     return Err(
                         SpCommunicationError::InvalidInventoryPagination,
                     );
                 }
                 n
             } else {
-                if page.total_devices > INVENTORY_TOTAL_DEVICE_DOS_LIMIT {
+                if page.offset > INVENTORY_TOTAL_DEVICE_DOS_LIMIT {
                     return Err(SpCommunicationError::InventoryTooLarge);
                 }
-                let n = page.total_devices as usize;
+                let n = page.total as usize;
                 devices.reserve_exact(n);
                 page0_total_devices = Some(n);
                 n

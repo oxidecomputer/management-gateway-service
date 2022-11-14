@@ -65,9 +65,9 @@ pub enum SpResponse {
     // There is intentionally no `ResetTriggerAck` response; the expected
     // "response" to `ResetTrigger` is an SP reset, which won't allow for
     // acks to be sent.
-    /// An `Inventory` response is followed by a TLV-encoded set of device
-    /// descriptions. See TODO FIXME for details.
-    Inventory(DeviceInventoryPage),
+    /// An `Inventory` response is followed by a TLV-encoded set of
+    /// [`DeviceDescriptionHeader`]s.
+    Inventory(TlvPage),
     Error(SpError),
     StartupOptions(StartupOptions),
     SetStartupOptionsAck,
@@ -168,18 +168,19 @@ pub struct SpState {
     pub version: u32,
 }
 
-/// Metadata describing the set of device descriptions present in this response.
+/// Metadata describing a single page (out of a larger list) of TLV-encoded
+/// structures returned by the SP.
 ///
-/// Followed by trailing data containing a sequence of [`tlv`]-encoded
-/// [`DeviceDescriptionHeader`]s and their associated data.
+/// Always followed by trailing data containing a sequence of [`tlv`]-encoded
+/// structures (e.g., [`DeviceDescriptionHeader`], [`PortStatus`]).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct DeviceInventoryPage {
-    /// First device index present in this response.
-    pub device_index: u32,
-    /// Total number of devices present on the SP.
-    pub total_devices: u32,
+pub struct TlvPage {
+    /// First encoded structure present in this packet.
+    pub offset: u32,
+    /// Total number of structures in this data set.
+    pub total: u32,
 }
 
 /// Header for the description of a single device.

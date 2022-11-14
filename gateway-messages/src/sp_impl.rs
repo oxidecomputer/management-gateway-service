@@ -11,7 +11,6 @@ use crate::BulkIgnitionState;
 use crate::ComponentUpdatePrepare;
 use crate::DeviceCapabilities;
 use crate::DeviceDescriptionHeader;
-use crate::DeviceInventoryPage;
 use crate::DevicePresence;
 use crate::DiscoverResponse;
 use crate::Header;
@@ -31,6 +30,7 @@ use crate::SpResponse;
 use crate::SpState;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
+use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
@@ -560,9 +560,9 @@ fn handle_mgs_request<H: SpHandler>(
                     device_index,
                     total_devices,
                 });
-            Ok(SpResponse::Inventory(DeviceInventoryPage {
-                device_index,
-                total_devices,
+            Ok(SpResponse::Inventory(TlvPage {
+                offset: device_index,
+                total: total_devices,
             }))
         }
         MgsRequest::GetStartupOptions => handler

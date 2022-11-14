@@ -4,13 +4,13 @@
 
 use crate::error::SpCommunicationError;
 use gateway_messages::BulkIgnitionState;
-use gateway_messages::DeviceInventoryPage;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
 use gateway_messages::SpResponse;
 use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
+use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 
 // When we send a request we expect a specific kind of response; the boilerplate
@@ -63,9 +63,7 @@ pub(crate) trait SpResponseExt {
 
     fn expect_sys_reset_prepare_ack(self) -> Result<(), SpCommunicationError>;
 
-    fn expect_inventory(
-        self,
-    ) -> Result<DeviceInventoryPage, SpCommunicationError>;
+    fn expect_inventory(self) -> Result<TlvPage, SpCommunicationError>;
 
     fn expect_startup_options(
         self,
@@ -309,9 +307,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_inventory(
-        self,
-    ) -> Result<DeviceInventoryPage, SpCommunicationError> {
+    fn expect_inventory(self) -> Result<TlvPage, SpCommunicationError> {
         match self {
             Self::Inventory(page) => Ok(page),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
