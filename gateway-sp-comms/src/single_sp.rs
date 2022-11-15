@@ -31,8 +31,6 @@ use gateway_messages::MessageKind;
 use gateway_messages::MgsError;
 use gateway_messages::MgsRequest;
 use gateway_messages::MgsResponse;
-use gateway_messages::PortStatus;
-use gateway_messages::PortStatusError;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
