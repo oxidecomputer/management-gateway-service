@@ -196,7 +196,7 @@ pub struct TlvPage {
 /// Note that `ComponentDetails` itself does not implement the relevant serde
 /// serialization traits; it only serves as an organizing collection of the
 /// possible types contained in a component details message. Each TLV-encoded
-/// struct corresponds with one of these cases.
+/// struct corresponds to one of these cases.
 #[derive(Debug, Clone, Copy)]
 pub enum ComponentDetails {
     PortStatus(Result<PortStatus, PortStatusError>),
