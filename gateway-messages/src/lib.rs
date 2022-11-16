@@ -137,6 +137,9 @@ impl SpComponent {
     /// The host CPU boot flash.
     pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
 
+    /// The sidecar VSC7448 switch.
+    pub const VSC7448: Self = Self { id: *b"vsc7448\0\0\0\0\0\0\0\0\0" };
+
     /// Prefix for devices that are identified generically by index (e.g.,
     /// `dev-17`).
     pub const GENERIC_DEVICE_PREFIX: &'static str = "dev-";

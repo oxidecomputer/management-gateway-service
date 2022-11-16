@@ -4,13 +4,13 @@
 
 use crate::error::SpCommunicationError;
 use gateway_messages::BulkIgnitionState;
-use gateway_messages::DeviceInventoryPage;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
 use gateway_messages::SpResponse;
 use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
+use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 
 // When we send a request we expect a specific kind of response; the boilerplate
@@ -63,9 +63,7 @@ pub(crate) trait SpResponseExt {
 
     fn expect_sys_reset_prepare_ack(self) -> Result<(), SpCommunicationError>;
 
-    fn expect_inventory(
-        self,
-    ) -> Result<DeviceInventoryPage, SpCommunicationError>;
+    fn expect_inventory(self) -> Result<TlvPage, SpCommunicationError>;
 
     fn expect_startup_options(
         self,
@@ -73,6 +71,8 @@ pub(crate) trait SpResponseExt {
 
     fn expect_set_startup_options_ack(self)
         -> Result<(), SpCommunicationError>;
+
+    fn expect_component_details(self) -> Result<TlvPage, SpCommunicationError>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -114,6 +114,7 @@ impl SpResponseExt for SpResponse {
             Self::SetStartupOptionsAck => {
                 response_kind_names::SET_STARTUP_OPTIONS_ACK
             }
+            Self::ComponentDetails(_) => response_kind_names::COMPONENT_DETAILS,
         }
     }
 
@@ -309,9 +310,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_inventory(
-        self,
-    ) -> Result<DeviceInventoryPage, SpCommunicationError> {
+    fn expect_inventory(self) -> Result<TlvPage, SpCommunicationError> {
         match self {
             Self::Inventory(page) => Ok(page),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -347,6 +346,17 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_component_details(self) -> Result<TlvPage, SpCommunicationError> {
+        match self {
+            Self::ComponentDetails(page) => Ok(page),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::COMPONENT_DETAILS,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -374,4 +384,5 @@ mod response_kind_names {
     pub(super) const ERROR: &str = "error";
     pub(super) const STARTUP_OPTIONS: &str = "startup_options";
     pub(super) const SET_STARTUP_OPTIONS_ACK: &str = "set_startup_options_ack";
+    pub(super) const COMPONENT_DETAILS: &str = "component_details";
 }

@@ -53,6 +53,12 @@ pub enum MgsRequest {
     },
     GetStartupOptions,
     SetStartupOptions(StartupOptions),
+    /// Get detailed status information for a component, starting with `offset`
+    /// if the component has multiple status information items.
+    ComponentDetails {
+        component: SpComponent,
+        offset: u32,
+    },
 }
 
 #[derive(

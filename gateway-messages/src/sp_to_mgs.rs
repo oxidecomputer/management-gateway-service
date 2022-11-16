@@ -18,6 +18,10 @@ use serde::Serialize;
 use serde_repr::Deserialize_repr;
 use serde_repr::Serialize_repr;
 
+pub mod vsc7448_port_status;
+
+use vsc7448_port_status::{PortStatus, PortStatusError};
+
 #[derive(
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
 )]
@@ -65,12 +69,15 @@ pub enum SpResponse {
     // There is intentionally no `ResetTriggerAck` response; the expected
     // "response" to `ResetTrigger` is an SP reset, which won't allow for
     // acks to be sent.
-    /// An `Inventory` response is followed by a TLV-encoded set of device
-    /// descriptions. See TODO FIXME for details.
-    Inventory(DeviceInventoryPage),
+    /// An `Inventory` response is followed by a TLV-encoded set of
+    /// [`DeviceDescriptionHeader`]s.
+    Inventory(TlvPage),
     Error(SpError),
     StartupOptions(StartupOptions),
     SetStartupOptionsAck,
+    /// A `ComponentDetails` response is followed by a TLV-encoded set of
+    /// informational structures (see [`ComponentDetails`]).
+    ComponentDetails(TlvPage),
 }
 
 #[derive(
@@ -168,18 +175,45 @@ pub struct SpState {
     pub version: u32,
 }
 
-/// Metadata describing the set of device descriptions present in this response.
+/// Metadata describing a single page (out of a larger list) of TLV-encoded
+/// structures returned by the SP.
 ///
-/// Followed by trailing data containing a sequence of [`tlv`]-encoded
-/// [`DeviceDescriptionHeader`]s and their associated data.
+/// Always followed by trailing data containing a sequence of [`tlv`]-encoded
+/// structures (e.g., [`DeviceDescriptionHeader`], [`ComponentDetails`]).
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct DeviceInventoryPage {
-    /// First device index present in this response.
-    pub device_index: u32,
-    /// Total number of devices present on the SP.
-    pub total_devices: u32,
+pub struct TlvPage {
+    /// First encoded structure present in this packet.
+    pub offset: u32,
+    /// Total number of structures in this data set.
+    pub total: u32,
+}
+
+/// Types of component details that can be included in the TLV-encoded data of
+/// an [`SpResponse::ComponentDetails(_)`] message.
+///
+/// Note that `ComponentDetails` itself does not implement the relevant serde
+/// serialization traits; it only serves as an organizing collection of the
+/// possible types contained in a component details message. Each TLV-encoded
+/// struct corresponds to one of these cases.
+#[derive(Debug, Clone, Copy)]
+pub enum ComponentDetails {
+    PortStatus(Result<PortStatus, PortStatusError>),
+}
+
+impl ComponentDetails {
+    pub fn tag(&self) -> tlv::Tag {
+        match self {
+            ComponentDetails::PortStatus(_) => PortStatus::TAG,
+        }
+    }
+
+    pub fn serialize(&self, buf: &mut [u8]) -> hubpack::error::Result<usize> {
+        match self {
+            ComponentDetails::PortStatus(p) => hubpack::serialize(buf, p),
+        }
+    }
 }
 
 /// Header for the description of a single device.

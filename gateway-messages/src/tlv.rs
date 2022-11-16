@@ -5,6 +5,7 @@
 //! Extremely simple / minimal implementation of tag/length/value encoding,
 //! using 4-byte tags and lengths.
 
+use core::fmt;
 use core::iter;
 use core::mem;
 use zerocopy::byteorder::LittleEndian;
@@ -27,6 +28,19 @@ pub enum DecodeError {
     /// The `length` field requires more data than is remaining in the buffer.
     LengthTooLong,
 }
+
+impl fmt::Display for DecodeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            DecodeError::BufferTooSmall => "buffer too small",
+            DecodeError::LengthTooLong => "length too long",
+        };
+        write!(f, "{}", s)
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for DecodeError {}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, AsBytes, FromBytes)]
 #[repr(C)]
