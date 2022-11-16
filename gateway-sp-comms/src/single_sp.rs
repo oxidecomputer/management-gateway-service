@@ -77,16 +77,17 @@ use self::update::update_status;
 const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 
 // Minor "malicious / misbehaving SP" denial of service protection: When we ask
-// the SP for its inventory, we get back a response indicating the total number
-// of devices the SP has. We then repeatedly call the SP to fetch all of those
-// devices (getting back multiple devices per call, hopefully, but that's fully
-// in the SP's control). The number of devices is a u32; if an SP claimed to
-// have an absurdly large number, we'd be stuck fetching that many devices (and
-// building up a Vec of them in memory). We set a "we never expect this many
-// devices" cap here; 1024 is over 10x our current gimlet rev-c device count, so
+// the SP for its inventory or details of a component, we get back a response
+// indicating the total number of TLV triples the SP will return in response to
+// our query. We then repeatedly call the SP to fetch all of those triples
+// (getting back multiple triples per call, hopefully, but that's fully in the
+// SP's control). The number of triples is a u32; if an SP claimed to have an
+// absurdly large number, we'd be stuck fetching that many (and building up a
+// Vec of them in memory). We set a "we never expect this many devices" cap
+// here; 1024 is over 10x our current gimlet rev-c device inventory count, so
 // this should be plenty of buffer. If it needs to increase in the future, that
 // will require an MGS update.
-const INVENTORY_TOTAL_DEVICE_DOS_LIMIT: u32 = 1024;
+const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
 
 type Result<T, E = SpCommunicationError> = std::result::Result<T, E>;
 
@@ -245,61 +246,8 @@ impl SingleSp {
 
     /// Request the inventory of the SP.
     pub async fn inventory(&self) -> Result<SpInventory> {
-        self.get_paginated_tlv_data(
-            |device_index| MgsRequest::Inventory { device_index },
-            |response| response.expect_inventory(),
-            |tag, value| match tag {
-                DeviceDescriptionHeader::TAG => {
-                    // Peel header out of the value.
-                    let (header, data) = gateway_messages::deserialize::<
-                        DeviceDescriptionHeader,
-                    >(value)
-                    .map_err(|err| SpCommunicationError::TlvDeserialize {
-                        tag,
-                        err,
-                    })?;
-
-                    // Make sure the data length matches the header's claims.
-                    let device_len = header.device_len as usize;
-                    let description_len = header.description_len as usize;
-                    if data.len() != device_len.saturating_add(description_len)
-                    {
-                        return Err(SpCommunicationError::TlvPagination {
-                            reason: "data / header length mismatch",
-                        });
-                    }
-
-                    // Interpret the data as UTF8.
-                    let device =
-                        str::from_utf8(&data[..device_len]).map_err(|_| {
-                            SpCommunicationError::TlvPagination {
-                                reason: "non-UTF8 device",
-                            }
-                        })?;
-                    let description = str::from_utf8(&data[device_len..])
-                        .map_err(|_| SpCommunicationError::TlvPagination {
-                            reason: "non-UTF8 description",
-                        })?;
-
-                    Ok(Some(SpDevice {
-                        component: header.component,
-                        device: device.to_string(),
-                        description: description.to_string(),
-                        capabilities: header.capabilities,
-                        presence: header.presence,
-                    }))
-                }
-                _ => {
-                    info!(
-                        self.log,
-                        "skipping unknown device description tag {tag:?}"
-                    );
-                    Ok(None)
-                }
-            },
-        )
-        .await
-        .map(|devices| SpInventory { devices })
+        let devices = self.get_paginated_tlv_data(InventoryTlvRpc).await?;
+        Ok(SpInventory { devices })
     }
 
     /// Request the detailed status / measurements of a particular component
@@ -308,55 +256,20 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<SpComponentDetails> {
-        self.get_paginated_tlv_data(
-            |offset| MgsRequest::ComponentDetails { component, offset },
-            |response| response.expect_component_details(),
-            |tag, value| match tag {
-                PortStatus::TAG => {
-                    let (result, leftover) = gateway_messages::deserialize::<
-                        Result<PortStatus, PortStatusError>,
-                    >(value)
-                    .map_err(|err| SpCommunicationError::TlvDeserialize {
-                        tag,
-                        err,
-                    })?;
+        let entries = self
+            .get_paginated_tlv_data(ComponentDetailsTlvRpc {
+                component,
+                log: &self.log,
+            })
+            .await?;
 
-                    if !leftover.is_empty() {
-                        info!(
-                            self.log,
-                            "ignoring unexpected data in PortStatus TLV entry"
-                        );
-                    }
-
-                    Ok(Some(ComponentDetails::PortStatus(result)))
-                }
-                _ => {
-                    info!(
-                        self.log,
-                        "skipping unknown component details tag {tag:?}"
-                    );
-                    Ok(None)
-                }
-            },
-        )
-        .await
-        .map(|entries| SpComponentDetails { entries })
+        Ok(SpComponentDetails { entries })
     }
 
-    async fn get_paginated_tlv_data<T, F, G, H>(
+    async fn get_paginated_tlv_data<T: TlvRpc>(
         &self,
-        request: F,
-        response_to_tlv_page: G,
-        decode_tlv_chunk: H,
-    ) -> Result<Vec<T>>
-    where
-        // Closure to convert the current offset into the appropriate request.
-        F: Fn(u32) -> MgsRequest,
-        // Closure to convert the response into a `TlvPage`
-        G: Fn(SpResponse) -> Result<TlvPage>,
-        // Closure to decode a single tag/value pair.
-        H: Fn(tlv::Tag, &[u8]) -> Result<Option<T>>,
-    {
+        rpc: T,
+    ) -> Result<Vec<T::Item>> {
         // We don't know the total number of entries until we've requested the
         // first page; we'll set this to `Some(_)` in the first iteration of the
         // loop below.
@@ -367,9 +280,9 @@ impl SingleSp {
             // Index of the first entry we want to fetch.
             let offset = entries.len() as u32;
 
-            let (page, data) = self.rpc(request(offset)).await.and_then(
+            let (page, data) = self.rpc(rpc.request(offset)).await.and_then(
                 |(_peer, response, data)| {
-                    let page = response_to_tlv_page(response)?;
+                    let page = rpc.parse_response(response)?;
                     Ok((page, data))
                 },
             )?;
@@ -391,7 +304,7 @@ impl SingleSp {
                 }
                 n
             } else {
-                if page.offset > INVENTORY_TOTAL_DEVICE_DOS_LIMIT {
+                if page.total > TLV_RPC_TOTAL_ITEMS_DOS_LIMIT {
                     return Err(SpCommunicationError::TlvPagination {
                         reason: "too many items",
                     });
@@ -416,8 +329,14 @@ impl SingleSp {
                 }
 
                 // Decode this chunk.
-                if let Some(entry) = decode_tlv_chunk(tag, value)? {
+                if let Some(entry) = rpc.parse_tag_value(tag, value)? {
                     entries.push(entry);
+                } else {
+                    info!(
+                        self.log,
+                        "skipping unknown tag {tag:?} while parsing {}",
+                        T::LOG_NAME
+                    );
                 }
             }
         }
@@ -617,6 +536,152 @@ impl SingleSp {
     ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
         let cmds_tx = self.state.cmds_tx()?;
         rpc(cmds_tx, kind, None).await.result
+    }
+}
+
+// Helper trait to call a "paginated" (i.e., split across multiple UDP packets)
+// endpoint on the SP that returns TLV-encoded data.
+trait TlvRpc {
+    type Item;
+
+    // A description of this message type used in logs.
+    const LOG_NAME: &'static str;
+
+    // Build the appropriate request for the given offset.
+    fn request(&self, offset: u32) -> MgsRequest;
+
+    // Parse the SP's response into a description of the page contents.
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage>;
+
+    // Parse a single tag/value pair into an `Item`.
+    //
+    // If the tag is unknown to the implementor, return `Ok(None)` (and this
+    // pair will be skipped by `get_paginated_tlv_data()` above). If the tag is
+    // known, return `Ok(Some(_))` if parsing succeeds or `Err(_)` otherwise.
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>>;
+}
+
+struct InventoryTlvRpc;
+
+impl TlvRpc for InventoryTlvRpc {
+    type Item = SpDevice;
+
+    const LOG_NAME: &'static str = "inventory";
+
+    fn request(&self, offset: u32) -> MgsRequest {
+        MgsRequest::Inventory { device_index: offset }
+    }
+
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
+        response.expect_inventory()
+    }
+
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>> {
+        match tag {
+            DeviceDescriptionHeader::TAG => {
+                // Peel header out of the value.
+                let (header, data) = gateway_messages::deserialize::<
+                    DeviceDescriptionHeader,
+                >(value)
+                .map_err(|err| SpCommunicationError::TlvDeserialize {
+                    tag,
+                    err,
+                })?;
+
+                // Make sure the data length matches the header's claims.
+                let device_len = header.device_len as usize;
+                let description_len = header.description_len as usize;
+                if data.len() != device_len.saturating_add(description_len) {
+                    return Err(SpCommunicationError::TlvPagination {
+                        reason: "data / header length mismatch",
+                    });
+                }
+
+                // Interpret the data as UTF8.
+                let device =
+                    str::from_utf8(&data[..device_len]).map_err(|_| {
+                        SpCommunicationError::TlvPagination {
+                            reason: "non-UTF8 device",
+                        }
+                    })?;
+                let description =
+                    str::from_utf8(&data[device_len..]).map_err(|_| {
+                        SpCommunicationError::TlvPagination {
+                            reason: "non-UTF8 description",
+                        }
+                    })?;
+
+                Ok(Some(SpDevice {
+                    component: header.component,
+                    device: device.to_string(),
+                    description: description.to_string(),
+                    capabilities: header.capabilities,
+                    presence: header.presence,
+                }))
+            }
+            _ => Ok(None),
+        }
+    }
+}
+
+struct ComponentDetailsTlvRpc<'a> {
+    component: SpComponent,
+    log: &'a Logger,
+}
+
+impl TlvRpc for ComponentDetailsTlvRpc<'_> {
+    type Item = ComponentDetails;
+
+    const LOG_NAME: &'static str = "component details";
+
+    fn request(&self, offset: u32) -> MgsRequest {
+        MgsRequest::ComponentDetails { component: self.component, offset }
+    }
+
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
+        response.expect_component_details()
+    }
+
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>> {
+        match tag {
+            PortStatus::TAG => {
+                let (result, leftover) = gateway_messages::deserialize::<
+                    Result<PortStatus, PortStatusError>,
+                >(value)
+                .map_err(|err| SpCommunicationError::TlvDeserialize {
+                    tag,
+                    err,
+                })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in PortStatus TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::PortStatus(result)))
+            }
+            _ => {
+                info!(
+                    self.log,
+                    "skipping unknown component details tag {tag:?}"
+                );
+                Ok(None)
+            }
+        }
     }
 }
 
