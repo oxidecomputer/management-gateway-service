@@ -18,10 +18,13 @@ use serde::Serialize;
 use serde_repr::Deserialize_repr;
 use serde_repr::Serialize_repr;
 
+pub mod ignition;
 pub mod measurement;
 pub mod vsc7448_port_status;
 
+pub use ignition::IgnitionState;
 pub use measurement::Measurement;
+
 use measurement::MeasurementHeader;
 use vsc7448_port_status::{PortStatus, PortStatusError};
 
@@ -53,7 +56,9 @@ pub enum SpRequest {
 pub enum SpResponse {
     Discover(DiscoverResponse),
     IgnitionState(IgnitionState),
-    BulkIgnitionState(BulkIgnitionState),
+    /// `BulkIgnitionState` is followed by a TLV-encoded set of
+    /// [`ignition::IgnitionState`]s.
+    BulkIgnitionState(TlvPage),
     IgnitionCommandAck,
     SpState(SpState),
     SpUpdatePrepareAck,
@@ -81,64 +86,6 @@ pub enum SpResponse {
     /// A `ComponentDetails` response is followed by a TLV-encoded set of
     /// informational structures (see [`ComponentDetails`]).
     ComponentDetails(TlvPage),
-}
-
-#[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    SerializedSize,
-    Serialize,
-    Deserialize,
-)]
-pub struct IgnitionState {
-    pub id: u16,
-    pub flags: IgnitionFlags,
-}
-
-impl IgnitionState {
-    pub fn is_powered_on(self) -> bool {
-        self.flags.intersects(IgnitionFlags::POWER)
-    }
-}
-
-bitflags! {
-    #[derive(Default, SerializedSize, Serialize, Deserialize)]
-    pub struct IgnitionFlags: u8 {
-        // RFD 142, 5.2.4 status bits
-        const POWER = 0b0000_0001;
-        const CTRL_DETECT_0 = 0b0000_0010;
-        const CTRL_DETECT_1 = 0b0000_0100;
-        // const RESERVED_3 = 0b0000_1000;
-
-        // RFD 142, 5.2.3 fault signals
-        const FLT_A3 = 0b0001_0000;
-        const FLT_A2 = 0b0010_0000;
-        const FLT_ROT = 0b0100_0000;
-        const FLT_SP = 0b1000_0000;
-    }
-}
-
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub struct BulkIgnitionState {
-    /// Ignition state for each target.
-    ///
-    /// TODO The ignition target is implicitly the array index; is that
-    /// reasonable or should we specify target indices explicitly?
-    #[serde(with = "serde_big_array::BigArray")]
-    pub targets: [IgnitionState; Self::MAX_IGNITION_TARGETS],
-}
-
-impl BulkIgnitionState {
-    // TODO-cleanup Is it okay to hard code this number to what we know the
-    // value is for the initial rack? For now assuming yes, and any changes in
-    // future products could use a different message.
-    pub const MAX_IGNITION_TARGETS: usize = 36;
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

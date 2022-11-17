@@ -210,12 +210,13 @@ impl SingleSp {
     /// Request the state of all ignition targets.
     ///
     /// This will fail if this SP is not connected to an ignition controller.
-    pub async fn bulk_ignition_state(&self) -> Result<BulkIgnitionState> {
-        self.rpc(MgsRequest::BulkIgnitionState).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_bulk_ignition_state().map_err(Into::into)
-            },
-        )
+    ///
+    /// TODO: This _does not_ return the ignition state for the SP we're
+    /// querying (which must be an ignition controller)! If this function
+    /// returns successfully, it's on. Is that good enough?
+    pub async fn bulk_ignition_state(&self) -> Result<Vec<IgnitionState>> {
+        self.get_paginated_tlv_data(BulkIgnitionStateTlvRpc { log: &self.log })
+            .await
     }
 
     /// Send an ignition command to the given target.
@@ -290,20 +291,20 @@ impl SingleSp {
             // page, "correct" just means "reasonable"; if this is the second or
             // later page, it should match every other page.
             if page.offset != offset {
-                return Err(SpCommunicationError::TlvPagination {
+                return Err(SpCommunicationError::Pagination {
                     reason: "unexpected offset from SP",
                 });
             }
             let total = if let Some(n) = page0_total {
                 if n != page.total as usize {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(SpCommunicationError::Pagination {
                         reason: "total item count changed",
                     });
                 }
                 n
             } else {
                 if page.total > TLV_RPC_TOTAL_ITEMS_DOS_LIMIT {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(SpCommunicationError::Pagination {
                         reason: "too many items",
                     });
                 }
@@ -320,7 +321,7 @@ impl SingleSp {
 
                 // Are we expecting this chunk?
                 if entries.len() >= total {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(SpCommunicationError::Pagination {
                         reason:
                             "SP returned more entries than its reported total",
                     });
@@ -607,22 +608,22 @@ impl TlvRpc for InventoryTlvRpc {
                 let device_len = header.device_len as usize;
                 let description_len = header.description_len as usize;
                 if data.len() != device_len.saturating_add(description_len) {
-                    return Err(SpCommunicationError::TlvPagination {
-                        reason: "data / header length mismatch",
+                    return Err(SpCommunicationError::Pagination {
+                        reason: "inventory data / header length mismatch",
                     });
                 }
 
                 // Interpret the data as UTF8.
                 let device =
                     str::from_utf8(&data[..device_len]).map_err(|_| {
-                        SpCommunicationError::TlvPagination {
-                            reason: "non-UTF8 device",
+                        SpCommunicationError::Pagination {
+                            reason: "non-UTF8 inventory device",
                         }
                     })?;
                 let description =
                     str::from_utf8(&data[device_len..]).map_err(|_| {
-                        SpCommunicationError::TlvPagination {
-                            reason: "non-UTF8 description",
+                        SpCommunicationError::Pagination {
+                            reason: "non-UTF8 inventory description",
                         }
                     })?;
 
@@ -711,6 +712,56 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     kind: header.kind,
                     value: header.value,
                 })))
+            }
+            _ => {
+                info!(
+                    self.log,
+                    "skipping unknown component details tag {tag:?}"
+                );
+                Ok(None)
+            }
+        }
+    }
+}
+
+struct BulkIgnitionStateTlvRpc<'a> {
+    log: &'a Logger,
+}
+
+impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
+    type Item = IgnitionState;
+
+    const LOG_NAME: &'static str = "ignition state";
+
+    fn request(&self, offset: u32) -> MgsRequest {
+        MgsRequest::BulkIgnitionState { offset }
+    }
+
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
+        response.expect_bulk_ignition_state()
+    }
+
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>> {
+        match tag {
+            IgnitionState::TAG => {
+                let (state, leftover) =
+                    gateway_messages::deserialize::<IgnitionState>(value)
+                        .map_err(|err| {
+                            SpCommunicationError::TlvDeserialize { tag, err }
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in IgnitionState TLV entry"
+                    );
+                }
+
+                Ok(Some(state))
             }
             _ => {
                 info!(

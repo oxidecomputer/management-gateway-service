@@ -120,6 +120,10 @@ impl Communicator {
     }
 
     /// Ask the local ignition controller for the ignition state of all SPs.
+    ///
+    /// TODO: This _does not_ return the ignition state for our local ignition
+    /// controller! If this function returns at all, it's on. Is that good
+    /// enough? Should we try to query the other sidecar?
     pub async fn get_ignition_state_all(
         &self,
     ) -> Result<Vec<(SpIdentifier, IgnitionState)>, Error> {
@@ -131,17 +135,7 @@ impl Communicator {
 
         // map ignition target indices back to `SpIdentifier`s for our caller
         bulk_state
-            .targets
-            .iter()
-            .filter(|state| {
-                // TODO-cleanup `state.id` should match one of the constants
-                // defined in RFD 142 section 5.2.2, all of which are nonzero.
-                // What does the real ignition controller return for unpopulated
-                // sleds? Our simulator returns 0 for unpopulated targets;
-                // filter those out.
-                state.id != 0
-            })
-            .copied()
+            .into_iter()
             .enumerate()
             .map(|(target, state)| {
                 let port = self
@@ -311,6 +305,12 @@ impl Communicator {
     /// Note that the timeout is be applied to each _element_ of the returned
     /// stream rather than the stream as a whole, allowing easy access to which
     /// SPs timed out based on the yielded value associated with those SPs.
+    ///
+    /// TODO: See note above about bulk_ignition_state where our local ignition
+    /// controller is _not_ included in the returned list, and will therefore
+    /// not be queried by this function. Should we explicitly query our local
+    /// ignition controller? If so, can we remove the ignition state from the
+    /// returned futures?
     pub fn query_all_online_sps<F, T, Fut>(
         &self,
         ignition_state: &[(SpIdentifier, IgnitionState)],
@@ -329,7 +329,7 @@ impl Communicator {
             .map(move |(id, state)| {
                 let mut f = f.clone();
                 async move {
-                    let val = if state.is_powered_on() {
+                    let val = if state.target.is_some() {
                         Some(timeout.timeout_at(f(id)).await)
                     } else {
                         None

@@ -7,7 +7,6 @@
 use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
-use crate::BulkIgnitionState;
 use crate::ComponentDetails;
 use crate::ComponentUpdatePrepare;
 use crate::DeviceCapabilities;
@@ -36,6 +35,8 @@ use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
 use core::convert::Infallible;
+use hubpack::error::Error as HubpackError;
+use hubpack::error::Result as HubpackResult;
 
 #[cfg(feature = "std")]
 use std::net::SocketAddrV6;
@@ -75,11 +76,15 @@ impl From<DeviceDescription<'_>> for DeviceDescriptionHeader {
 pub struct BoundsChecked(pub u32);
 
 pub trait SpHandler {
+    type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
+
     fn discover(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
     ) -> Result<DiscoverResponse, SpError>;
+
+    fn num_ignition_ports(&mut self) -> Result<u32, SpError>;
 
     fn ignition_state(
         &mut self,
@@ -92,7 +97,8 @@ pub trait SpHandler {
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<BulkIgnitionState, SpError>;
+        offset: u32,
+    ) -> Result<Self::BulkIgnitionStateIter, SpError>;
 
     fn ignition_command(
         &mut self,
@@ -214,7 +220,7 @@ pub trait SpHandler {
     fn device_description(
         &mut self,
         index: BoundsChecked,
-    ) -> DeviceDescription<'_>;
+    ) -> DeviceDescription<'static>;
 
     /// Number of informational elements returned in the details for the given
     /// component.
@@ -326,22 +332,55 @@ pub fn handle_message<H: SpHandler>(
         Some(OutgoingTrailingData::DeviceInventory {
             device_index,
             total_devices,
-        }) => encode_device_inventory(
-            &mut out[n..],
-            device_index,
-            total_devices,
-            handler,
-        ),
+        }) => {
+            encode_tlv_structs(
+                &mut out[n..],
+                (device_index..total_devices).map(|i| {
+                    let dev = handler.device_description(BoundsChecked(i));
+                    (DeviceDescriptionHeader::TAG, move |buf: &mut [u8]| {
+                        // Will the serialized description of this device fit?
+                        let len = DeviceDescriptionHeader::MAX_SIZE
+                            + dev.device.len()
+                            + dev.description.len();
+                        if len > buf.len() {
+                            return Err(HubpackError::Overrun);
+                        }
+
+                        let header = DeviceDescriptionHeader::from(dev);
+
+                        // Serialize the header, then pack in the device and
+                        // description strings (which we know will fit based on
+                        // our length check above).
+                        let mut n = hubpack::serialize(buf, &header)?;
+                        for s in [dev.device, dev.description] {
+                            buf[n..][..s.len()].copy_from_slice(s.as_bytes());
+                            n += s.len();
+                        }
+
+                        Ok(n)
+                    })
+                }),
+            )
+        }
         Some(OutgoingTrailingData::ComponentDetails {
             component,
             offset,
             total,
-        }) => encode_component_details(
+        }) => encode_tlv_structs(
             &mut out[n..],
-            component,
-            offset,
-            total,
-            handler,
+            (offset..total).map(|i| {
+                let details =
+                    handler.component_details(component, BoundsChecked(i));
+                (details.tag(), move |buf: &mut [u8]| details.serialize(buf))
+            }),
+        ),
+        Some(OutgoingTrailingData::BulkIgnition(iter)) => encode_tlv_structs(
+            &mut out[n..],
+            iter.map(|state| {
+                (IgnitionState::TAG, move |buf: &mut [u8]| {
+                    hubpack::serialize(buf, &state)
+                })
+            }),
         ),
         None => 0,
     };
@@ -349,102 +388,34 @@ pub fn handle_message<H: SpHandler>(
     Some(n)
 }
 
-/// Pack as many device description TLV triples as we can into `out`, starting
-/// at `device_index`.
-fn encode_device_inventory<H: SpHandler>(
-    mut out: &mut [u8],
-    mut device_index: u32,
-    total_devices: u32,
-    handler: &mut H,
-) -> usize {
+/// Given an iterator that produces `(tag, value)` pairs (where `value` is
+/// provided as a function that serializes the value into a buffer), pack as
+/// many TLV triples from `iter` as we can into `out`.
+///
+/// Returns the total number of bytes written into `out`.
+fn encode_tlv_structs<I, F>(mut out: &mut [u8], iter: I) -> usize
+where
+    I: Iterator<Item = (tlv::Tag, F)>,
+    F: FnOnce(&mut [u8]) -> HubpackResult<usize>,
+{
     let mut total_tlv_len = 0;
-    while device_index < total_devices {
-        let dev = handler.device_description(BoundsChecked(device_index));
 
-        // Will the serialized description of this device fit in `out`?
-        let len = tlv::tlv_len(
-            DeviceDescriptionHeader::MAX_SIZE
-                + dev.device.len()
-                + dev.description.len(),
-        );
-        if len > out.len() {
-            break;
-        }
-
-        // It will fit: serialize and encode it.
-        match tlv::encode::<_, Infallible>(
-            out,
-            DeviceDescriptionHeader::TAG,
-            |buf| {
-                let header = DeviceDescriptionHeader::from(dev);
-                // We know our buffer is large enough from our length check
-                // above, so this serialization can't fail.
-                let mut n = hubpack::serialize(buf, &header).unwrap();
-
-                // Pack in the device and description
-                for s in [dev.device, dev.description] {
-                    buf[n..][..s.len()].copy_from_slice(s.as_bytes());
-                    n += s.len();
-                }
-
-                Ok(n)
-            },
-        ) {
+    for (tag, encode) in iter {
+        match tlv::encode(out, tag, encode) {
             Ok(n) => {
                 total_tlv_len += n;
                 out = &mut out[n..];
             }
-            Err(tlv::EncodeError::Custom(infallible)) => {
-                // A bit of type system magic here; our custom error type
-                // (`Infallible`) cannot be instantiated. We can
-                // provide an empty match to teach the type system that an
-                // `Infallible` (which can't exist) can this branch is
-                // unreachable without needing to explicitly panic.
-                match infallible {}
-            }
-            // We checked the length above; this error isn't possible.
-            Err(tlv::EncodeError::BufferTooSmall) => panic!(),
-        }
 
-        device_index += 1;
-    }
-
-    total_tlv_len
-}
-
-/// Pack as many component details TLV triples as we can into `out`, starting
-/// at `offset`.
-fn encode_component_details<H: SpHandler>(
-    mut out: &mut [u8],
-    component: SpComponent,
-    mut offset: u32,
-    total: u32,
-    handler: &mut H,
-) -> usize {
-    let mut total_tlv_len = 0;
-    while offset < total {
-        let details =
-            handler.component_details(component, BoundsChecked(offset));
-
-        match tlv::encode::<_, ()>(out, details.tag(), |buf| {
-            details.serialize(buf).map_err(|err| match err {
-                hubpack::error::Error::Overrun => (),
-                // We control the types returned by `component_details`; no
-                // hubpack errors other than the buffer being too short are
-                // possible.
-                _ => panic!(),
-            })
-        }) {
-            Ok(n) => {
-                total_tlv_len += n;
-                out = &mut out[n..];
-            }
-            // If we can't fit this `details` into `out`, we're done.
-            Err(tlv::EncodeError::Custom(()))
+            // If either the `encode` closure or the TLV header doesn't fit,
+            // we've packed as much as we can into `out` and we're done.
+            Err(tlv::EncodeError::Custom(HubpackError::Overrun))
             | Err(tlv::EncodeError::BufferTooSmall) => break,
-        }
 
-        offset += 1;
+            // Other hubpack errors are impossible with all serialization types
+            // we use.
+            Err(tlv::EncodeError::Custom(_)) => panic!(),
+        }
     }
 
     total_tlv_len
@@ -494,7 +465,7 @@ fn handle_message_impl<H: SpHandler>(
     message_id: u32,
     request_kind_data: &[u8],
     handler: &mut H,
-) -> Option<(SpResponse, Option<OutgoingTrailingData>)> {
+) -> Option<(SpResponse, Option<OutgoingTrailingData<H>>)> {
     match hubpack::deserialize::<MessageKind>(request_kind_data) {
         Ok((MessageKind::MgsRequest(kind), leftover)) => {
             Some(handle_mgs_request(sender, port, handler, kind, leftover))
@@ -547,7 +518,7 @@ fn handle_mgs_request<H: SpHandler>(
     handler: &mut H,
     kind: MgsRequest,
     leftover: &[u8],
-) -> (SpResponse, Option<OutgoingTrailingData>) {
+) -> (SpResponse, Option<OutgoingTrailingData<H>>) {
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
     let trailing_data = match &kind {
@@ -582,9 +553,18 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::IgnitionState { target } => handler
             .ignition_state(sender, port, target)
             .map(SpResponse::IgnitionState),
-        MgsRequest::BulkIgnitionState => handler
-            .bulk_ignition_state(sender, port)
-            .map(SpResponse::BulkIgnitionState),
+        MgsRequest::BulkIgnitionState { offset } => {
+            handler.num_ignition_ports().and_then(|port_count| {
+                let offset = u32::min(offset, port_count);
+                let iter = handler.bulk_ignition_state(sender, port, offset)?;
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::BulkIgnition(iter));
+                Ok(SpResponse::BulkIgnitionState(TlvPage {
+                    offset,
+                    total: port_count,
+                }))
+            })
+        }
         MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(sender, port, target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
@@ -686,9 +666,10 @@ fn handle_mgs_request<H: SpHandler>(
     (response, outgoing_trailing_data)
 }
 
-enum OutgoingTrailingData {
+enum OutgoingTrailingData<H: SpHandler> {
     DeviceInventory { device_index: u32, total_devices: u32 },
     ComponentDetails { component: SpComponent, offset: u32, total: u32 },
+    BulkIgnition(H::BulkIgnitionStateIter),
 }
 
 #[cfg(test)]
@@ -710,20 +691,16 @@ mod tests {
             Ok(DiscoverResponse { sp_port: port })
         }
 
+        fn num_ignition_ports(&mut self) -> Result<u32, SpError> {
+            unimplemented!()
+        }
+
         fn ignition_state(
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
             _target: u8,
         ) -> Result<IgnitionState, SpError> {
-            unimplemented!()
-        }
-
-        fn bulk_ignition_state(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<BulkIgnitionState, SpError> {
             unimplemented!()
         }
 

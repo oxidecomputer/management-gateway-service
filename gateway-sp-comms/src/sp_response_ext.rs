@@ -3,7 +3,6 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::error::SpCommunicationError;
-use gateway_messages::BulkIgnitionState;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
@@ -26,7 +25,7 @@ pub(crate) trait SpResponseExt {
 
     fn expect_bulk_ignition_state(
         self,
-    ) -> Result<BulkIgnitionState, SpCommunicationError>;
+    ) -> Result<TlvPage, SpCommunicationError>;
 
     fn expect_ignition_command_ack(self) -> Result<(), SpCommunicationError>;
 
@@ -144,9 +143,9 @@ impl SpResponseExt for SpResponse {
 
     fn expect_bulk_ignition_state(
         self,
-    ) -> Result<BulkIgnitionState, SpCommunicationError> {
+    ) -> Result<TlvPage, SpCommunicationError> {
         match self {
-            Self::BulkIgnitionState(state) => Ok(state),
+            Self::BulkIgnitionState(page) => Ok(page),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
             other => Err(SpCommunicationError::BadResponseType {
                 expected: response_kind_names::BULK_IGNITION_STATE,

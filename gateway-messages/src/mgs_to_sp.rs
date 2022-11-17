@@ -20,7 +20,9 @@ pub enum MgsRequest {
     IgnitionState {
         target: u8,
     },
-    BulkIgnitionState,
+    BulkIgnitionState {
+        offset: u32,
+    },
     IgnitionCommand {
         target: u8,
         command: IgnitionCommand,
@@ -93,6 +95,7 @@ pub enum MgsError {
 pub enum IgnitionCommand {
     PowerOn,
     PowerOff,
+    PowerReset,
 }
 
 #[derive(
