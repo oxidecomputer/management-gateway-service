@@ -86,6 +86,14 @@ enum Command {
     /// Ask SP for its current state.
     State,
 
+    /// Get the ignition state for a single target port (only valid if the SP is
+    /// an ignition controller).
+    Ignition { target: u8 },
+
+    /// Get bulk ignition state information (only valid if the SP is an ignition
+    /// controller).
+    BulkIgnition,
+
     /// Get or set startup options on an SP.
     StartupOptions { options: Option<u64> },
 
@@ -228,6 +236,15 @@ async fn main() -> Result<()> {
         }
         Command::State => {
             info!(log, "{:?}", sp.state().await?);
+        }
+        Command::Ignition { target } => {
+            info!(log, "{:?}", sp.ignition_state(target).await?);
+        }
+        Command::BulkIgnition => {
+            let states = sp.bulk_ignition_state().await?;
+            for (i, state) in states.into_iter().enumerate() {
+                println!("target {i}: {state:?}");
+            }
         }
         Command::StartupOptions { options } => {
             if let Some(options) = options {
