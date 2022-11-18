@@ -3,6 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::error::SpCommunicationError;
+use gateway_messages::ignition::AllLinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
@@ -11,7 +12,6 @@ use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
-use gateway_messages::ignition::AllLinkEvents;
 
 type Result<T> = std::result::Result<T, SpCommunicationError>;
 
