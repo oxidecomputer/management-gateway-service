@@ -14,6 +14,7 @@ use crate::sp_response_ext::SpResponseExt;
 use crate::SwitchPortConfig;
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
+use gateway_messages::ignition::AllLinkEvents;
 use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::BulkIgnitionState;
@@ -217,6 +218,32 @@ impl SingleSp {
     pub async fn bulk_ignition_state(&self) -> Result<Vec<IgnitionState>> {
         self.get_paginated_tlv_data(BulkIgnitionStateTlvRpc { log: &self.log })
             .await
+    }
+
+    /// Request all link events on all ignition targets.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    ///
+    /// TODO: This _does not_ return events for the target on the SP we're
+    /// querying (which must be an ignition controller)!
+    pub async fn bulk_ignition_link_events(
+        &self,
+    ) -> Result<Vec<AllLinkEvents>> {
+        self.get_paginated_tlv_data(BulkIgnitionLinkEventsTlvRpc {
+            log: &self.log,
+        })
+        .await
+    }
+
+    /// Clear all ignition link events.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    pub async fn clear_ignition_link_events(&self) -> Result<()> {
+        self.rpc(MgsRequest::ClearIgnitionLinkEvents).await.and_then(
+            |(_peer, response, _data)| {
+                response.expect_clear_ignition_link_events_ack()
+            },
+        )
     }
 
     /// Send an ignition command to the given target.
@@ -766,7 +793,57 @@ impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
             _ => {
                 info!(
                     self.log,
-                    "skipping unknown component details tag {tag:?}"
+                    "skipping unknown ignition state tag {tag:?}"
+                );
+                Ok(None)
+            }
+        }
+    }
+}
+
+struct BulkIgnitionLinkEventsTlvRpc<'a> {
+    log: &'a Logger,
+}
+
+impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
+    type Item = AllLinkEvents;
+
+    const LOG_NAME: &'static str = "ignition link events";
+
+    fn request(&self, offset: u32) -> MgsRequest {
+        MgsRequest::BulkIgnitionLinkEvents { offset }
+    }
+
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
+        response.expect_bulk_ignition_link_events()
+    }
+
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>> {
+        match tag {
+            AllLinkEvents::TAG => {
+                let (events, leftover) =
+                    gateway_messages::deserialize::<AllLinkEvents>(value)
+                        .map_err(|err| {
+                            SpCommunicationError::TlvDeserialize { tag, err }
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in IgnitionState TLV entry"
+                    );
+                }
+
+                Ok(Some(events))
+            }
+            _ => {
+                info!(
+                    self.log,
+                    "skipping unknown ignition link events tag {tag:?}"
                 );
                 Ok(None)
             }

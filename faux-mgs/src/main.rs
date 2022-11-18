@@ -94,6 +94,14 @@ enum Command {
     /// controller).
     BulkIgnition,
 
+    /// Get bulk ignition link events (only valid if the SP is an ignition
+    /// controller).
+    BulkIgnitionLinkEvents,
+
+    /// Clear all ignition link events (only valid if the SP is an ignition
+    /// controller).
+    ClearIgnitionLinkEvents,
+
     /// Get or set startup options on an SP.
     StartupOptions { options: Option<u64> },
 
@@ -245,6 +253,16 @@ async fn main() -> Result<()> {
             for (i, state) in states.into_iter().enumerate() {
                 println!("target {i}: {state:?}");
             }
+        }
+        Command::BulkIgnitionLinkEvents => {
+            let events = sp.bulk_ignition_link_events().await?;
+            for (i, events) in events.into_iter().enumerate() {
+                println!("target {i}: {events:?}");
+            }
+        }
+        Command::ClearIgnitionLinkEvents => {
+            sp.clear_ignition_link_events().await?;
+            info!(log, "ignition link events cleared");
         }
         Command::StartupOptions { options } => {
             if let Some(options) = options {
