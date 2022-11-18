@@ -739,6 +739,9 @@ mod tests {
     // Only implements `discover()`; all other methods are left as
     // `unimplemented!()` since no tests are intended to call them.
     impl SpHandler for FakeHandler {
+        type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
+        type BulkIgnitionLinkEventsIter = std::iter::Empty<AllLinkEvents>;
+
         fn discover(
             &mut self,
             _sender: SocketAddrV6,
@@ -757,6 +760,42 @@ mod tests {
             _port: SpPort,
             _target: u8,
         ) -> Result<IgnitionState, SpError> {
+            unimplemented!()
+        }
+
+        fn bulk_ignition_state(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _offset: u32,
+        ) -> Result<Self::BulkIgnitionStateIter, SpError> {
+            unimplemented!()
+        }
+
+        fn bulk_ignition_link_events(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _offset: u32,
+        ) -> Result<Self::BulkIgnitionLinkEventsIter, SpError> {
+            unimplemented!()
+        }
+
+        fn ignition_link_events(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _target: u8,
+        ) -> Result<AllLinkEvents, SpError> {
+            unimplemented!()
+        }
+
+        fn clear_ignition_link_events(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _target: Option<u8>,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
 
@@ -892,7 +931,7 @@ mod tests {
         fn device_description(
             &mut self,
             _index: BoundsChecked,
-        ) -> DeviceDescription<'_> {
+        ) -> DeviceDescription<'static> {
             unimplemented!()
         }
 
