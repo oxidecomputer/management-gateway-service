@@ -791,10 +791,7 @@ impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
                 Ok(Some(state))
             }
             _ => {
-                info!(
-                    self.log,
-                    "skipping unknown ignition state tag {tag:?}"
-                );
+                info!(self.log, "skipping unknown ignition state tag {tag:?}");
                 Ok(None)
             }
         }
