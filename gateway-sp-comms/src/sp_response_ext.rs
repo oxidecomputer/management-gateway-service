@@ -11,6 +11,7 @@ use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
+use gateway_messages::ignition::AllLinkEvents;
 
 type Result<T> = std::result::Result<T, SpCommunicationError>;
 
@@ -24,6 +25,8 @@ pub(crate) trait SpResponseExt {
     fn expect_ignition_state(self) -> Result<IgnitionState>;
 
     fn expect_bulk_ignition_state(self) -> Result<TlvPage>;
+
+    fn expect_ignition_link_events(self) -> Result<AllLinkEvents>;
 
     fn expect_bulk_ignition_link_events(self) -> Result<TlvPage>;
 
@@ -69,6 +72,9 @@ impl SpResponseExt for SpResponse {
         match self {
             Self::Discover(_) => response_kind_names::DISCOVER,
             Self::IgnitionState(_) => response_kind_names::IGNITION_STATE,
+            Self::IgnitionLinkEvents(_) => {
+                response_kind_names::IGNITION_LINK_EVENTS
+            }
             Self::BulkIgnitionState(_) => {
                 response_kind_names::BULK_IGNITION_STATE
             }
@@ -141,6 +147,17 @@ impl SpResponseExt for SpResponse {
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
             other => Err(SpCommunicationError::BadResponseType {
                 expected: response_kind_names::BULK_IGNITION_STATE,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_ignition_link_events(self) -> Result<AllLinkEvents> {
+        match self {
+            Self::IgnitionLinkEvents(events) => Ok(events),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::IGNITION_LINK_EVENTS,
                 got: other.name(),
             }),
         }
@@ -362,6 +379,7 @@ mod response_kind_names {
     pub(super) const DISCOVER: &str = "discover";
     pub(super) const IGNITION_STATE: &str = "ignition_state";
     pub(super) const BULK_IGNITION_STATE: &str = "bulk_ignition_state";
+    pub(super) const IGNITION_LINK_EVENTS: &str = "ignition_link_events";
     pub(super) const BULK_IGNITION_LINK_EVENTS: &str =
         "bulk_ignition_link_events";
     pub(super) const IGNITION_COMMAND_ACK: &str = "ignition_command_ack";

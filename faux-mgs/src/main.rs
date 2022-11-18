@@ -96,11 +96,23 @@ enum Command {
 
     /// Get bulk ignition link events (only valid if the SP is an ignition
     /// controller).
-    BulkIgnitionLinkEvents,
+    IgnitionLinkEvents {
+        #[clap(
+            help = "integer of a target to clear, or 'all' for all targets",
+            value_parser = IgnitionLinkEventsTarget::parse,
+        )]
+        target: IgnitionLinkEventsTarget,
+    },
 
     /// Clear all ignition link events (only valid if the SP is an ignition
     /// controller).
-    ClearIgnitionLinkEvents,
+    ClearIgnitionLinkEvents {
+        #[clap(
+            help = "integer of a target to clear, or 'all' for all targets",
+            value_parser = IgnitionLinkEventsTarget::parse,
+        )]
+        target: IgnitionLinkEventsTarget,
+    },
 
     /// Get or set startup options on an SP.
     StartupOptions { options: Option<u64> },
@@ -160,6 +172,23 @@ enum Command {
 
     /// Instruct the SP to reset.
     Reset,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IgnitionLinkEventsTarget(Option<u8>);
+
+impl IgnitionLinkEventsTarget {
+    fn parse(s: &str) -> Result<Self> {
+        match s {
+            "all" | "ALL" => Ok(Self(None)),
+            _ => {
+                let target = s
+                    .parse()
+                    .with_context(|| "must be an integer (0..256) or 'all'")?;
+                Ok(Self(Some(target)))
+            }
+        }
+    }
 }
 
 fn power_state_from_str(s: &str) -> Result<PowerState> {
@@ -254,14 +283,23 @@ async fn main() -> Result<()> {
                 println!("target {i}: {state:?}");
             }
         }
-        Command::BulkIgnitionLinkEvents => {
-            let events = sp.bulk_ignition_link_events().await?;
-            for (i, events) in events.into_iter().enumerate() {
-                println!("target {i}: {events:?}");
+        Command::IgnitionLinkEvents { target } => {
+            if let Some(target) = target.0 {
+                let events = sp.ignition_link_events(target).await;
+                println!("target {target}: {events:?}");
+            } else {
+                let events = sp.bulk_ignition_link_events().await?;
+                for (i, events) in events.into_iter().enumerate() {
+                    println!("target {i}: {events:?}");
+                }
             }
         }
-        Command::ClearIgnitionLinkEvents => {
-            sp.clear_ignition_link_events().await?;
+        Command::ClearIgnitionLinkEvents { target } => {
+            if let Some(target) = target.0 {
+                sp.clear_ignition_link_events(target).await?;
+            } else {
+                sp.clear_all_ignition_link_events().await?;
+            }
             info!(log, "ignition link events cleared");
         }
         Command::StartupOptions { options } => {

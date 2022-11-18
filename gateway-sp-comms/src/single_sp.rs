@@ -220,6 +220,18 @@ impl SingleSp {
             .await
     }
 
+    /// Request link events for a single ignition target.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    pub async fn ignition_link_events(
+        &self,
+        target: u8,
+    ) -> Result<AllLinkEvents> {
+        self.rpc(MgsRequest::IgnitionLinkEvents { target }).await.and_then(
+            |(_peer, response, _data)| response.expect_ignition_link_events(),
+        )
+    }
+
     /// Request all link events on all ignition targets.
     ///
     /// This will fail if this SP is not connected to an ignition controller.
@@ -235,15 +247,26 @@ impl SingleSp {
         .await
     }
 
+    /// Clear ignition link events for a single target.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    pub async fn clear_ignition_link_events(&self, target: u8) -> Result<()> {
+        self.rpc(MgsRequest::ClearIgnitionLinkEvents { target: Some(target) })
+            .await
+            .and_then(|(_peer, response, _data)| {
+                response.expect_clear_ignition_link_events_ack()
+            })
+    }
+
     /// Clear all ignition link events.
     ///
     /// This will fail if this SP is not connected to an ignition controller.
-    pub async fn clear_ignition_link_events(&self) -> Result<()> {
-        self.rpc(MgsRequest::ClearIgnitionLinkEvents).await.and_then(
-            |(_peer, response, _data)| {
+    pub async fn clear_all_ignition_link_events(&self) -> Result<()> {
+        self.rpc(MgsRequest::ClearIgnitionLinkEvents { target: None })
+            .await
+            .and_then(|(_peer, response, _data)| {
                 response.expect_clear_ignition_link_events_ack()
-            },
-        )
+            })
     }
 
     /// Send an ignition command to the given target.

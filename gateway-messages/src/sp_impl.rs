@@ -102,6 +102,13 @@ pub trait SpHandler {
         offset: u32,
     ) -> Result<Self::BulkIgnitionStateIter, SpError>;
 
+    fn ignition_link_events(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        target: u8,
+    ) -> Result<AllLinkEvents, SpError>;
+
     fn bulk_ignition_link_events(
         &mut self,
         sender: SocketAddrV6,
@@ -109,10 +116,12 @@ pub trait SpHandler {
         offset: u32,
     ) -> Result<Self::BulkIgnitionLinkEventsIter, SpError>;
 
+    /// If `target` is `None`, clear link events for all targets.
     fn clear_ignition_link_events(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
+        target: Option<u8>,
     ) -> Result<(), SpError>;
 
     fn ignition_command(
@@ -592,6 +601,9 @@ fn handle_mgs_request<H: SpHandler>(
                 }))
             })
         }
+        MgsRequest::IgnitionLinkEvents { target } => handler
+            .ignition_link_events(sender, port, target)
+            .map(SpResponse::IgnitionLinkEvents),
         MgsRequest::BulkIgnitionLinkEvents { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
                 let offset = u32::min(offset, port_count);
@@ -605,8 +617,8 @@ fn handle_mgs_request<H: SpHandler>(
                 }))
             })
         }
-        MgsRequest::ClearIgnitionLinkEvents => handler
-            .clear_ignition_link_events(sender, port)
+        MgsRequest::ClearIgnitionLinkEvents { target } => handler
+            .clear_ignition_link_events(sender, port, target)
             .map(|()| SpResponse::ClearIgnitionLinkEventsAck),
         MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(sender, port, target, command)

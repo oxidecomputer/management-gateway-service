@@ -61,10 +61,14 @@ pub enum MgsRequest {
         component: SpComponent,
         offset: u32,
     },
-    BulkIgnitionLinkEvents {
-        offset: u32,
+    /// Get ignition link events for a single target.
+    IgnitionLinkEvents { target: u8 },
+    /// Get ignition link events for all targets, starting at `offset`.
+    BulkIgnitionLinkEvents { offset: u32 },
+    /// If `target` is `None`, clear all target link events.
+    ClearIgnitionLinkEvents {
+        target: Option<u8>,
     },
-    ClearIgnitionLinkEvents,
 }
 
 #[derive(
