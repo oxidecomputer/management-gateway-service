@@ -4,6 +4,7 @@
 
 //! Behavior implemented by both real and simulated SPs.
 
+use crate::ignition::AllLinkEvents;
 use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
@@ -77,6 +78,7 @@ pub struct BoundsChecked(pub u32);
 
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
+    type BulkIgnitionLinkEventsIter: Iterator<Item = AllLinkEvents>;
 
     fn discover(
         &mut self,
@@ -99,6 +101,19 @@ pub trait SpHandler {
         port: SpPort,
         offset: u32,
     ) -> Result<Self::BulkIgnitionStateIter, SpError>;
+
+    fn bulk_ignition_link_events(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        offset: u32,
+    ) -> Result<Self::BulkIgnitionLinkEventsIter, SpError>;
+
+    fn clear_ignition_link_events(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+    ) -> Result<(), SpError>;
 
     fn ignition_command(
         &mut self,
@@ -374,14 +389,26 @@ pub fn handle_message<H: SpHandler>(
                 (details.tag(), move |buf: &mut [u8]| details.serialize(buf))
             }),
         ),
-        Some(OutgoingTrailingData::BulkIgnition(iter)) => encode_tlv_structs(
-            &mut out[n..],
-            iter.map(|state| {
-                (IgnitionState::TAG, move |buf: &mut [u8]| {
-                    hubpack::serialize(buf, &state)
-                })
-            }),
-        ),
+        Some(OutgoingTrailingData::BulkIgnitionState(iter)) => {
+            encode_tlv_structs(
+                &mut out[n..],
+                iter.map(|state| {
+                    (IgnitionState::TAG, move |buf: &mut [u8]| {
+                        hubpack::serialize(buf, &state)
+                    })
+                }),
+            )
+        }
+        Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter)) => {
+            encode_tlv_structs(
+                &mut out[n..],
+                iter.map(|state| {
+                    (AllLinkEvents::TAG, move |buf: &mut [u8]| {
+                        hubpack::serialize(buf, &state)
+                    })
+                }),
+            )
+        }
         None => 0,
     };
 
@@ -558,13 +585,29 @@ fn handle_mgs_request<H: SpHandler>(
                 let offset = u32::min(offset, port_count);
                 let iter = handler.bulk_ignition_state(sender, port, offset)?;
                 outgoing_trailing_data =
-                    Some(OutgoingTrailingData::BulkIgnition(iter));
+                    Some(OutgoingTrailingData::BulkIgnitionState(iter));
                 Ok(SpResponse::BulkIgnitionState(TlvPage {
                     offset,
                     total: port_count,
                 }))
             })
         }
+        MgsRequest::BulkIgnitionLinkEvents { offset } => {
+            handler.num_ignition_ports().and_then(|port_count| {
+                let offset = u32::min(offset, port_count);
+                let iter =
+                    handler.bulk_ignition_link_events(sender, port, offset)?;
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter));
+                Ok(SpResponse::BulkIgnitionLinkEvents(TlvPage {
+                    offset,
+                    total: port_count,
+                }))
+            })
+        }
+        MgsRequest::ClearIgnitionLinkEvents => handler
+            .clear_ignition_link_events(sender, port)
+            .map(|()| SpResponse::ClearIgnitionLinkEventsAck),
         MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(sender, port, target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
@@ -669,7 +712,8 @@ fn handle_mgs_request<H: SpHandler>(
 enum OutgoingTrailingData<H: SpHandler> {
     DeviceInventory { device_index: u32, total_devices: u32 },
     ComponentDetails { component: SpComponent, offset: u32, total: u32 },
-    BulkIgnition(H::BulkIgnitionStateIter),
+    BulkIgnitionState(H::BulkIgnitionStateIter),
+    BulkIgnitionLinkEvents(H::BulkIgnitionLinkEventsIter),
 }
 
 #[cfg(test)]

@@ -128,3 +128,28 @@ mod raw_system_type {
     pub(super) const SIDECAR: u16 = 0b0000_0000_0001_0010;
     pub(super) const PSC: u16 = 0b0000_0000_0001_0011;
 }
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct AllLinkEvents {
+    pub controller: LinkEvents,
+    pub target_link0: LinkEvents,
+    pub target_link1: LinkEvents,
+}
+
+impl AllLinkEvents {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"ILE0");
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct LinkEvents {
+    pub encoding_error: bool,
+    pub decoding_error: bool,
+    pub ordered_set_invalid: bool,
+    pub message_version_invalid: bool,
+    pub message_type_invalid: bool,
+    pub message_checksum_invalid: bool,
+}

@@ -12,66 +12,56 @@ use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 
+type Result<T> = std::result::Result<T, SpCommunicationError>;
+
 // When we send a request we expect a specific kind of response; the boilerplate
 // for confirming that is a little noisy, so it lives in this extension trait.
 pub(crate) trait SpResponseExt {
     fn name(&self) -> &'static str;
 
-    fn expect_discover(self) -> Result<DiscoverResponse, SpCommunicationError>;
+    fn expect_discover(self) -> Result<DiscoverResponse>;
 
-    fn expect_ignition_state(
-        self,
-    ) -> Result<IgnitionState, SpCommunicationError>;
+    fn expect_ignition_state(self) -> Result<IgnitionState>;
 
-    fn expect_bulk_ignition_state(
-        self,
-    ) -> Result<TlvPage, SpCommunicationError>;
+    fn expect_bulk_ignition_state(self) -> Result<TlvPage>;
 
-    fn expect_ignition_command_ack(self) -> Result<(), SpCommunicationError>;
+    fn expect_bulk_ignition_link_events(self) -> Result<TlvPage>;
 
-    fn expect_sp_state(self) -> Result<SpState, SpCommunicationError>;
+    fn expect_ignition_command_ack(self) -> Result<()>;
 
-    fn expect_serial_console_attach_ack(
-        self,
-    ) -> Result<(), SpCommunicationError>;
+    fn expect_clear_ignition_link_events_ack(self) -> Result<()>;
 
-    fn expect_serial_console_write_ack(
-        self,
-    ) -> Result<u64, SpCommunicationError>;
+    fn expect_sp_state(self) -> Result<SpState>;
 
-    fn expect_serial_console_detach_ack(
-        self,
-    ) -> Result<(), SpCommunicationError>;
+    fn expect_serial_console_attach_ack(self) -> Result<()>;
 
-    fn expect_sp_update_prepare_ack(self) -> Result<(), SpCommunicationError>;
+    fn expect_serial_console_write_ack(self) -> Result<u64>;
 
-    fn expect_component_update_prepare_ack(
-        self,
-    ) -> Result<(), SpCommunicationError>;
+    fn expect_serial_console_detach_ack(self) -> Result<()>;
 
-    fn expect_update_status(self)
-        -> Result<UpdateStatus, SpCommunicationError>;
+    fn expect_sp_update_prepare_ack(self) -> Result<()>;
 
-    fn expect_update_chunk_ack(self) -> Result<(), SpCommunicationError>;
+    fn expect_component_update_prepare_ack(self) -> Result<()>;
 
-    fn expect_update_abort_ack(self) -> Result<(), SpCommunicationError>;
+    fn expect_update_status(self) -> Result<UpdateStatus>;
 
-    fn expect_power_state(self) -> Result<PowerState, SpCommunicationError>;
+    fn expect_update_chunk_ack(self) -> Result<()>;
 
-    fn expect_set_power_state_ack(self) -> Result<(), SpCommunicationError>;
+    fn expect_update_abort_ack(self) -> Result<()>;
 
-    fn expect_sys_reset_prepare_ack(self) -> Result<(), SpCommunicationError>;
+    fn expect_power_state(self) -> Result<PowerState>;
 
-    fn expect_inventory(self) -> Result<TlvPage, SpCommunicationError>;
+    fn expect_set_power_state_ack(self) -> Result<()>;
 
-    fn expect_startup_options(
-        self,
-    ) -> Result<StartupOptions, SpCommunicationError>;
+    fn expect_sys_reset_prepare_ack(self) -> Result<()>;
 
-    fn expect_set_startup_options_ack(self)
-        -> Result<(), SpCommunicationError>;
+    fn expect_inventory(self) -> Result<TlvPage>;
 
-    fn expect_component_details(self) -> Result<TlvPage, SpCommunicationError>;
+    fn expect_startup_options(self) -> Result<StartupOptions>;
+
+    fn expect_set_startup_options_ack(self) -> Result<()>;
+
+    fn expect_component_details(self) -> Result<TlvPage>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -82,8 +72,14 @@ impl SpResponseExt for SpResponse {
             Self::BulkIgnitionState(_) => {
                 response_kind_names::BULK_IGNITION_STATE
             }
+            Self::BulkIgnitionLinkEvents(_) => {
+                response_kind_names::BULK_IGNITION_LINK_EVENTS
+            }
             Self::IgnitionCommandAck => {
                 response_kind_names::IGNITION_COMMAND_ACK
+            }
+            Self::ClearIgnitionLinkEventsAck => {
+                response_kind_names::CLEAR_IGNITION_LINK_EVENTS_ACK
             }
             Self::SpState(_) => response_kind_names::SP_STATE,
             Self::SerialConsoleAttachAck => {
@@ -117,7 +113,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_discover(self) -> Result<DiscoverResponse, SpCommunicationError> {
+    fn expect_discover(self) -> Result<DiscoverResponse> {
         match self {
             Self::Discover(discover) => Ok(discover),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -128,9 +124,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_ignition_state(
-        self,
-    ) -> Result<IgnitionState, SpCommunicationError> {
+    fn expect_ignition_state(self) -> Result<IgnitionState> {
         match self {
             Self::IgnitionState(state) => Ok(state),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -141,9 +135,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_bulk_ignition_state(
-        self,
-    ) -> Result<TlvPage, SpCommunicationError> {
+    fn expect_bulk_ignition_state(self) -> Result<TlvPage> {
         match self {
             Self::BulkIgnitionState(page) => Ok(page),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -154,7 +146,18 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_ignition_command_ack(self) -> Result<(), SpCommunicationError> {
+    fn expect_bulk_ignition_link_events(self) -> Result<TlvPage> {
+        match self {
+            Self::BulkIgnitionLinkEvents(page) => Ok(page),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::BULK_IGNITION_LINK_EVENTS,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_ignition_command_ack(self) -> Result<()> {
         match self {
             Self::IgnitionCommandAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -165,7 +168,18 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_sp_state(self) -> Result<SpState, SpCommunicationError> {
+    fn expect_clear_ignition_link_events_ack(self) -> Result<()> {
+        match self {
+            Self::ClearIgnitionLinkEventsAck => Ok(()),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::CLEAR_IGNITION_LINK_EVENTS_ACK,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_sp_state(self) -> Result<SpState> {
         match self {
             Self::SpState(state) => Ok(state),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -176,9 +190,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_serial_console_attach_ack(
-        self,
-    ) -> Result<(), SpCommunicationError> {
+    fn expect_serial_console_attach_ack(self) -> Result<()> {
         match self {
             Self::SerialConsoleAttachAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -189,9 +201,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_serial_console_write_ack(
-        self,
-    ) -> Result<u64, SpCommunicationError> {
+    fn expect_serial_console_write_ack(self) -> Result<u64> {
         match self {
             Self::SerialConsoleWriteAck { furthest_ingested_offset } => {
                 Ok(furthest_ingested_offset)
@@ -204,9 +214,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_serial_console_detach_ack(
-        self,
-    ) -> Result<(), SpCommunicationError> {
+    fn expect_serial_console_detach_ack(self) -> Result<()> {
         match self {
             Self::SerialConsoleDetachAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -217,7 +225,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_sp_update_prepare_ack(self) -> Result<(), SpCommunicationError> {
+    fn expect_sp_update_prepare_ack(self) -> Result<()> {
         match self {
             Self::SpUpdatePrepareAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -228,9 +236,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_component_update_prepare_ack(
-        self,
-    ) -> Result<(), SpCommunicationError> {
+    fn expect_component_update_prepare_ack(self) -> Result<()> {
         match self {
             Self::ComponentUpdatePrepareAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -241,9 +247,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_update_status(
-        self,
-    ) -> Result<UpdateStatus, SpCommunicationError> {
+    fn expect_update_status(self) -> Result<UpdateStatus> {
         match self {
             Self::UpdateStatus(status) => Ok(status),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -254,7 +258,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_update_chunk_ack(self) -> Result<(), SpCommunicationError> {
+    fn expect_update_chunk_ack(self) -> Result<()> {
         match self {
             Self::UpdateChunkAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -265,7 +269,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_update_abort_ack(self) -> Result<(), SpCommunicationError> {
+    fn expect_update_abort_ack(self) -> Result<()> {
         match self {
             Self::UpdateAbortAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -276,7 +280,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_power_state(self) -> Result<PowerState, SpCommunicationError> {
+    fn expect_power_state(self) -> Result<PowerState> {
         match self {
             Self::PowerState(power_state) => Ok(power_state),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -287,7 +291,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_set_power_state_ack(self) -> Result<(), SpCommunicationError> {
+    fn expect_set_power_state_ack(self) -> Result<()> {
         match self {
             Self::SetPowerStateAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -298,7 +302,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_sys_reset_prepare_ack(self) -> Result<(), SpCommunicationError> {
+    fn expect_sys_reset_prepare_ack(self) -> Result<()> {
         match self {
             Self::ResetPrepareAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -309,7 +313,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_inventory(self) -> Result<TlvPage, SpCommunicationError> {
+    fn expect_inventory(self) -> Result<TlvPage> {
         match self {
             Self::Inventory(page) => Ok(page),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -320,9 +324,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_startup_options(
-        self,
-    ) -> Result<StartupOptions, SpCommunicationError> {
+    fn expect_startup_options(self) -> Result<StartupOptions> {
         match self {
             Self::StartupOptions(options) => Ok(options),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -333,9 +335,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_set_startup_options_ack(
-        self,
-    ) -> Result<(), SpCommunicationError> {
+    fn expect_set_startup_options_ack(self) -> Result<()> {
         match self {
             Self::SetStartupOptionsAck => Ok(()),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -346,7 +346,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_component_details(self) -> Result<TlvPage, SpCommunicationError> {
+    fn expect_component_details(self) -> Result<TlvPage> {
         match self {
             Self::ComponentDetails(page) => Ok(page),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),
@@ -362,7 +362,11 @@ mod response_kind_names {
     pub(super) const DISCOVER: &str = "discover";
     pub(super) const IGNITION_STATE: &str = "ignition_state";
     pub(super) const BULK_IGNITION_STATE: &str = "bulk_ignition_state";
+    pub(super) const BULK_IGNITION_LINK_EVENTS: &str =
+        "bulk_ignition_link_events";
     pub(super) const IGNITION_COMMAND_ACK: &str = "ignition_command_ack";
+    pub(super) const CLEAR_IGNITION_LINK_EVENTS_ACK: &str =
+        "clear_ignition_link_events_ack";
     pub(super) const SP_STATE: &str = "sp_state";
     pub(super) const SERIAL_CONSOLE_ATTACH_ACK: &str =
         "serial_console_attach_ack";

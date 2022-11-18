@@ -86,6 +86,10 @@ pub enum SpResponse {
     /// A `ComponentDetails` response is followed by a TLV-encoded set of
     /// informational structures (see [`ComponentDetails`]).
     ComponentDetails(TlvPage),
+    /// A `BulkIgnitionLinkEvents` response is followed by a TLV-encoded set of
+    /// [`ignition::AllLinkEvents`]s.
+    BulkIgnitionLinkEvents(TlvPage),
+    ClearIgnitionLinkEventsAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

@@ -61,6 +61,8 @@ pub enum MgsRequest {
         component: SpComponent,
         offset: u32,
     },
+    BulkIgnitionLinkEvents { offset: u32 },
+    ClearIgnitionLinkEvents,
 }
 
 #[derive(
