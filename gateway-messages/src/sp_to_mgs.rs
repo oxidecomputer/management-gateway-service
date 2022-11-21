@@ -18,8 +18,11 @@ use serde::Serialize;
 use serde_repr::Deserialize_repr;
 use serde_repr::Serialize_repr;
 
+pub mod measurement;
 pub mod vsc7448_port_status;
 
+pub use measurement::Measurement;
+use measurement::MeasurementHeader;
 use vsc7448_port_status::{PortStatus, PortStatusError};
 
 #[derive(
@@ -198,21 +201,38 @@ pub struct TlvPage {
 /// serialization traits; it only serves as an organizing collection of the
 /// possible types contained in a component details message. Each TLV-encoded
 /// struct corresponds to one of these cases.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 pub enum ComponentDetails {
     PortStatus(Result<PortStatus, PortStatusError>),
+    Measurement(Measurement),
 }
 
 impl ComponentDetails {
     pub fn tag(&self) -> tlv::Tag {
         match self {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
+            ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
         }
     }
 
     pub fn serialize(&self, buf: &mut [u8]) -> hubpack::error::Result<usize> {
         match self {
             ComponentDetails::PortStatus(p) => hubpack::serialize(buf, p),
+            ComponentDetails::Measurement(m) => {
+                let header = MeasurementHeader::from(m);
+
+                // Serialize the header...
+                let n = hubpack::serialize(buf, &header)?;
+                let buf = &mut buf[n..];
+
+                // ... then append the name if we have room.
+                if buf.len() < m.name.len() {
+                    Err(hubpack::error::Error::Overrun)
+                } else {
+                    buf[..m.name.len()].copy_from_slice(m.name.as_bytes());
+                    Ok(n + m.name.len())
+                }
+            }
         }
     }
 }
