@@ -173,6 +173,7 @@ pub type SerialNumber = [u8; 16];
 pub struct SpState {
     pub serial_number: SerialNumber,
     pub version: u32,
+    pub power_state: PowerState,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
