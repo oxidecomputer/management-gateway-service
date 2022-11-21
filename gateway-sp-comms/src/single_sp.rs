@@ -16,14 +16,13 @@ use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
-use gateway_messages::vsc7448_port_status::PortStatus;
-use gateway_messages::vsc7448_port_status::PortStatusError;
 use gateway_messages::BulkIgnitionState;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
 use gateway_messages::Header;
+use gateway_messages::HubpackError;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::Message;
@@ -664,6 +663,11 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         tag: tlv::Tag,
         value: &[u8],
     ) -> Result<Option<Self::Item>> {
+        use gateway_messages::measurement::Measurement;
+        use gateway_messages::measurement::MeasurementHeader;
+        use gateway_messages::vsc7448_port_status::PortStatus;
+        use gateway_messages::vsc7448_port_status::PortStatusError;
+
         match tag {
             PortStatus::TAG => {
                 let (result, leftover) = gateway_messages::deserialize::<
@@ -682,6 +686,34 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                 }
 
                 Ok(Some(ComponentDetails::PortStatus(result)))
+            }
+            MeasurementHeader::TAG => {
+                let (header, leftover) =
+                    gateway_messages::deserialize::<MeasurementHeader>(value)
+                        .map_err(|err| SpCommunicationError::TlvDeserialize {
+                        tag,
+                        err,
+                    })?;
+
+                if leftover.len() != header.name_length as usize {
+                    return Err(SpCommunicationError::TlvDeserialize {
+                        tag: MeasurementHeader::TAG,
+                        err: HubpackError::Custom,
+                    });
+                }
+
+                let name = str::from_utf8(leftover).map_err(|_| {
+                    SpCommunicationError::TlvDeserialize {
+                        tag: MeasurementHeader::TAG,
+                        err: HubpackError::Custom,
+                    }
+                })?;
+
+                Ok(Some(ComponentDetails::Measurement(Measurement {
+                    name: name.to_string(),
+                    kind: header.kind,
+                    value: header.value,
+                })))
             }
             _ => {
                 info!(
