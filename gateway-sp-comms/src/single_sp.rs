@@ -17,7 +17,6 @@ use backoff::backoff::Backoff;
 use gateway_messages::ignition::AllLinkEvents;
 use gateway_messages::tlv;
 use gateway_messages::version;
-use gateway_messages::BulkIgnitionState;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
@@ -341,20 +340,20 @@ impl SingleSp {
             // page, "correct" just means "reasonable"; if this is the second or
             // later page, it should match every other page.
             if page.offset != offset {
-                return Err(SpCommunicationError::Pagination {
+                return Err(SpCommunicationError::TlvPagination {
                     reason: "unexpected offset from SP",
                 });
             }
             let total = if let Some(n) = page0_total {
                 if n != page.total as usize {
-                    return Err(SpCommunicationError::Pagination {
+                    return Err(SpCommunicationError::TlvPagination {
                         reason: "total item count changed",
                     });
                 }
                 n
             } else {
                 if page.total > TLV_RPC_TOTAL_ITEMS_DOS_LIMIT {
-                    return Err(SpCommunicationError::Pagination {
+                    return Err(SpCommunicationError::TlvPagination {
                         reason: "too many items",
                     });
                 }
@@ -371,7 +370,7 @@ impl SingleSp {
 
                 // Are we expecting this chunk?
                 if entries.len() >= total {
-                    return Err(SpCommunicationError::Pagination {
+                    return Err(SpCommunicationError::TlvPagination {
                         reason:
                             "SP returned more entries than its reported total",
                     });
@@ -658,7 +657,7 @@ impl TlvRpc for InventoryTlvRpc {
                 let device_len = header.device_len as usize;
                 let description_len = header.description_len as usize;
                 if data.len() != device_len.saturating_add(description_len) {
-                    return Err(SpCommunicationError::Pagination {
+                    return Err(SpCommunicationError::TlvPagination {
                         reason: "inventory data / header length mismatch",
                     });
                 }
@@ -666,13 +665,13 @@ impl TlvRpc for InventoryTlvRpc {
                 // Interpret the data as UTF8.
                 let device =
                     str::from_utf8(&data[..device_len]).map_err(|_| {
-                        SpCommunicationError::Pagination {
+                        SpCommunicationError::TlvPagination {
                             reason: "non-UTF8 inventory device",
                         }
                     })?;
                 let description =
                     str::from_utf8(&data[device_len..]).map_err(|_| {
-                        SpCommunicationError::Pagination {
+                        SpCommunicationError::TlvPagination {
                             reason: "non-UTF8 inventory description",
                         }
                     })?;

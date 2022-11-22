@@ -62,7 +62,7 @@ pub enum SpCommunicationError {
     #[error("failed to decode TLV triple: {0}")]
     TlvDecode(#[from] tlv::DecodeError),
     #[error("invalid pagination: {reason}")]
-    Pagination { reason: &'static str },
+    TlvPagination { reason: &'static str },
 }
 
 #[derive(Debug, Error)]
