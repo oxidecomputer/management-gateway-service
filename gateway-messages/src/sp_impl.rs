@@ -804,6 +804,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _target: Option<u8>,
+            _transceiver_select: Option<ignition::TransceiverSelect>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
