@@ -341,7 +341,7 @@ impl SingleSp {
             // Did our number of entries change? If not, we're presumably unable
             // to parse the response (unknown TLV tags, perhaps) and won't make
             // forward progress by retrying.
-            if entries.len() as u32 == offset {
+            if entries.len() as u32 == offset && total > 0 {
                 return Err(SpCommunicationError::TlvPagination {
                     reason: "failed to parse any entries from SP response",
                 });
