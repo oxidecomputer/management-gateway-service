@@ -16,8 +16,6 @@ use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::tlv;
 use gateway_messages::version;
-use gateway_messages::vsc7448_port_status::PortStatus;
-use gateway_messages::vsc7448_port_status::PortStatusError;
 use gateway_messages::BulkIgnitionState;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
@@ -339,6 +337,15 @@ impl SingleSp {
                     );
                 }
             }
+
+            // Did our number of entries change? If not, we're presumably unable
+            // to parse the response (unknown TLV tags, perhaps) and won't make
+            // forward progress by retrying.
+            if entries.len() as u32 == offset {
+                return Err(SpCommunicationError::TlvPagination {
+                    reason: "failed to parse any entries from SP response",
+                });
+            }
         }
 
         Ok(entries)
@@ -655,6 +662,11 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         tag: tlv::Tag,
         value: &[u8],
     ) -> Result<Option<Self::Item>> {
+        use gateway_messages::measurement::Measurement;
+        use gateway_messages::measurement::MeasurementHeader;
+        use gateway_messages::vsc7448_port_status::PortStatus;
+        use gateway_messages::vsc7448_port_status::PortStatusError;
+
         match tag {
             PortStatus::TAG => {
                 let (result, leftover) = gateway_messages::deserialize::<
@@ -673,6 +685,32 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                 }
 
                 Ok(Some(ComponentDetails::PortStatus(result)))
+            }
+            MeasurementHeader::TAG => {
+                let (header, leftover) =
+                    gateway_messages::deserialize::<MeasurementHeader>(value)
+                        .map_err(|err| SpCommunicationError::TlvDeserialize {
+                        tag,
+                        err,
+                    })?;
+
+                if leftover.len() != header.name_length as usize {
+                    return Err(SpCommunicationError::TlvPagination {
+                        reason: "measurement data / header length mismatch",
+                    });
+                }
+
+                let name = str::from_utf8(leftover).map_err(|_| {
+                    SpCommunicationError::TlvPagination {
+                        reason: "non-UTF8 measurement name",
+                    }
+                })?;
+
+                Ok(Some(ComponentDetails::Measurement(Measurement {
+                    name: name.to_string(),
+                    kind: header.kind,
+                    value: header.value,
+                })))
             }
             _ => {
                 info!(
