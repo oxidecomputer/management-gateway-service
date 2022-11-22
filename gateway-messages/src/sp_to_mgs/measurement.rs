@@ -12,9 +12,10 @@ use crate::tlv;
 /// (embedded at build time), and in MGS it's a `String` (deserialized from the
 /// SP message).
 ///
-/// This struct does not implement `Serialize`/`Deserialize`; it is serialized
-/// as a [`tlv`] triple with the value bing a [`MeasurementHeader`] followed by
-/// the name.
+/// This struct does not implement `Serialize`/`Deserialize` directly; when it
+/// needs to be serialized (or deserialized), it is converted to a
+/// [`MeasurementHeader`] followed by the `name` packed into a TLV triple with
+/// the tag [`MeasurementHeader::TAG`].
 #[derive(Debug, Clone)]
 pub struct Measurement {
     #[cfg(feature = "std")]

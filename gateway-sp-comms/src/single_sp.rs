@@ -22,7 +22,6 @@ use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
 use gateway_messages::Header;
-use gateway_messages::HubpackError;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::Message;
@@ -696,16 +695,14 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     })?;
 
                 if leftover.len() != header.name_length as usize {
-                    return Err(SpCommunicationError::TlvDeserialize {
-                        tag: MeasurementHeader::TAG,
-                        err: HubpackError::Custom,
+                    return Err(SpCommunicationError::TlvPagination {
+                        reason: "measurement data / header length mismatch",
                     });
                 }
 
                 let name = str::from_utf8(leftover).map_err(|_| {
-                    SpCommunicationError::TlvDeserialize {
-                        tag: MeasurementHeader::TAG,
-                        err: HubpackError::Custom,
+                    SpCommunicationError::TlvPagination {
+                        reason: "non-UTF8 measurement name",
                     }
                 })?;
 
