@@ -89,17 +89,19 @@ enum Command {
 
     /// Get the ignition state for a single target port (only valid if the SP is
     /// an ignition controller).
-    Ignition { target: u8 },
-
-    /// Get bulk ignition state information (only valid if the SP is an ignition
-    /// controller).
-    BulkIgnition,
+    Ignition {
+        #[clap(
+            help = "integer of a target, or 'all' for all targets",
+            value_parser = IgnitionLinkEventsTarget::parse,
+        )]
+        target: IgnitionLinkEventsTarget,
+    },
 
     /// Get bulk ignition link events (only valid if the SP is an ignition
     /// controller).
     IgnitionLinkEvents {
         #[clap(
-            help = "integer of a target to clear, or 'all' for all targets",
+            help = "integer of a target, or 'all' for all targets",
             value_parser = IgnitionLinkEventsTarget::parse,
         )]
         target: IgnitionLinkEventsTarget,
@@ -109,7 +111,7 @@ enum Command {
     /// controller).
     ClearIgnitionLinkEvents {
         #[clap(
-            help = "integer of a target to clear, or 'all' for all targets",
+            help = "integer of a target, or 'all' for all targets",
             value_parser = IgnitionLinkEventsTarget::parse,
         )]
         target: IgnitionLinkEventsTarget,
@@ -298,12 +300,14 @@ async fn main() -> Result<()> {
             info!(log, "{:?}", sp.state().await?);
         }
         Command::Ignition { target } => {
-            info!(log, "{:?}", sp.ignition_state(target).await?);
-        }
-        Command::BulkIgnition => {
-            let states = sp.bulk_ignition_state().await?;
-            for (i, state) in states.into_iter().enumerate() {
-                println!("target {i}: {state:?}");
+            if let Some(target) = target.0 {
+                let state = sp.ignition_state(target).await?;
+                println!("target {target}: {state:?}");
+            } else {
+                let states = sp.bulk_ignition_state().await?;
+                for (i, state) in states.into_iter().enumerate() {
+                    println!("target {i}: {state:?}");
+                }
             }
         }
         Command::IgnitionLinkEvents { target } => {
