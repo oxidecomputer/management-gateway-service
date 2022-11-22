@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::error::SpCommunicationError;
-use gateway_messages::ignition::AllLinkEvents;
+use gateway_messages::ignition::LinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
@@ -26,7 +26,7 @@ pub(crate) trait SpResponseExt {
 
     fn expect_bulk_ignition_state(self) -> Result<TlvPage>;
 
-    fn expect_ignition_link_events(self) -> Result<AllLinkEvents>;
+    fn expect_ignition_link_events(self) -> Result<LinkEvents>;
 
     fn expect_bulk_ignition_link_events(self) -> Result<TlvPage>;
 
@@ -152,7 +152,7 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_ignition_link_events(self) -> Result<AllLinkEvents> {
+    fn expect_ignition_link_events(self) -> Result<LinkEvents> {
         match self {
             Self::IgnitionLinkEvents(events) => Ok(events),
             Self::Error(err) => Err(SpCommunicationError::SpError(err)),

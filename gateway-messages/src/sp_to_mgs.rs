@@ -28,7 +28,7 @@ pub use measurement::Measurement;
 use measurement::MeasurementHeader;
 use vsc7448_port_status::{PortStatus, PortStatusError};
 
-use ignition::AllLinkEvents;
+use ignition::LinkEvents;
 
 #[derive(
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
@@ -88,9 +88,9 @@ pub enum SpResponse {
     /// A `ComponentDetails` response is followed by a TLV-encoded set of
     /// informational structures (see [`ComponentDetails`]).
     ComponentDetails(TlvPage),
-    IgnitionLinkEvents(AllLinkEvents),
+    IgnitionLinkEvents(LinkEvents),
     /// A `BulkIgnitionLinkEvents` response is followed by a TLV-encoded set of
-    /// [`ignition::AllLinkEvents`]s.
+    /// [`ignition::LinkEvents`]s.
     BulkIgnitionLinkEvents(TlvPage),
     ClearIgnitionLinkEventsAck,
 }

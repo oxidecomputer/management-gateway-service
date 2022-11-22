@@ -10,6 +10,7 @@ use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
+use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
@@ -112,6 +113,11 @@ enum Command {
             value_parser = IgnitionLinkEventsTarget::parse,
         )]
         target: IgnitionLinkEventsTarget,
+        #[clap(
+            help = "'controller', 'target-link0', 'target-link1', or 'all'",
+            value_parser = IgnitionLinkEventsTransceiverSelect::parse,
+        )]
+        transceiver_select: IgnitionLinkEventsTransceiverSelect,
     },
 
     /// Get or set startup options on an SP.
@@ -186,6 +192,23 @@ impl IgnitionLinkEventsTarget {
                     .parse()
                     .with_context(|| "must be an integer (0..256) or 'all'")?;
                 Ok(Self(Some(target)))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IgnitionLinkEventsTransceiverSelect(Option<TransceiverSelect>);
+
+impl IgnitionLinkEventsTransceiverSelect {
+    fn parse(s: &str) -> Result<Self> {
+        match s {
+            "all" | "ALL" => Ok(Self(None)),
+            "controller" => Ok(Self(Some(TransceiverSelect::Controller))),
+            "target-link0" => Ok(Self(Some(TransceiverSelect::TargetLink0))),
+            "target-link1" => Ok(Self(Some(TransceiverSelect::TargetLink1))),
+            _ => {
+                bail!("transceiver selection must be one of 'all', 'controller', 'target-link0', 'target-link1'")
             }
         }
     }
@@ -294,12 +317,9 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        Command::ClearIgnitionLinkEvents { target } => {
-            if let Some(target) = target.0 {
-                sp.clear_ignition_link_events(target).await?;
-            } else {
-                sp.clear_all_ignition_link_events().await?;
-            }
+        Command::ClearIgnitionLinkEvents { target, transceiver_select } => {
+            sp.clear_ignition_link_events(target.0, transceiver_select.0)
+                .await?;
             info!(log, "ignition link events cleared");
         }
         Command::StartupOptions { options } => {

@@ -14,7 +14,8 @@ use crate::sp_response_ext::SpResponseExt;
 use crate::SwitchPortConfig;
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
-use gateway_messages::ignition::AllLinkEvents;
+use gateway_messages::ignition::LinkEvents;
+use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::ComponentDetails;
@@ -222,10 +223,7 @@ impl SingleSp {
     /// Request link events for a single ignition target.
     ///
     /// This will fail if this SP is not connected to an ignition controller.
-    pub async fn ignition_link_events(
-        &self,
-        target: u8,
-    ) -> Result<AllLinkEvents> {
+    pub async fn ignition_link_events(&self, target: u8) -> Result<LinkEvents> {
         self.rpc(MgsRequest::IgnitionLinkEvents { target }).await.and_then(
             |(_peer, response, _data)| response.expect_ignition_link_events(),
         )
@@ -237,35 +235,35 @@ impl SingleSp {
     ///
     /// TODO: This _does not_ return events for the target on the SP we're
     /// querying (which must be an ignition controller)!
-    pub async fn bulk_ignition_link_events(
-        &self,
-    ) -> Result<Vec<AllLinkEvents>> {
+    pub async fn bulk_ignition_link_events(&self) -> Result<Vec<LinkEvents>> {
         self.get_paginated_tlv_data(BulkIgnitionLinkEventsTlvRpc {
             log: &self.log,
         })
         .await
     }
 
-    /// Clear ignition link events for a single target.
+    /// Clear ignition link events.
+    ///
+    /// If `target` is `None`, ignition events are cleared on all targets
+    /// (potentially restricted by `transceiver_select`).
+    ///
+    /// If `transceiver_select` is `None`, ignition events are cleared for all
+    /// transceivers (potentially restricted by `target`).
     ///
     /// This will fail if this SP is not connected to an ignition controller.
-    pub async fn clear_ignition_link_events(&self, target: u8) -> Result<()> {
-        self.rpc(MgsRequest::ClearIgnitionLinkEvents { target: Some(target) })
-            .await
-            .and_then(|(_peer, response, _data)| {
-                response.expect_clear_ignition_link_events_ack()
-            })
-    }
-
-    /// Clear all ignition link events.
-    ///
-    /// This will fail if this SP is not connected to an ignition controller.
-    pub async fn clear_all_ignition_link_events(&self) -> Result<()> {
-        self.rpc(MgsRequest::ClearIgnitionLinkEvents { target: None })
-            .await
-            .and_then(|(_peer, response, _data)| {
-                response.expect_clear_ignition_link_events_ack()
-            })
+    pub async fn clear_ignition_link_events(
+        &self,
+        target: Option<u8>,
+        transceiver_select: Option<TransceiverSelect>,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ClearIgnitionLinkEvents {
+            target,
+            transceiver_select,
+        })
+        .await
+        .and_then(|(_peer, response, _data)| {
+            response.expect_clear_ignition_link_events_ack()
+        })
     }
 
     /// Send an ignition command to the given target.
@@ -825,7 +823,7 @@ struct BulkIgnitionLinkEventsTlvRpc<'a> {
 }
 
 impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
-    type Item = AllLinkEvents;
+    type Item = LinkEvents;
 
     const LOG_NAME: &'static str = "ignition link events";
 
@@ -843,9 +841,9 @@ impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
         value: &[u8],
     ) -> Result<Option<Self::Item>> {
         match tag {
-            AllLinkEvents::TAG => {
+            LinkEvents::TAG => {
                 let (events, leftover) =
-                    gateway_messages::deserialize::<AllLinkEvents>(value)
+                    gateway_messages::deserialize::<LinkEvents>(value)
                         .map_err(|err| {
                             SpCommunicationError::TlvDeserialize { tag, err }
                         })?;

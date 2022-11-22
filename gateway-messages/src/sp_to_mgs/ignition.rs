@@ -17,15 +17,7 @@ static_assertions::const_assert!(
 );
 
 #[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    SerializedSize,
-    Serialize,
-    Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct IgnitionState {
     pub receiver_status: ReceiverStatus,
@@ -37,15 +29,7 @@ impl IgnitionState {
 }
 
 #[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    SerializedSize,
-    Serialize,
-    Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct ReceiverStatus {
     pub aligned: bool,
@@ -54,39 +38,32 @@ pub struct ReceiverStatus {
 }
 
 #[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    SerializedSize,
-    Serialize,
-    Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct Target {
     pub system_type: SystemType,
+    pub power_state: SystemPowerState,
+    pub power_reset_in_progress: bool,
+    pub faults: SystemFaults,
     pub controller0_present: bool,
     pub controller1_present: bool,
-    pub system_power_abort: bool,
-    pub faults: SystemFaults,
-    pub system_power_off_in_progress: bool,
-    pub system_power_on_in_progress: bool,
-    pub system_power_reset_in_progress: bool,
     pub link0_receiver_status: ReceiverStatus,
     pub link1_receiver_status: ReceiverStatus,
 }
 
 #[derive(
-    Debug,
-    Default,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    SerializedSize,
-    Serialize,
-    Deserialize,
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SystemPowerState {
+    Off,
+    On,
+    Aborted,
+    PoweringOff,
+    PoweringOn,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct SystemFaults {
     pub power_a3: bool,
@@ -99,16 +76,12 @@ pub struct SystemFaults {
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum SystemType {
+    // TODO do we want these specific names or generic ones? MGS proper can also
+    // translate before going out to the control plane, potentially.
     Gimlet,
     Sidecar,
     Psc,
     Unknown(u16),
-}
-
-impl Default for SystemType {
-    fn default() -> Self {
-        Self::Unknown(0)
-    }
 }
 
 impl From<u16> for SystemType {
@@ -132,20 +105,29 @@ mod raw_system_type {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct AllLinkEvents {
-    pub controller: LinkEvents,
-    pub target_link0: LinkEvents,
-    pub target_link1: LinkEvents,
+pub struct LinkEvents {
+    pub controller: TransceiverEvents,
+    pub target_link0: TransceiverEvents,
+    pub target_link1: TransceiverEvents,
 }
 
-impl AllLinkEvents {
+impl LinkEvents {
     pub const TAG: tlv::Tag = tlv::Tag(*b"ILE0");
 }
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct LinkEvents {
+pub enum TransceiverSelect {
+    Controller,
+    TargetLink0,
+    TargetLink1,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct TransceiverEvents {
     pub encoding_error: bool,
     pub decoding_error: bool,
     pub ordered_set_invalid: bool,

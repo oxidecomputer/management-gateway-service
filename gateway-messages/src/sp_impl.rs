@@ -4,7 +4,8 @@
 
 //! Behavior implemented by both real and simulated SPs.
 
-use crate::ignition::AllLinkEvents;
+use crate::ignition;
+use crate::ignition::LinkEvents;
 use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
@@ -78,7 +79,7 @@ pub struct BoundsChecked(pub u32);
 
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
-    type BulkIgnitionLinkEventsIter: Iterator<Item = AllLinkEvents>;
+    type BulkIgnitionLinkEventsIter: Iterator<Item = LinkEvents>;
 
     fn discover(
         &mut self,
@@ -107,7 +108,7 @@ pub trait SpHandler {
         sender: SocketAddrV6,
         port: SpPort,
         target: u8,
-    ) -> Result<AllLinkEvents, SpError>;
+    ) -> Result<LinkEvents, SpError>;
 
     fn bulk_ignition_link_events(
         &mut self,
@@ -122,6 +123,7 @@ pub trait SpHandler {
         sender: SocketAddrV6,
         port: SpPort,
         target: Option<u8>,
+        transceiver_select: Option<ignition::TransceiverSelect>,
     ) -> Result<(), SpError>;
 
     fn ignition_command(
@@ -412,7 +414,7 @@ pub fn handle_message<H: SpHandler>(
             encode_tlv_structs(
                 &mut out[n..],
                 iter.map(|state| {
-                    (AllLinkEvents::TAG, move |buf: &mut [u8]| {
+                    (LinkEvents::TAG, move |buf: &mut [u8]| {
                         hubpack::serialize(buf, &state)
                     })
                 }),
@@ -617,9 +619,16 @@ fn handle_mgs_request<H: SpHandler>(
                 }))
             })
         }
-        MgsRequest::ClearIgnitionLinkEvents { target } => handler
-            .clear_ignition_link_events(sender, port, target)
-            .map(|()| SpResponse::ClearIgnitionLinkEventsAck),
+        MgsRequest::ClearIgnitionLinkEvents { target, transceiver_select } => {
+            handler
+                .clear_ignition_link_events(
+                    sender,
+                    port,
+                    target,
+                    transceiver_select,
+                )
+                .map(|()| SpResponse::ClearIgnitionLinkEventsAck)
+        }
         MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(sender, port, target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
@@ -740,7 +749,7 @@ mod tests {
     // `unimplemented!()` since no tests are intended to call them.
     impl SpHandler for FakeHandler {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
-        type BulkIgnitionLinkEventsIter = std::iter::Empty<AllLinkEvents>;
+        type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
 
         fn discover(
             &mut self,
@@ -786,7 +795,7 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _target: u8,
-        ) -> Result<AllLinkEvents, SpError> {
+        ) -> Result<LinkEvents, SpError> {
             unimplemented!()
         }
 

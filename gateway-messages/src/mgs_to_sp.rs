@@ -4,6 +4,7 @@
 
 //! Types for messages sent from MGS to SPs.
 
+use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::SpComponent;
@@ -69,9 +70,14 @@ pub enum MgsRequest {
     BulkIgnitionLinkEvents {
         offset: u32,
     },
-    /// If `target` is `None`, clear all target link events.
+    /// If `target` is `None`, clear events on all target (potentially
+    /// restricted by `transceiver_select`).
+    ///
+    /// If `transceiver_select` is none, clear events on all transceivers
+    /// (potentially restricted by `target`).
     ClearIgnitionLinkEvents {
         target: Option<u8>,
+        transceiver_select: Option<TransceiverSelect>,
     },
 }
 
