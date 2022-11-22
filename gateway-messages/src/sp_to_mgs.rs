@@ -25,6 +25,7 @@ pub mod vsc7448_port_status;
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
 
+use ignition::IgnitionError;
 use measurement::MeasurementHeader;
 use vsc7448_port_status::{PortStatus, PortStatusError};
 
@@ -349,8 +350,8 @@ pub enum SpError {
     /// SP; e.g., asking for the serial console of a component that does not
     /// have one.
     RequestUnsupportedForComponent,
-    /// The specified ignition target does not exist.
-    IgnitionTargetDoesNotExist(u8),
+    /// An ignition-related error.
+    Ignition(IgnitionError),
     /// Cannot write to the serial console because it is not attached.
     SerialConsoleNotAttached,
     /// Cannot attach to the serial console because another MGS instance is
@@ -400,8 +401,8 @@ impl fmt::Display for SpError {
             Self::RequestUnsupportedForComponent => {
                 write!(f, "unsupported request for this SP component")
             }
-            Self::IgnitionTargetDoesNotExist(target) => {
-                write!(f, "nonexistent ignition target {}", target)
+            Self::Ignition(err) => {
+                write!(f, "ignition error: {err}")
             }
             Self::SerialConsoleNotAttached => {
                 write!(f, "serial console is not attached")

@@ -4,6 +4,7 @@
 
 //! Types describing ignition state; see RFD 141.
 
+use core::fmt;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
@@ -15,6 +16,36 @@ use crate::tlv;
 static_assertions::const_assert!(
     IgnitionState::MAX_SIZE * 35 <= crate::MIN_TRAILING_DATA_LEN
 );
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum IgnitionError {
+    FpgaError,
+    InvalidPort,
+    InvalidValue,
+    NoTargetPresent,
+    RequestInProgress,
+    RequestDiscarded,
+    Other(u32),
+}
+
+impl fmt::Display for IgnitionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            IgnitionError::FpgaError => "fpga communication error",
+            IgnitionError::InvalidPort => "invalid target",
+            IgnitionError::InvalidValue => "invalid value",
+            IgnitionError::NoTargetPresent => "no target present",
+            IgnitionError::RequestInProgress => "request in progress",
+            IgnitionError::RequestDiscarded => "request discarded",
+            IgnitionError::Other(code) => {
+                return write!(f, "other (code = {code})");
+            }
+        };
+        write!(f, "{s}")
+    }
+}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
