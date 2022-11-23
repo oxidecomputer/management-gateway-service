@@ -64,5 +64,9 @@ pub enum MeasurementKind {
     Power,
     Current,
     Voltage,
+    // These two cases are a little dubious; maybe we need a different way to
+    // represent input vs output?
+    CurrentIn,
+    VoltageIn,
     Speed,
 }

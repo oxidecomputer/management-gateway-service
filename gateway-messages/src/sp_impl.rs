@@ -71,6 +71,7 @@ impl From<DeviceDescription<'_>> for DeviceDescriptionHeader {
 
 /// An index that [`handle_message`] has bounds-checked; see the comments on the
 /// trait methods that accept this type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoundsChecked(pub u32);
 
 pub trait SpHandler {
