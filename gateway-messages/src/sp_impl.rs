@@ -69,6 +69,10 @@ impl From<DeviceDescription<'_>> for DeviceDescriptionHeader {
     }
 }
 
+/// An index that [`handle_message`] has bounds-checked; see the comments on the
+/// trait methods that accept this type.
+pub struct BoundsChecked(pub u32);
+
 pub trait SpHandler {
     fn discover(
         &mut self,
@@ -199,11 +203,17 @@ pub trait SpHandler {
     /// static. Acquiring the presence of a device may fail, but that should be
     /// indicated inline via the returned description's `presence` field.
     ///
+    /// When this method is called by `handle_message`, `index` has been bounds
+    /// checked and is guaranteed to be in the range `0..num_devices()`.
+    ///
     /// # Panics
     ///
     /// Implementors are allowed to panic if `index` is not in range (i.e., is
     /// greater than or equal to the value returned by `num_devices()`).
-    fn device_description(&mut self, index: u32) -> DeviceDescription<'_>;
+    fn device_description(
+        &mut self,
+        index: BoundsChecked,
+    ) -> DeviceDescription<'_>;
 
     /// Number of informational elements returned in the details for the given
     /// component.
@@ -216,15 +226,19 @@ pub trait SpHandler {
 
     /// Get detailed information for the given component.
     ///
+    /// When this method is called by `handle_message`, `index` has been bounds
+    /// checked and is guaranteed to be in the range
+    /// `0..num_component_details(_, _, component)`.
+    ///
     /// # Panics
     ///
     /// Implementors are allowed to panic if `index` is not in range (i.e., is
-    /// greater than or equal to the value returned by `device_description()`
+    /// greater than or equal to the value returned by `num_component_details()`
     /// for this component).
     fn component_details(
         &mut self,
         component: SpComponent,
-        index: u32,
+        index: BoundsChecked,
     ) -> ComponentDetails;
 
     fn get_startup_options(
@@ -344,7 +358,7 @@ fn encode_device_inventory<H: SpHandler>(
 ) -> usize {
     let mut total_tlv_len = 0;
     while device_index < total_devices {
-        let dev = handler.device_description(device_index);
+        let dev = handler.device_description(BoundsChecked(device_index));
 
         // Will the serialized description of this device fit in `out`?
         let len = tlv::tlv_len(
@@ -408,7 +422,8 @@ fn encode_component_details<H: SpHandler>(
 ) -> usize {
     let mut total_tlv_len = 0;
     while offset < total {
-        let details = handler.component_details(component, offset);
+        let details =
+            handler.component_details(component, BoundsChecked(offset));
 
         match tlv::encode::<_, ()>(out, details.tag(), |buf| {
             details.serialize(buf).map_err(|err| match err {
@@ -840,7 +855,10 @@ mod tests {
             unimplemented!()
         }
 
-        fn device_description(&mut self, _index: u32) -> DeviceDescription<'_> {
+        fn device_description(
+            &mut self,
+            _index: BoundsChecked,
+        ) -> DeviceDescription<'_> {
             unimplemented!()
         }
 
@@ -856,7 +874,7 @@ mod tests {
         fn component_details(
             &mut self,
             _component: SpComponent,
-            _index: u32,
+            _index: BoundsChecked,
         ) -> ComponentDetails {
             unimplemented!()
         }
