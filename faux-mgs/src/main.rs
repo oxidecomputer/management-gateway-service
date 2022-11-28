@@ -11,6 +11,7 @@ use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
 use gateway_messages::ignition::TransceiverSelect;
+use gateway_messages::IgnitionCommand;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
@@ -95,6 +96,17 @@ enum Command {
             value_parser = IgnitionLinkEventsTarget::parse,
         )]
         target: IgnitionLinkEventsTarget,
+    },
+
+    /// Send an ignition command for a single target port (only valid if the SP
+    /// is an ignition controller).
+    IgnitionCommand {
+        target: u8,
+        #[clap(
+            help = "'power-on', 'power-off', or 'power-reset'",
+            value_parser = ignition_command_from_str,
+        )]
+        command: IgnitionCommand,
     },
 
     /// Get bulk ignition link events (only valid if the SP is an ignition
@@ -225,6 +237,15 @@ fn power_state_from_str(s: &str) -> Result<PowerState> {
     }
 }
 
+fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
+    match s {
+        "power-on" => Ok(IgnitionCommand::PowerOn),
+        "power-off" => Ok(IgnitionCommand::PowerOff),
+        "power-reset" => Ok(IgnitionCommand::PowerReset),
+        _ => Err(anyhow!("Invalid ignition command: {s}")),
+    }
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -309,6 +330,10 @@ async fn main() -> Result<()> {
                     println!("target {i}: {state:?}");
                 }
             }
+        }
+        Command::IgnitionCommand { target, command } => {
+            sp.ignition_command(target, command).await?;
+            info!(log, "ignition command {command:?} send to target {target}");
         }
         Command::IgnitionLinkEvents { target } => {
             if let Some(target) = target.0 {
