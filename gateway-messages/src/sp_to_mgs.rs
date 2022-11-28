@@ -173,10 +173,19 @@ pub type SerialNumber = [u8; 16];
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
+pub struct ImageVersion {
+    pub epoch: u32,
+    pub version: u32,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct SpState {
     pub serial_number: SerialNumber,
-    pub version: u32,
+    pub version: ImageVersion,
     pub power_state: PowerState,
+    pub rot_version: Result<ImageVersion, RotError>,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
@@ -495,3 +504,27 @@ impl fmt::Display for SpError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for SpError {}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum RotError {
+    SpRotError,
+    Other { code: u32 },
+}
+
+impl fmt::Display for RotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SpRotError => {
+                write!(f, "SP/RoT communication error")
+            }
+            Self::Other { code } => {
+                write!(f, "RoT error code {code}")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for RotError {}
