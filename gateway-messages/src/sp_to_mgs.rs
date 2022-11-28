@@ -521,18 +521,14 @@ impl std::error::Error for SpError {}
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum RotError {
-    SpRotError,
-    Other { code: u32 },
+    MessageError { code: u32 },
 }
 
 impl fmt::Display for RotError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::SpRotError => {
-                write!(f, "SP/RoT communication error")
-            }
-            Self::Other { code } => {
-                write!(f, "RoT error code {code}")
+            Self::MessageError { code } => {
+                write!(f, "SP/RoT messaging error: {code}")
             }
         }
     }
