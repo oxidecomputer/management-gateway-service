@@ -185,7 +185,19 @@ pub struct SpState {
     pub serial_number: SerialNumber,
     pub version: ImageVersion,
     pub power_state: PowerState,
-    pub rot_version: Result<ImageVersion, RotError>,
+    pub rot: Result<RotState, RotError>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotState {
+    pub version: ImageVersion,
+    pub messages_received: u32,
+    pub invalid_messages_received: u32,
+    pub incomplete_transmissions: u32,
+    pub rx_fifo_overrun: u32,
+    pub tx_fifo_underrun: u32,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
