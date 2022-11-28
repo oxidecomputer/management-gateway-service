@@ -139,10 +139,12 @@ bitflags::bitflags! {
     #[repr(transparent)]
     pub struct StartupOptions: u64 {
         const PHASE2_RECOVERY_MODE = 1 << 0;
-        const DEBUG_KBM = 1 << 1;
-        const DEBUG_BOOTRD = 1 << 2;
-        const DEBUG_PROM = 1 << 3;
-        const DEBUG_KMDB = 1 << 4;
-        const DEBUG_KMDB_BOOT = 1 << 5;
+        const STARTUP_KBM = 1 << 1;
+        const STARTUP_BOOTRD = 1 << 2;
+        const STARTUP_PROM = 1 << 3;
+        const STARTUP_KMDB = 1 << 4;
+        const STARTUP_KMDB_BOOT = 1 << 5;
+        const STARTUP_BOOT_RAMDISK = 1 << 6;
+        const STARTUP_BOOT_NET = 1 << 7;
     }
 }
