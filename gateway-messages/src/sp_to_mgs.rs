@@ -81,6 +81,7 @@ pub enum SpResponse {
     /// A `ComponentDetails` response is followed by a TLV-encoded set of
     /// informational structures (see [`ComponentDetails`]).
     ComponentDetails(TlvPage),
+    ComponentClearStatusAck,
 }
 
 #[derive(

@@ -59,6 +59,8 @@ pub enum MgsRequest {
         component: SpComponent,
         offset: u32,
     },
+    /// Clear any clearable state (e.g., event counters) on a component.
+    ComponentClearStatus(SpComponent),
 }
 
 #[derive(
