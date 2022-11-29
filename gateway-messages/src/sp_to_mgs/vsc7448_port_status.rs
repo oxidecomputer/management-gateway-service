@@ -89,6 +89,8 @@ pub struct PacketCount {
 pub struct PortCounters {
     pub rx: PacketCount,
     pub tx: PacketCount,
+    pub link_down_sticky: bool,
+    pub phy_link_down_sticky: bool,
 }
 
 #[derive(
