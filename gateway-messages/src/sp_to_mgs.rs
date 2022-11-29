@@ -451,6 +451,9 @@ pub enum SpError {
     /// Request mentioned a slot number for a component that does not have that
     /// slot.
     InvalidSlotForComponent,
+    /// The requested operation on the component failed with the associated
+    /// code.
+    ComponentOperationFailed(u32),
 }
 
 impl fmt::Display for SpError {
@@ -510,6 +513,9 @@ impl fmt::Display for SpError {
             }
             Self::InvalidSlotForComponent => {
                 write!(f, "invalid slot number for component")
+            }
+            Self::ComponentOperationFailed(code) => {
+                write!(f, "component operation failed (code {code})")
             }
         }
     }
