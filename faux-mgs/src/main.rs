@@ -95,6 +95,9 @@ enum Command {
     /// Ask SP for details of a component.
     ComponentDetails { component: String },
 
+    /// Ask SP to clear the state (e.g., reset counters) on a component.
+    ComponentClearStatus { component: String },
+
     /// Attach to the SP's USART.
     UsartAttach {
         /// Put the local terminal in raw mode.
@@ -268,6 +271,14 @@ async fn main() -> Result<()> {
             for entry in details.entries {
                 println!("{entry:?}");
             }
+        }
+        Command::ComponentClearStatus { component } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| {
+                    anyhow!("invalid component name: {}", component)
+                })?;
+            sp.component_clear_status(sp_component).await?;
+            info!(log, "status cleared for component {component}");
         }
         Command::UsartAttach { raw, stdin_buffer_time_millis } => {
             usart::run(

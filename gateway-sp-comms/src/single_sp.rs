@@ -264,6 +264,19 @@ impl SingleSp {
         Ok(SpComponentDetails { entries })
     }
 
+    /// Request that the status of a component be cleared (e.g., resetting
+    /// counters).
+    pub async fn component_clear_status(
+        &self,
+        component: SpComponent,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ComponentClearStatus(component)).await.and_then(
+            |(_peer, response, _data)| {
+                response.expect_component_clear_status_ack()
+            },
+        )
+    }
+
     async fn get_paginated_tlv_data<T: TlvRpc>(
         &self,
         rpc: T,
