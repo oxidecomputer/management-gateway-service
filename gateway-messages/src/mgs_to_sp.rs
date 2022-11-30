@@ -70,7 +70,7 @@ pub enum MgsRequest {
     BulkIgnitionLinkEvents {
         offset: u32,
     },
-    /// If `target` is `None`, clear events on all target (potentially
+    /// If `target` is `None`, clear events on all targets (potentially
     /// restricted by `transceiver_select`).
     ///
     /// If `transceiver_select` is none, clear events on all transceivers

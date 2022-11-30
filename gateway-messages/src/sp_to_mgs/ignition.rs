@@ -51,8 +51,8 @@ impl fmt::Display for IgnitionError {
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct IgnitionState {
-    pub receiver_status: ReceiverStatus,
-    pub target: Option<Target>,
+    pub receiver: ReceiverStatus,
+    pub target: Option<TargetState>,
 }
 
 impl IgnitionState {
@@ -71,7 +71,7 @@ pub struct ReceiverStatus {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct Target {
+pub struct TargetState {
     pub system_type: SystemType,
     pub power_state: SystemPowerState,
     pub power_reset_in_progress: bool,
