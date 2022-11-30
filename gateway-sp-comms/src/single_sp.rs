@@ -14,9 +14,10 @@ use crate::sp_response_ext::SpResponseExt;
 use crate::SwitchPortConfig;
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
+use gateway_messages::ignition::LinkEvents;
+use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
-use gateway_messages::BulkIgnitionState;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
@@ -210,12 +211,59 @@ impl SingleSp {
     /// Request the state of all ignition targets.
     ///
     /// This will fail if this SP is not connected to an ignition controller.
-    pub async fn bulk_ignition_state(&self) -> Result<BulkIgnitionState> {
-        self.rpc(MgsRequest::BulkIgnitionState).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_bulk_ignition_state().map_err(Into::into)
-            },
+    ///
+    /// TODO: This _does not_ return the ignition state for the SP we're
+    /// querying (which must be an ignition controller)! If this function
+    /// returns successfully, it's on. Is that good enough?
+    pub async fn bulk_ignition_state(&self) -> Result<Vec<IgnitionState>> {
+        self.get_paginated_tlv_data(BulkIgnitionStateTlvRpc { log: &self.log })
+            .await
+    }
+
+    /// Request link events for a single ignition target.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    pub async fn ignition_link_events(&self, target: u8) -> Result<LinkEvents> {
+        self.rpc(MgsRequest::IgnitionLinkEvents { target }).await.and_then(
+            |(_peer, response, _data)| response.expect_ignition_link_events(),
         )
+    }
+
+    /// Request all link events on all ignition targets.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    ///
+    /// TODO: This _does not_ return events for the target on the SP we're
+    /// querying (which must be an ignition controller)!
+    pub async fn bulk_ignition_link_events(&self) -> Result<Vec<LinkEvents>> {
+        self.get_paginated_tlv_data(BulkIgnitionLinkEventsTlvRpc {
+            log: &self.log,
+        })
+        .await
+    }
+
+    /// Clear ignition link events.
+    ///
+    /// If `target` is `None`, ignition events are cleared on all targets
+    /// (potentially restricted by `transceiver_select`).
+    ///
+    /// If `transceiver_select` is `None`, ignition events are cleared for all
+    /// transceivers (potentially restricted by `target`).
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    pub async fn clear_ignition_link_events(
+        &self,
+        target: Option<u8>,
+        transceiver_select: Option<TransceiverSelect>,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ClearIgnitionLinkEvents {
+            target,
+            transceiver_select,
+        })
+        .await
+        .and_then(|(_peer, response, _data)| {
+            response.expect_clear_ignition_link_events_ack()
+        })
     }
 
     /// Send an ignition command to the given target.
@@ -608,7 +656,7 @@ impl TlvRpc for InventoryTlvRpc {
                 let description_len = header.description_len as usize;
                 if data.len() != device_len.saturating_add(description_len) {
                     return Err(SpCommunicationError::TlvPagination {
-                        reason: "data / header length mismatch",
+                        reason: "inventory data / header length mismatch",
                     });
                 }
 
@@ -616,13 +664,13 @@ impl TlvRpc for InventoryTlvRpc {
                 let device =
                     str::from_utf8(&data[..device_len]).map_err(|_| {
                         SpCommunicationError::TlvPagination {
-                            reason: "non-UTF8 device",
+                            reason: "non-UTF8 inventory device",
                         }
                     })?;
                 let description =
                     str::from_utf8(&data[device_len..]).map_err(|_| {
                         SpCommunicationError::TlvPagination {
-                            reason: "non-UTF8 description",
+                            reason: "non-UTF8 inventory description",
                         }
                     })?;
 
@@ -716,6 +764,103 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                 info!(
                     self.log,
                     "skipping unknown component details tag {tag:?}"
+                );
+                Ok(None)
+            }
+        }
+    }
+}
+
+struct BulkIgnitionStateTlvRpc<'a> {
+    log: &'a Logger,
+}
+
+impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
+    type Item = IgnitionState;
+
+    const LOG_NAME: &'static str = "ignition state";
+
+    fn request(&self, offset: u32) -> MgsRequest {
+        MgsRequest::BulkIgnitionState { offset }
+    }
+
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
+        response.expect_bulk_ignition_state()
+    }
+
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>> {
+        match tag {
+            IgnitionState::TAG => {
+                let (state, leftover) =
+                    gateway_messages::deserialize::<IgnitionState>(value)
+                        .map_err(|err| {
+                            SpCommunicationError::TlvDeserialize { tag, err }
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in IgnitionState TLV entry"
+                    );
+                }
+
+                Ok(Some(state))
+            }
+            _ => {
+                info!(self.log, "skipping unknown ignition state tag {tag:?}");
+                Ok(None)
+            }
+        }
+    }
+}
+
+struct BulkIgnitionLinkEventsTlvRpc<'a> {
+    log: &'a Logger,
+}
+
+impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
+    type Item = LinkEvents;
+
+    const LOG_NAME: &'static str = "ignition link events";
+
+    fn request(&self, offset: u32) -> MgsRequest {
+        MgsRequest::BulkIgnitionLinkEvents { offset }
+    }
+
+    fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
+        response.expect_bulk_ignition_link_events()
+    }
+
+    fn parse_tag_value(
+        &self,
+        tag: tlv::Tag,
+        value: &[u8],
+    ) -> Result<Option<Self::Item>> {
+        match tag {
+            LinkEvents::TAG => {
+                let (events, leftover) =
+                    gateway_messages::deserialize::<LinkEvents>(value)
+                        .map_err(|err| {
+                            SpCommunicationError::TlvDeserialize { tag, err }
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in IgnitionState TLV entry"
+                    );
+                }
+
+                Ok(Some(events))
+            }
+            _ => {
+                info!(
+                    self.log,
+                    "skipping unknown ignition link events tag {tag:?}"
                 );
                 Ok(None)
             }

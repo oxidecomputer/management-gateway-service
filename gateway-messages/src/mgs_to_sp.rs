@@ -4,6 +4,7 @@
 
 //! Types for messages sent from MGS to SPs.
 
+use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::SpComponent;
@@ -20,7 +21,9 @@ pub enum MgsRequest {
     IgnitionState {
         target: u8,
     },
-    BulkIgnitionState,
+    BulkIgnitionState {
+        offset: u32,
+    },
     IgnitionCommand {
         target: u8,
         command: IgnitionCommand,
@@ -59,6 +62,23 @@ pub enum MgsRequest {
         component: SpComponent,
         offset: u32,
     },
+    /// Get ignition link events for a single target.
+    IgnitionLinkEvents {
+        target: u8,
+    },
+    /// Get ignition link events for all targets, starting at `offset`.
+    BulkIgnitionLinkEvents {
+        offset: u32,
+    },
+    /// If `target` is `None`, clear events on all targets (potentially
+    /// restricted by `transceiver_select`).
+    ///
+    /// If `transceiver_select` is none, clear events on all transceivers
+    /// (potentially restricted by `target`).
+    ClearIgnitionLinkEvents {
+        target: Option<u8>,
+        transceiver_select: Option<TransceiverSelect>,
+    },
 }
 
 #[derive(
@@ -93,6 +113,7 @@ pub enum MgsError {
 pub enum IgnitionCommand {
     PowerOn,
     PowerOff,
+    PowerReset,
 }
 
 #[derive(
