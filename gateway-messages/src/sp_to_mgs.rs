@@ -173,10 +173,31 @@ pub type SerialNumber = [u8; 16];
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
+pub struct ImageVersion {
+    pub epoch: u32,
+    pub version: u32,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct SpState {
     pub serial_number: SerialNumber,
-    pub version: u32,
+    pub version: ImageVersion,
     pub power_state: PowerState,
+    pub rot: Result<RotState, RotError>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotState {
+    pub version: ImageVersion,
+    pub messages_received: u32,
+    pub invalid_messages_received: u32,
+    pub incomplete_transmissions: u32,
+    pub rx_fifo_overrun: u32,
+    pub tx_fifo_underrun: u32,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
@@ -495,3 +516,23 @@ impl fmt::Display for SpError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for SpError {}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum RotError {
+    MessageError { code: u32 },
+}
+
+impl fmt::Display for RotError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::MessageError { code } => {
+                write!(f, "SP/RoT messaging error: {code}")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for RotError {}
