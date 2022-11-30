@@ -677,8 +677,8 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
     ) -> Result<Option<Self::Item>> {
         use gateway_messages::measurement::Measurement;
         use gateway_messages::measurement::MeasurementHeader;
-        use gateway_messages::vsc7448_port_status::PortStatus;
-        use gateway_messages::vsc7448_port_status::PortStatusError;
+        use gateway_messages::monorail_port_status::PortStatus;
+        use gateway_messages::monorail_port_status::PortStatusError;
 
         match tag {
             PortStatus::TAG => {

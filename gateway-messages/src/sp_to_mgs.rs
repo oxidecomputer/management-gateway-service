@@ -19,11 +19,11 @@ use serde_repr::Deserialize_repr;
 use serde_repr::Serialize_repr;
 
 pub mod measurement;
-pub mod vsc7448_port_status;
+pub mod monorail_port_status;
 
 pub use measurement::Measurement;
 use measurement::MeasurementHeader;
-use vsc7448_port_status::{PortStatus, PortStatusError};
+use monorail_port_status::{PortStatus, PortStatusError};
 
 #[derive(
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
