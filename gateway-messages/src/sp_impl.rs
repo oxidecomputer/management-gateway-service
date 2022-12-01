@@ -274,6 +274,13 @@ pub trait SpHandler {
         index: BoundsChecked,
     ) -> ComponentDetails;
 
+    fn component_clear_status(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+
     fn get_startup_options(
         &mut self,
         sender: SocketAddrV6,
@@ -720,6 +727,9 @@ fn handle_mgs_request<H: SpHandler>(
                     total: total_items,
                 })
             }),
+        MgsRequest::ComponentClearStatus(component) => handler
+            .component_clear_status(sender, port, component)
+            .map(|()| SpResponse::ComponentClearStatusAck),
     };
 
     let response = match result {
@@ -959,6 +969,15 @@ mod tests {
             _component: SpComponent,
             _index: BoundsChecked,
         ) -> ComponentDetails {
+            unimplemented!()
+        }
+
+        fn component_clear_status(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
 

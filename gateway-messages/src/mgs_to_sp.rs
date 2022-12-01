@@ -79,6 +79,8 @@ pub enum MgsRequest {
         target: Option<u8>,
         transceiver_select: Option<TransceiverSelect>,
     },
+    /// Clear any clearable state (e.g., event counters) on a component.
+    ComponentClearStatus(SpComponent),
 }
 
 #[derive(

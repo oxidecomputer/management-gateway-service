@@ -65,6 +65,8 @@ pub(crate) trait SpResponseExt {
     fn expect_set_startup_options_ack(self) -> Result<()>;
 
     fn expect_component_details(self) -> Result<TlvPage>;
+
+    fn expect_component_clear_status_ack(self) -> Result<()>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -116,6 +118,9 @@ impl SpResponseExt for SpResponse {
                 response_kind_names::SET_STARTUP_OPTIONS_ACK
             }
             Self::ComponentDetails(_) => response_kind_names::COMPONENT_DETAILS,
+            Self::ComponentClearStatusAck => {
+                response_kind_names::COMPONENT_CLEAR_STATUS_ACK
+            }
         }
     }
 
@@ -373,6 +378,17 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_component_clear_status_ack(self) -> Result<()> {
+        match self {
+            Self::ComponentClearStatusAck => Ok(()),
+            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
+            other => Err(SpCommunicationError::BadResponseType {
+                expected: response_kind_names::COMPONENT_CLEAR_STATUS_ACK,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -406,4 +422,6 @@ mod response_kind_names {
     pub(super) const STARTUP_OPTIONS: &str = "startup_options";
     pub(super) const SET_STARTUP_OPTIONS_ACK: &str = "set_startup_options_ack";
     pub(super) const COMPONENT_DETAILS: &str = "component_details";
+    pub(super) const COMPONENT_CLEAR_STATUS_ACK: &str =
+        "component_clear_status_ack";
 }

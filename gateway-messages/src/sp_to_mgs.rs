@@ -20,14 +20,14 @@ use serde_repr::Serialize_repr;
 
 pub mod ignition;
 pub mod measurement;
-pub mod vsc7448_port_status;
+pub mod monorail_port_status;
 
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
 
 use ignition::IgnitionError;
 use measurement::MeasurementHeader;
-use vsc7448_port_status::{PortStatus, PortStatusError};
+use monorail_port_status::{PortStatus, PortStatusError};
 
 use ignition::LinkEvents;
 
@@ -94,6 +94,7 @@ pub enum SpResponse {
     /// [`ignition::LinkEvents`]s.
     BulkIgnitionLinkEvents(TlvPage),
     ClearIgnitionLinkEventsAck,
+    ComponentClearStatusAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -405,6 +406,9 @@ pub enum SpError {
     /// Request mentioned a slot number for a component that does not have that
     /// slot.
     InvalidSlotForComponent,
+    /// The requested operation on the component failed with the associated
+    /// code.
+    ComponentOperationFailed(u32),
 }
 
 impl fmt::Display for SpError {
@@ -464,6 +468,9 @@ impl fmt::Display for SpError {
             }
             Self::InvalidSlotForComponent => {
                 write!(f, "invalid slot number for component")
+            }
+            Self::ComponentOperationFailed(code) => {
+                write!(f, "component operation failed (code {code})")
             }
         }
     }
