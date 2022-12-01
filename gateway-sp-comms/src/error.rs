@@ -61,7 +61,7 @@ pub enum SpCommunicationError {
     TlvDeserialize { tag: tlv::Tag, err: gateway_messages::HubpackError },
     #[error("failed to decode TLV triple: {0}")]
     TlvDecode(#[from] tlv::DecodeError),
-    #[error("invalid TLV pagination: {reason}")]
+    #[error("invalid pagination: {reason}")]
     TlvPagination { reason: &'static str },
 }
 

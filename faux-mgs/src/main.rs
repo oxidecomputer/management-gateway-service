@@ -10,6 +10,8 @@ use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
+use gateway_messages::ignition::TransceiverSelect;
+use gateway_messages::IgnitionCommand;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
@@ -86,6 +88,52 @@ enum Command {
     /// Ask SP for its current state.
     State,
 
+    /// Get the ignition state for a single target port (only valid if the SP is
+    /// an ignition controller).
+    Ignition {
+        #[clap(
+            help = "integer of a target, or 'all' for all targets",
+            value_parser = IgnitionLinkEventsTarget::parse,
+        )]
+        target: IgnitionLinkEventsTarget,
+    },
+
+    /// Send an ignition command for a single target port (only valid if the SP
+    /// is an ignition controller).
+    IgnitionCommand {
+        target: u8,
+        #[clap(
+            help = "'power-on', 'power-off', or 'power-reset'",
+            value_parser = ignition_command_from_str,
+        )]
+        command: IgnitionCommand,
+    },
+
+    /// Get bulk ignition link events (only valid if the SP is an ignition
+    /// controller).
+    IgnitionLinkEvents {
+        #[clap(
+            help = "integer of a target, or 'all' for all targets",
+            value_parser = IgnitionLinkEventsTarget::parse,
+        )]
+        target: IgnitionLinkEventsTarget,
+    },
+
+    /// Clear all ignition link events (only valid if the SP is an ignition
+    /// controller).
+    ClearIgnitionLinkEvents {
+        #[clap(
+            help = "integer of a target, or 'all' for all targets",
+            value_parser = IgnitionLinkEventsTarget::parse,
+        )]
+        target: IgnitionLinkEventsTarget,
+        #[clap(
+            help = "'controller', 'target-link0', 'target-link1', or 'all'",
+            value_parser = IgnitionLinkEventsTransceiverSelect::parse,
+        )]
+        transceiver_select: IgnitionLinkEventsTransceiverSelect,
+    },
+
     /// Get or set startup options on an SP.
     StartupOptions { options: Option<u64> },
 
@@ -149,12 +197,55 @@ enum Command {
     Reset,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct IgnitionLinkEventsTarget(Option<u8>);
+
+impl IgnitionLinkEventsTarget {
+    fn parse(s: &str) -> Result<Self> {
+        match s {
+            "all" | "ALL" => Ok(Self(None)),
+            _ => {
+                let target = s
+                    .parse()
+                    .with_context(|| "must be an integer (0..256) or 'all'")?;
+                Ok(Self(Some(target)))
+            }
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IgnitionLinkEventsTransceiverSelect(Option<TransceiverSelect>);
+
+impl IgnitionLinkEventsTransceiverSelect {
+    fn parse(s: &str) -> Result<Self> {
+        match s {
+            "all" | "ALL" => Ok(Self(None)),
+            "controller" => Ok(Self(Some(TransceiverSelect::Controller))),
+            "target-link0" => Ok(Self(Some(TransceiverSelect::TargetLink0))),
+            "target-link1" => Ok(Self(Some(TransceiverSelect::TargetLink1))),
+            _ => {
+                bail!("transceiver selection must be one of 'all', 'controller', 'target-link0', 'target-link1'")
+            }
+        }
+    }
+}
+
 fn power_state_from_str(s: &str) -> Result<PowerState> {
     match s {
         "a0" | "A0" => Ok(PowerState::A0),
         "a1" | "A1" => Ok(PowerState::A1),
         "a2" | "A2" => Ok(PowerState::A2),
         _ => Err(anyhow!("Invalid power state: {s}")),
+    }
+}
+
+fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
+    match s {
+        "power-on" => Ok(IgnitionCommand::PowerOn),
+        "power-off" => Ok(IgnitionCommand::PowerOff),
+        "power-reset" => Ok(IgnitionCommand::PowerReset),
+        _ => Err(anyhow!("Invalid ignition command: {s}")),
     }
 }
 
@@ -231,6 +322,37 @@ async fn main() -> Result<()> {
         }
         Command::State => {
             info!(log, "{:?}", sp.state().await?);
+        }
+        Command::Ignition { target } => {
+            if let Some(target) = target.0 {
+                let state = sp.ignition_state(target).await?;
+                println!("target {target}: {state:?}");
+            } else {
+                let states = sp.bulk_ignition_state().await?;
+                for (i, state) in states.into_iter().enumerate() {
+                    println!("target {i}: {state:?}");
+                }
+            }
+        }
+        Command::IgnitionCommand { target, command } => {
+            sp.ignition_command(target, command).await?;
+            info!(log, "ignition command {command:?} send to target {target}");
+        }
+        Command::IgnitionLinkEvents { target } => {
+            if let Some(target) = target.0 {
+                let events = sp.ignition_link_events(target).await;
+                println!("target {target}: {events:?}");
+            } else {
+                let events = sp.bulk_ignition_link_events().await?;
+                for (i, events) in events.into_iter().enumerate() {
+                    println!("target {i}: {events:?}");
+                }
+            }
+        }
+        Command::ClearIgnitionLinkEvents { target, transceiver_select } => {
+            sp.clear_ignition_link_events(target.0, transceiver_select.0)
+                .await?;
+            info!(log, "ignition link events cleared");
         }
         Command::StartupOptions { options } => {
             if let Some(options) = options {
