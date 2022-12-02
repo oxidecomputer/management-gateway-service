@@ -113,8 +113,6 @@ pub enum Error {
         "timeout ({timeout:?}) elapsed communicating with {sp:?} on port {port}"
     )]
     Timeout { timeout: Duration, port: usize, sp: Option<SpIdentifier> },
-    #[error("bogus SP response: specified unknown ignition target {0}")]
-    BadIgnitionTarget(usize),
     #[error("error communicating with SP: {0}")]
     SpCommunicationFailed(#[from] SpCommunicationError),
     #[error("updating SP failed: {0}")]
