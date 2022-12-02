@@ -26,6 +26,7 @@ use gateway_messages::SpState;
 use gateway_messages::UpdateStatus;
 use slog::info;
 use slog::o;
+use slog::warn;
 use slog::Logger;
 use uuid::Uuid;
 
@@ -48,6 +49,7 @@ where
 #[derive(Debug)]
 pub struct Communicator {
     switch: ManagementSwitch,
+    log: Logger,
 }
 
 impl Communicator {
@@ -61,7 +63,7 @@ impl Communicator {
             ManagementSwitch::new(config, host_phase2_provider, &log).await?;
 
         info!(&log, "started SP communicator");
-        Ok(Self { switch })
+        Ok(Self { switch, log })
     }
 
     /// Have we completed the discovery process to know how to map logical SP
@@ -137,13 +139,23 @@ impl Communicator {
         bulk_state
             .into_iter()
             .enumerate()
-            .map(|(target, state)| {
-                let port = self
-                    .switch
-                    .switch_port_from_ignition_target(target)
-                    .ok_or(Error::BadIgnitionTarget(target))?;
-                let id = self.port_to_id(port)?;
-                Ok((id, state))
+            .filter_map(|(target, state)| {
+                // If the SP returns an ignition target we don't have a port
+                // for, discard it. This _shouldn't_ happen, but may if:
+                //
+                // 1. We're getting bogus messages from the SP.
+                // 2. We're misconfigured and don't know about all ports.
+                //
+                // Case 2 may happen intentionally during development and
+                // testing.
+                match self.switch.switch_port_from_ignition_target(target) {
+                    Some(port) =>
+                        Some(self.port_to_id(port).map(|id| (id, state))),
+                    None => {
+                        warn!(self.log, "ignoring unknown ignition target {target} returned by SP");
+                        None
+                    }
+                }
             })
             .collect()
     }
