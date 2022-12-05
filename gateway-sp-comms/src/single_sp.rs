@@ -312,6 +312,29 @@ impl SingleSp {
         Ok(SpComponentDetails { entries })
     }
 
+    /// Get the currently-active slot of a particular component.
+    pub async fn component_active_slot(
+        &self,
+        component: SpComponent,
+    ) -> Result<u16> {
+        self.rpc(MgsRequest::ComponentGetActiveSlot(component)).await.and_then(
+            |(_peer, response, _data)| response.expect_component_active_slot(),
+        )
+    }
+
+    /// Set the currently-active slot of a particular component.
+    pub async fn set_component_active_slot(
+        &self,
+        component: SpComponent,
+        slot: u16,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ComponentSetActiveSlot { component, slot })
+            .await
+            .and_then(|(_peer, response, _data)| {
+                response.expect_component_set_active_slot_ack()
+            })
+    }
+
     /// Request that the status of a component be cleared (e.g., resetting
     /// counters).
     pub async fn component_clear_status(

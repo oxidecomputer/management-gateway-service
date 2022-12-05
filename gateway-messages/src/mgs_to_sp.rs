@@ -81,6 +81,18 @@ pub enum MgsRequest {
     },
     /// Clear any clearable state (e.g., event counters) on a component.
     ComponentClearStatus(SpComponent),
+    /// For components with multiple slots (e.g., host boot flash), get the
+    /// currently-active slot.
+    ComponentGetActiveSlot(SpComponent),
+    /// For components with multiple slots (e.g., host boot flash), set the
+    /// currently-active slot.
+    ///
+    /// The effect/timing of setting the active slot is component-defined; e.g.,
+    /// it make not take effect until the component or SP is next booted.
+    ComponentSetActiveSlot {
+        component: SpComponent,
+        slot: u16,
+    },
 }
 
 #[derive(

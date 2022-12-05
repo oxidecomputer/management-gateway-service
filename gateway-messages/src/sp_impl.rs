@@ -281,6 +281,21 @@ pub trait SpHandler {
         component: SpComponent,
     ) -> Result<(), SpError>;
 
+    fn component_get_active_slot(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<u16, SpError>;
+
+    fn component_set_active_slot(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+        slot: u16,
+    ) -> Result<(), SpError>;
+
     fn get_startup_options(
         &mut self,
         sender: SocketAddrV6,
@@ -730,6 +745,12 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentClearStatus(component) => handler
             .component_clear_status(sender, port, component)
             .map(|()| SpResponse::ComponentClearStatusAck),
+        MgsRequest::ComponentGetActiveSlot(component) => handler
+            .component_get_active_slot(sender, port, component)
+            .map(SpResponse::ComponentActiveSlot),
+        MgsRequest::ComponentSetActiveSlot { component, slot } => handler
+            .component_set_active_slot(sender, port, component, slot)
+            .map(|()| SpResponse::ComponentSetActiveSlotAck),
     };
 
     let response = match result {
@@ -1017,6 +1038,25 @@ mod tests {
             _offset: u64,
             _data: &[u8],
         ) {
+            unimplemented!()
+        }
+
+        fn component_get_active_slot(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<u16, SpError> {
+            unimplemented!()
+        }
+
+        fn component_set_active_slot(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+            _slot: u16,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }
