@@ -134,6 +134,13 @@ enum Command {
         transceiver_select: IgnitionLinkEventsTransceiverSelect,
     },
 
+    /// Get or set the active slot of a component (e.g., `host-boot-flash`).
+    ComponentActiveSlot {
+        component: String,
+        #[clap(short, long, value_name = "SLOT", help = "set the active slot")]
+        set: Option<u16>,
+    },
+
     /// Get or set startup options on an SP.
     StartupOptions { options: Option<u64> },
 
@@ -353,6 +360,19 @@ async fn main() -> Result<()> {
             sp.clear_ignition_link_events(target.0, transceiver_select.0)
                 .await?;
             info!(log, "ignition link events cleared");
+        }
+        Command::ComponentActiveSlot { component, set } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| {
+                    anyhow!("invalid component name: {}", component)
+                })?;
+            if let Some(slot) = set {
+                sp.set_component_active_slot(sp_component, slot).await?;
+                println!("set active slot for {component:?} to {slot}");
+            } else {
+                let slot = sp.component_active_slot(sp_component).await?;
+                println!("active slot for {component:?}: {slot}");
+            }
         }
         Command::StartupOptions { options } => {
             if let Some(options) = options {
