@@ -95,6 +95,8 @@ pub enum SpResponse {
     BulkIgnitionLinkEvents(TlvPage),
     ClearIgnitionLinkEventsAck,
     ComponentClearStatusAck,
+    ComponentActiveSlot(u16),
+    ComponentSetActiveSlotAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
