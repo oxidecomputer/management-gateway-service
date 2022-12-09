@@ -26,7 +26,9 @@ use slog::Drain;
 use slog::Level;
 use slog::Logger;
 use std::fs;
+use std::fs::File;
 use std::net::SocketAddrV6;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
@@ -46,6 +48,10 @@ struct Args {
         help = "Log level for MGS client",
     )]
     log_level: Level,
+
+    /// Write logs to a file instead of stderr.
+    #[clap(long)]
+    logfile: Option<PathBuf>,
 
     /// Address to bind to locally.
     #[clap(long, default_value_t = gateway_sp_comms::default_listen_addr())]
@@ -158,7 +164,7 @@ enum Command {
     UsartAttach {
         /// Put the local terminal in raw mode.
         #[clap(
-            long = "--no-raw",
+            long = "no-raw",
             help = "do not put terminal in raw mode",
             action = clap::ArgAction::SetFalse,
         )]
@@ -276,17 +282,41 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
     }
 }
 
+fn build_logger(level: Level, path: Option<&Path>) -> Result<Logger> {
+    fn make_drain<D: slog_term::Decorator + Send + 'static>(
+        level: Level,
+        decorator: D,
+    ) -> slog::Fuse<slog_async::Async> {
+        let drain = slog_term::FullFormat::new(decorator)
+            .build()
+            .filter_level(level)
+            .fuse();
+        slog_async::Async::new(drain).build().fuse()
+    }
+
+    let drain = if let Some(path) = path {
+        // Special case /dev/null - don't even bother with slog_async, just
+        // return a discarding logger.
+        if path == Path::new("/dev/null") {
+            return Ok(Logger::root(slog::Discard, o!()));
+        }
+
+        let file = File::create(path).with_context(|| {
+            format!("failed to create logfile {}", path.display())
+        })?;
+        make_drain(level, slog_term::PlainDecorator::new(file))
+    } else {
+        make_drain(level, slog_term::TermDecorator::new().build())
+    };
+
+    Ok(Logger::root(drain, o!("component" => "faux-mgs")))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator)
-        .build()
-        .filter_level(args.log_level)
-        .fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let log = Logger::root(drain, o!("component" => "faux-mgs"));
+    let log = build_logger(args.log_level, args.logfile.as_deref())?;
 
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
