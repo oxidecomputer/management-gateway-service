@@ -32,6 +32,7 @@ use std::time::Duration;
 use uuid::Uuid;
 
 mod host_phase2;
+mod picocom_map;
 mod usart;
 
 /// Command line program that can send MGS messages to a single SP.
@@ -156,12 +157,31 @@ enum Command {
     /// Attach to the SP's USART.
     UsartAttach {
         /// Put the local terminal in raw mode.
-        #[clap(long)]
+        #[clap(
+            long = "--no-raw",
+            help = "do not put terminal in raw mode",
+            action = clap::ArgAction::SetFalse,
+        )]
         raw: bool,
 
         /// Amount of time to buffer input from stdin before forwarding to SP.
         #[clap(long, default_value = "500")]
         stdin_buffer_time_millis: u64,
+
+        /// Specifies the input character map (i.e., special characters to be
+        /// replaced when reading from the serial port). See picocom's manpage.
+        #[clap(long)]
+        imap: Option<String>,
+
+        /// Specifies the output character map (i.e., special characters to be
+        /// replaced when writing to the serial port). See picocom's manpage.
+        #[clap(long)]
+        omap: Option<String>,
+
+        /// Record all input read from the serial port to this logfile (before
+        /// any remapping).
+        #[clap(long)]
+        uart_logfile: Option<PathBuf>,
     },
 
     /// Detach any other attached USART connection.
@@ -259,6 +279,7 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
+
     let decorator = slog_term::TermDecorator::new().build();
     let drain = slog_term::FullFormat::new(decorator)
         .build()
@@ -422,12 +443,20 @@ async fn main() -> Result<()> {
             sp.component_clear_status(sp_component).await?;
             info!(log, "status cleared for component {component}");
         }
-        Command::UsartAttach { raw, stdin_buffer_time_millis } => {
+        Command::UsartAttach {
+            raw,
+            stdin_buffer_time_millis,
+            imap,
+            omap,
+            uart_logfile,
+        } => {
             usart::run(
                 sp,
                 raw,
                 Duration::from_millis(stdin_buffer_time_millis),
-                log,
+                imap,
+                omap,
+                uart_logfile,
             )
             .await?;
         }
