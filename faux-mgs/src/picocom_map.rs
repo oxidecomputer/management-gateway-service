@@ -77,6 +77,9 @@ impl RemapRules {
 
 pub struct RemapIter<I> {
     inner: I,
+    // Some rules (e.g., `crcrlf`) map one input byte to two output bytes; we
+    // can only return the first from one invocation to `next()`, so we stash
+    // any remaining output bytes from a previous input byte into this deque.
     prev: VecDeque<u8>,
     rules: RemapRules,
 }
@@ -98,6 +101,20 @@ where
             match self.inner.next()? {
                 raw::CR => {
                     if let Some(repl) = self.rules.cr {
+                        // This does the right thing for all three possible
+                        // cases of replacement length:
+                        //
+                        // 0. `repl.len() == 0`: we loop back, find nothing in
+                        //    `prev`, and read the next byte from `self.inner`.
+                        // 1. `repl.len() == 1`: we loop back, pop the one and
+                        //    only byte out, and return it. On the next call to
+                        //    `self.next()`, we have no bytes left in
+                        //    `self.prev` and so read the next from
+                        //    `self.inner`.
+                        // 2. `repl.len() > 1`: we loop back, pop the first
+                        //    replacement byte out and return it, leaving the
+                        //    remaining replacement bytes in `self.prev` waiting
+                        //    for future call(s) to `self.next().
                         self.prev.extend(repl);
                         continue;
                     } else {
