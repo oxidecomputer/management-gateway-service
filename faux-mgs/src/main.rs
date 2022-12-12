@@ -26,12 +26,15 @@ use slog::Drain;
 use slog::Level;
 use slog::Logger;
 use std::fs;
+use std::fs::File;
 use std::net::SocketAddrV6;
+use std::path::Path;
 use std::path::PathBuf;
 use std::time::Duration;
 use uuid::Uuid;
 
 mod host_phase2;
+mod picocom_map;
 mod usart;
 
 /// Command line program that can send MGS messages to a single SP.
@@ -45,6 +48,10 @@ struct Args {
         help = "Log level for MGS client",
     )]
     log_level: Level,
+
+    /// Write logs to a file instead of stderr.
+    #[clap(long)]
+    logfile: Option<PathBuf>,
 
     /// Address to bind to locally.
     #[clap(long, default_value_t = gateway_sp_comms::default_listen_addr())]
@@ -156,12 +163,31 @@ enum Command {
     /// Attach to the SP's USART.
     UsartAttach {
         /// Put the local terminal in raw mode.
-        #[clap(long)]
+        #[clap(
+            long = "no-raw",
+            help = "do not put terminal in raw mode",
+            action = clap::ArgAction::SetFalse,
+        )]
         raw: bool,
 
         /// Amount of time to buffer input from stdin before forwarding to SP.
         #[clap(long, default_value = "500")]
         stdin_buffer_time_millis: u64,
+
+        /// Specifies the input character map (i.e., special characters to be
+        /// replaced when reading from the serial port). See picocom's manpage.
+        #[clap(long)]
+        imap: Option<String>,
+
+        /// Specifies the output character map (i.e., special characters to be
+        /// replaced when writing to the serial port). See picocom's manpage.
+        #[clap(long)]
+        omap: Option<String>,
+
+        /// Record all input read from the serial port to this logfile (before
+        /// any remapping).
+        #[clap(long)]
+        uart_logfile: Option<PathBuf>,
     },
 
     /// Detach any other attached USART connection.
@@ -256,16 +282,41 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
     }
 }
 
+fn build_logger(level: Level, path: Option<&Path>) -> Result<Logger> {
+    fn make_drain<D: slog_term::Decorator + Send + 'static>(
+        level: Level,
+        decorator: D,
+    ) -> slog::Fuse<slog_async::Async> {
+        let drain = slog_term::FullFormat::new(decorator)
+            .build()
+            .filter_level(level)
+            .fuse();
+        slog_async::Async::new(drain).build().fuse()
+    }
+
+    let drain = if let Some(path) = path {
+        // Special case /dev/null - don't even bother with slog_async, just
+        // return a discarding logger.
+        if path == Path::new("/dev/null") {
+            return Ok(Logger::root(slog::Discard, o!()));
+        }
+
+        let file = File::create(path).with_context(|| {
+            format!("failed to create logfile {}", path.display())
+        })?;
+        make_drain(level, slog_term::PlainDecorator::new(file))
+    } else {
+        make_drain(level, slog_term::TermDecorator::new().build())
+    };
+
+    Ok(Logger::root(drain, o!("component" => "faux-mgs")))
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
-    let decorator = slog_term::TermDecorator::new().build();
-    let drain = slog_term::FullFormat::new(decorator)
-        .build()
-        .filter_level(args.log_level)
-        .fuse();
-    let drain = slog_async::Async::new(drain).build().fuse();
-    let log = Logger::root(drain, o!("component" => "faux-mgs"));
+
+    let log = build_logger(args.log_level, args.logfile.as_deref())?;
 
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
@@ -422,12 +473,20 @@ async fn main() -> Result<()> {
             sp.component_clear_status(sp_component).await?;
             info!(log, "status cleared for component {component}");
         }
-        Command::UsartAttach { raw, stdin_buffer_time_millis } => {
+        Command::UsartAttach {
+            raw,
+            stdin_buffer_time_millis,
+            imap,
+            omap,
+            uart_logfile,
+        } => {
             usart::run(
                 sp,
                 raw,
                 Duration::from_millis(stdin_buffer_time_millis),
-                log,
+                imap,
+                omap,
+                uart_logfile,
             )
             .await?;
         }

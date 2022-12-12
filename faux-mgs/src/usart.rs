@@ -9,33 +9,62 @@ use anyhow::Result;
 use gateway_messages::SpComponent;
 use gateway_sp_comms::AttachedSerialConsoleSend;
 use gateway_sp_comms::SingleSp;
-use slog::trace;
-use slog::Logger;
+use std::fs::File;
 use std::io;
 use std::io::Write;
 use std::mem;
 use std::os::unix::prelude::AsRawFd;
+use std::path::PathBuf;
 use std::time::Duration;
 use termios::Termios;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
 
+use crate::picocom_map::RemapRules;
+
 const CTRL_A: u8 = b'\x01';
-const CTRL_C: u8 = b'\x03';
+const CTRL_X: u8 = b'\x18';
 
 pub(crate) async fn run(
     sp: SingleSp,
     raw: bool,
     stdin_buffer_time: Duration,
-    log: Logger,
+    imap: Option<String>,
+    omap: Option<String>,
+    uart_logfile: Option<PathBuf>,
 ) -> Result<()> {
     // Put terminal in raw mode, if requested, with a guard to restore it.
     let _guard =
         if raw { Some(UnrawTermiosGuard::make_stdout_raw()?) } else { None };
 
+    // Parse imap/omap strings.
+    let imap = match imap {
+        Some(s) => s.parse().context("invalid imap rules")?,
+        None => RemapRules::default(),
+    };
+    let omap = match omap {
+        Some(s) => s.parse().context("invalid omap rules")?,
+        None => RemapRules::default(),
+    };
+
+    // Open uart logfile, if requested.
+    let mut uart_logfile = match uart_logfile {
+        Some(path) => {
+            let f = File::options()
+                .append(true)
+                .create(true)
+                .open(&path)
+                .with_context(|| {
+                    format!("failed to open {}", path.display())
+                })?;
+            Some(f)
+        }
+        None => None,
+    };
+
     let mut stdin = tokio::io::stdin();
     let mut stdin_buf = Vec::with_capacity(64);
-    let mut out_buf = StdinOutBuf::new(raw);
+    let mut out_buf = StdinOutBuf::new(omap, raw);
     let mut flush_delay = FlushDelay::new(stdin_buffer_time);
     let console = sp
         .serial_console_attach(SpComponent::SP3_HOST_CPU)
@@ -51,7 +80,7 @@ pub(crate) async fn run(
     loop {
         tokio::select! {
             result = stdin.read_buf(&mut stdin_buf) => {
-                let n = result.with_context(|| "failed to read from stdin")?;
+                let n = result.context("failed to read from stdin")?;
                 if n == 0 {
                     mem::drop(send_tx);
                     tx_to_sp_handle.await.unwrap();
@@ -68,10 +97,18 @@ pub(crate) async fn run(
 
             chunk = console_rx.recv() => {
                 let chunk = chunk.unwrap();
-                trace!(log, "writing {chunk:?} data to stdout");
+
+                if let Some(uart_logfile) = uart_logfile.as_mut() {
+                    uart_logfile
+                        .write_all(&chunk)
+                        .context("failed to write to logfile")?;
+                }
+
+                let data = imap.apply(chunk).collect::<Vec<_>>();
+
                 let mut stdout = io::stdout().lock();
-                stdout.write_all(&chunk).unwrap();
-                stdout.flush().unwrap();
+                stdout.write_all(&data).context("failed to write to stdout")?;
+                stdout.flush().context("failed to flush stdout")?;
             }
 
             _ = flush_delay.ready() => {
@@ -114,8 +151,10 @@ impl UnrawTermiosGuard {
             .with_context(|| "could not get termios for stdout")?;
         let orig_ios = ios;
         termios::cfmakeraw(&mut ios);
-        termios::tcsetattr(stdout, termios::TCSAFLUSH, &ios)
-            .with_context(|| "failed to set termios on stdout")?;
+        termios::tcsetattr(stdout, termios::TCSANOW, &ios)
+            .with_context(|| "failed to set TCSANOW on stdout")?;
+        termios::tcflush(stdout, termios::TCIOFLUSH)
+            .with_context(|| "failed to set TCIOFLUSH on stdout")?;
         Ok(Self { stdout, ios: orig_ios })
     }
 }
@@ -160,7 +199,8 @@ impl FlushDelay {
 
 struct StdinOutBuf {
     raw_mode: bool,
-    next_raw: bool,
+    in_prefix: bool,
+    remap: RemapRules,
     buf: Vec<u8>,
 }
 
@@ -170,41 +210,40 @@ enum IngestResult {
 }
 
 impl StdinOutBuf {
-    fn new(raw_mode: bool) -> Self {
-        Self { raw_mode, next_raw: false, buf: Vec::new() }
+    fn new(remap: RemapRules, raw_mode: bool) -> Self {
+        Self { raw_mode, in_prefix: false, remap, buf: Vec::new() }
     }
 
     fn ingest(&mut self, buf: &mut Vec<u8>) -> IngestResult {
+        let buf = self.remap.apply(buf.drain(..));
+
         if !self.raw_mode {
-            self.buf.append(buf);
+            self.buf.extend(buf);
             return IngestResult::Ok;
         }
 
-        for c in buf.drain(..) {
+        for c in buf {
             match c {
-                // Ctrl-A means send next one raw
                 CTRL_A => {
-                    if self.next_raw {
+                    if self.in_prefix {
                         // Ctrl-A Ctrl-A should be sent as Ctrl-A
                         self.buf.push(c);
-                        self.next_raw = false;
+                        self.in_prefix = false;
                     } else {
-                        self.next_raw = true;
+                        self.in_prefix = true;
                     }
                 }
-                CTRL_C => {
-                    if !self.next_raw {
-                        // Exit on non-raw Ctrl-C
+                CTRL_X => {
+                    if self.in_prefix {
+                        // Exit on Ctrl-A Ctrl-X
                         return IngestResult::Exit;
                     } else {
-                        // Otherwise send Ctrl-C
                         self.buf.push(c);
-                        self.next_raw = false;
                     }
                 }
                 _ => {
                     self.buf.push(c);
-                    self.next_raw = false;
+                    self.in_prefix = false;
                 }
             }
         }
