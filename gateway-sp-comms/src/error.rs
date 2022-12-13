@@ -36,7 +36,7 @@ pub enum StartupError {
 }
 
 #[derive(Debug, Error)]
-pub enum SpCommunicationError {
+pub enum CommunicationError {
     #[error("interface startup incomplete or failed: {0}")]
     StartupError(#[from] StartupError),
     #[error("failed to send UDP packet to {addr}: {err}")]
@@ -82,5 +82,5 @@ pub enum UpdateError {
     #[error("corrupt aux flash image: {0}")]
     CorruptTlvc(String),
     #[error("failed to send update message to SP: {0}")]
-    Communication(#[from] SpCommunicationError),
+    Communication(#[from] CommunicationError),
 }
