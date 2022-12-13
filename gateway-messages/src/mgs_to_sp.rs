@@ -181,5 +181,6 @@ bitflags::bitflags! {
         const STARTUP_KMDB_BOOT = 1 << 5;
         const STARTUP_BOOT_RAMDISK = 1 << 6;
         const STARTUP_BOOT_NET = 1 << 7;
+        const STARTUP_VERBOSE = 1 << 8;
     }
 }
