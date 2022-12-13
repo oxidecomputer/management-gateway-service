@@ -89,7 +89,11 @@ pub(crate) async fn run(
 
                 match out_buf.ingest(&mut stdin_buf) {
                     IngestResult::Ok => (),
-                    IngestResult::Exit => return Ok(()),
+                    IngestResult::Exit => {
+                        mem::drop(send_tx);
+                        tx_to_sp_handle.await.unwrap();
+                        return Ok(());
+                    }
                 }
 
                 flush_delay.start_if_unstarted().await;
