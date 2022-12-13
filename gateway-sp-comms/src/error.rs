@@ -4,13 +4,11 @@
 
 // Copyright 2022 Oxide Computer Company
 
-use crate::SpIdentifier;
 use gateway_messages::tlv;
 use gateway_messages::SpError;
 use std::io;
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
-use std::time::Duration;
 use thiserror::Error;
 
 #[derive(Debug, Clone, Error)]
@@ -85,36 +83,4 @@ pub enum UpdateError {
     CorruptTlvc(String),
     #[error("failed to send update message to SP: {0}")]
     Communication(#[from] SpCommunicationError),
-}
-
-#[derive(Debug, Error)]
-pub enum ConfigError {
-    #[error("invalid configuration file: {}", .reasons.join(", "))]
-    InvalidConfig { reasons: Vec<String> },
-}
-
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("discovery process not yet complete")]
-    DiscoveryNotYetComplete,
-    #[error("location discovery failed: {reason}")]
-    DiscoveryFailed { reason: String },
-    #[error("nonexistent SP (type {:?}, slot {})", .0.typ, .0.slot)]
-    SpDoesNotExist(SpIdentifier),
-    #[error("unknown socket address for local ignition controller")]
-    LocalIgnitionControllerAddressUnknown,
-    #[error(
-        "unknown socket address for SP (type {:?}, slot {})",
-        .0.typ,
-        .0.slot,
-    )]
-    SpAddressUnknown(SpIdentifier),
-    #[error(
-        "timeout ({timeout:?}) elapsed communicating with {sp:?} on port {port}"
-    )]
-    Timeout { timeout: Duration, port: usize, sp: Option<SpIdentifier> },
-    #[error("error communicating with SP: {0}")]
-    SpCommunicationFailed(#[from] SpCommunicationError),
-    #[error("updating SP failed: {0}")]
-    UpdateFailed(#[from] UpdateError),
 }
