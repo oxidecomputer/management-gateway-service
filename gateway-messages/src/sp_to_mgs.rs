@@ -154,8 +154,8 @@ pub struct SpState {
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum RotSlot {
-    A = 0,
-    B = 1,
+    A,
+    B,
 }
 
 #[derive(
