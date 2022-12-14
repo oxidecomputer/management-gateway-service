@@ -2,7 +2,7 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::error::SpCommunicationError;
+use crate::error::CommunicationError;
 use gateway_messages::ignition::LinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
@@ -13,7 +13,7 @@ use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 
-type Result<T> = std::result::Result<T, SpCommunicationError>;
+type Result<T> = std::result::Result<T, CommunicationError>;
 
 // When we send a request we expect a specific kind of response; the boilerplate
 // for confirming that is a little noisy, so it lives in this extension trait.
@@ -137,8 +137,8 @@ impl SpResponseExt for SpResponse {
     fn expect_discover(self) -> Result<DiscoverResponse> {
         match self {
             Self::Discover(discover) => Ok(discover),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::DISCOVER,
                 got: other.name(),
             }),
@@ -148,8 +148,8 @@ impl SpResponseExt for SpResponse {
     fn expect_ignition_state(self) -> Result<IgnitionState> {
         match self {
             Self::IgnitionState(state) => Ok(state),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::IGNITION_STATE,
                 got: other.name(),
             }),
@@ -159,8 +159,8 @@ impl SpResponseExt for SpResponse {
     fn expect_bulk_ignition_state(self) -> Result<TlvPage> {
         match self {
             Self::BulkIgnitionState(page) => Ok(page),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::BULK_IGNITION_STATE,
                 got: other.name(),
             }),
@@ -170,8 +170,8 @@ impl SpResponseExt for SpResponse {
     fn expect_ignition_link_events(self) -> Result<LinkEvents> {
         match self {
             Self::IgnitionLinkEvents(events) => Ok(events),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::IGNITION_LINK_EVENTS,
                 got: other.name(),
             }),
@@ -181,8 +181,8 @@ impl SpResponseExt for SpResponse {
     fn expect_bulk_ignition_link_events(self) -> Result<TlvPage> {
         match self {
             Self::BulkIgnitionLinkEvents(page) => Ok(page),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::BULK_IGNITION_LINK_EVENTS,
                 got: other.name(),
             }),
@@ -192,8 +192,8 @@ impl SpResponseExt for SpResponse {
     fn expect_ignition_command_ack(self) -> Result<()> {
         match self {
             Self::IgnitionCommandAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::IGNITION_COMMAND_ACK,
                 got: other.name(),
             }),
@@ -203,8 +203,8 @@ impl SpResponseExt for SpResponse {
     fn expect_clear_ignition_link_events_ack(self) -> Result<()> {
         match self {
             Self::ClearIgnitionLinkEventsAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::CLEAR_IGNITION_LINK_EVENTS_ACK,
                 got: other.name(),
             }),
@@ -214,8 +214,8 @@ impl SpResponseExt for SpResponse {
     fn expect_sp_state(self) -> Result<SpState> {
         match self {
             Self::SpState(state) => Ok(state),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SP_STATE,
                 got: other.name(),
             }),
@@ -225,8 +225,8 @@ impl SpResponseExt for SpResponse {
     fn expect_serial_console_attach_ack(self) -> Result<()> {
         match self {
             Self::SerialConsoleAttachAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SP_STATE,
                 got: other.name(),
             }),
@@ -238,8 +238,8 @@ impl SpResponseExt for SpResponse {
             Self::SerialConsoleWriteAck { furthest_ingested_offset } => {
                 Ok(furthest_ingested_offset)
             }
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SP_STATE,
                 got: other.name(),
             }),
@@ -249,8 +249,8 @@ impl SpResponseExt for SpResponse {
     fn expect_serial_console_detach_ack(self) -> Result<()> {
         match self {
             Self::SerialConsoleDetachAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SP_STATE,
                 got: other.name(),
             }),
@@ -260,8 +260,8 @@ impl SpResponseExt for SpResponse {
     fn expect_sp_update_prepare_ack(self) -> Result<()> {
         match self {
             Self::SpUpdatePrepareAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SP_UPDATE_PREPARE_ACK,
                 got: other.name(),
             }),
@@ -271,8 +271,8 @@ impl SpResponseExt for SpResponse {
     fn expect_component_update_prepare_ack(self) -> Result<()> {
         match self {
             Self::ComponentUpdatePrepareAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::COMPONENT_UPDATE_PREPARE_ACK,
                 got: other.name(),
             }),
@@ -282,8 +282,8 @@ impl SpResponseExt for SpResponse {
     fn expect_update_status(self) -> Result<UpdateStatus> {
         match self {
             Self::UpdateStatus(status) => Ok(status),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::UPDATE_STATUS,
                 got: other.name(),
             }),
@@ -293,8 +293,8 @@ impl SpResponseExt for SpResponse {
     fn expect_update_chunk_ack(self) -> Result<()> {
         match self {
             Self::UpdateChunkAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::UPDATE_CHUNK_ACK,
                 got: other.name(),
             }),
@@ -304,8 +304,8 @@ impl SpResponseExt for SpResponse {
     fn expect_update_abort_ack(self) -> Result<()> {
         match self {
             Self::UpdateAbortAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::UPDATE_ABORT_ACK,
                 got: other.name(),
             }),
@@ -315,8 +315,8 @@ impl SpResponseExt for SpResponse {
     fn expect_power_state(self) -> Result<PowerState> {
         match self {
             Self::PowerState(power_state) => Ok(power_state),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::POWER_STATE,
                 got: other.name(),
             }),
@@ -326,8 +326,8 @@ impl SpResponseExt for SpResponse {
     fn expect_set_power_state_ack(self) -> Result<()> {
         match self {
             Self::SetPowerStateAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SET_POWER_STATE_ACK,
                 got: other.name(),
             }),
@@ -337,8 +337,8 @@ impl SpResponseExt for SpResponse {
     fn expect_sys_reset_prepare_ack(self) -> Result<()> {
         match self {
             Self::ResetPrepareAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::RESET_PREPARE_ACK,
                 got: other.name(),
             }),
@@ -348,8 +348,8 @@ impl SpResponseExt for SpResponse {
     fn expect_inventory(self) -> Result<TlvPage> {
         match self {
             Self::Inventory(page) => Ok(page),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::INVENTORY,
                 got: other.name(),
             }),
@@ -359,8 +359,8 @@ impl SpResponseExt for SpResponse {
     fn expect_startup_options(self) -> Result<StartupOptions> {
         match self {
             Self::StartupOptions(options) => Ok(options),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::STARTUP_OPTIONS,
                 got: other.name(),
             }),
@@ -370,8 +370,8 @@ impl SpResponseExt for SpResponse {
     fn expect_set_startup_options_ack(self) -> Result<()> {
         match self {
             Self::SetStartupOptionsAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SET_STARTUP_OPTIONS_ACK,
                 got: other.name(),
             }),
@@ -381,8 +381,8 @@ impl SpResponseExt for SpResponse {
     fn expect_component_details(self) -> Result<TlvPage> {
         match self {
             Self::ComponentDetails(page) => Ok(page),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::COMPONENT_DETAILS,
                 got: other.name(),
             }),
@@ -392,8 +392,8 @@ impl SpResponseExt for SpResponse {
     fn expect_component_clear_status_ack(self) -> Result<()> {
         match self {
             Self::ComponentClearStatusAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::COMPONENT_CLEAR_STATUS_ACK,
                 got: other.name(),
             }),
@@ -403,8 +403,8 @@ impl SpResponseExt for SpResponse {
     fn expect_component_active_slot(self) -> Result<u16> {
         match self {
             Self::ComponentActiveSlot(slot) => Ok(slot),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::COMPONENT_ACTIVE_SLOT,
                 got: other.name(),
             }),
@@ -414,8 +414,8 @@ impl SpResponseExt for SpResponse {
     fn expect_component_set_active_slot_ack(self) -> Result<()> {
         match self {
             Self::ComponentSetActiveSlotAck => Ok(()),
-            Self::Error(err) => Err(SpCommunicationError::SpError(err)),
-            other => Err(SpCommunicationError::BadResponseType {
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::COMPONENT_SET_ACTIVE_SLOT_ACK,
                 got: other.name(),
             }),

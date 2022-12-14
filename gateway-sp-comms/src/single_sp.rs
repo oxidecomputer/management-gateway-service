@@ -6,8 +6,8 @@
 
 //! Interface for communicating with a single SP.
 
+use crate::error::CommunicationError;
 use crate::error::HostPhase2Error;
-use crate::error::SpCommunicationError;
 use crate::error::StartupError;
 use crate::error::UpdateError;
 use crate::sp_response_ext::SpResponseExt;
@@ -88,7 +88,7 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 // will require an MGS update.
 const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
 
-type Result<T, E = SpCommunicationError> = std::result::Result<T, E>;
+type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpInventory {
@@ -374,20 +374,20 @@ impl SingleSp {
             // page, "correct" just means "reasonable"; if this is the second or
             // later page, it should match every other page.
             if page.offset != offset {
-                return Err(SpCommunicationError::TlvPagination {
+                return Err(CommunicationError::TlvPagination {
                     reason: "unexpected offset from SP",
                 });
             }
             let total = if let Some(n) = page0_total {
                 if n != page.total as usize {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(CommunicationError::TlvPagination {
                         reason: "total item count changed",
                     });
                 }
                 n
             } else {
                 if page.total > TLV_RPC_TOTAL_ITEMS_DOS_LIMIT {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(CommunicationError::TlvPagination {
                         reason: "too many items",
                     });
                 }
@@ -404,7 +404,7 @@ impl SingleSp {
 
                 // Are we expecting this chunk?
                 if entries.len() >= total {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(CommunicationError::TlvPagination {
                         reason:
                             "SP returned more entries than its reported total",
                     });
@@ -426,7 +426,7 @@ impl SingleSp {
             // to parse the response (unknown TLV tags, perhaps) and won't make
             // forward progress by retrying.
             if entries.len() as u32 == offset && total > 0 {
-                return Err(SpCommunicationError::TlvPagination {
+                return Err(CommunicationError::TlvPagination {
                     reason: "failed to parse any entries from SP response",
                 });
             }
@@ -488,7 +488,7 @@ impl SingleSp {
                 // We know the SP only has one possible slot, so fail fast if
                 // the caller requested a slot other than 0.
                 return Err(UpdateError::Communication(
-                    SpCommunicationError::SpError(
+                    CommunicationError::SpError(
                         SpError::InvalidSlotForComponent,
                     ),
                 ));
@@ -568,12 +568,12 @@ impl SingleSp {
         // SP wasn't expecting a reset trigger (because it has reset!).
         match self.rpc(MgsRequest::ResetTrigger).await {
             Ok((_peer, response, _data)) => {
-                Err(SpCommunicationError::BadResponseType {
+                Err(CommunicationError::BadResponseType {
                     expected: "system-reset",
                     got: response.name(),
                 })
             }
-            Err(SpCommunicationError::SpError(
+            Err(CommunicationError::SpError(
                 SpError::ResetTriggerWithoutPrepare,
             )) => Ok(()),
             Err(other) => Err(other),
@@ -682,7 +682,7 @@ impl TlvRpc for InventoryTlvRpc {
                 let (header, data) = gateway_messages::deserialize::<
                     DeviceDescriptionHeader,
                 >(value)
-                .map_err(|err| SpCommunicationError::TlvDeserialize {
+                .map_err(|err| CommunicationError::TlvDeserialize {
                     tag,
                     err,
                 })?;
@@ -691,7 +691,7 @@ impl TlvRpc for InventoryTlvRpc {
                 let device_len = header.device_len as usize;
                 let description_len = header.description_len as usize;
                 if data.len() != device_len.saturating_add(description_len) {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(CommunicationError::TlvPagination {
                         reason: "inventory data / header length mismatch",
                     });
                 }
@@ -699,13 +699,13 @@ impl TlvRpc for InventoryTlvRpc {
                 // Interpret the data as UTF8.
                 let device =
                     str::from_utf8(&data[..device_len]).map_err(|_| {
-                        SpCommunicationError::TlvPagination {
+                        CommunicationError::TlvPagination {
                             reason: "non-UTF8 inventory device",
                         }
                     })?;
                 let description =
                     str::from_utf8(&data[device_len..]).map_err(|_| {
-                        SpCommunicationError::TlvPagination {
+                        CommunicationError::TlvPagination {
                             reason: "non-UTF8 inventory description",
                         }
                     })?;
@@ -756,7 +756,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                 let (result, leftover) = gateway_messages::deserialize::<
                     Result<PortStatus, PortStatusError>,
                 >(value)
-                .map_err(|err| SpCommunicationError::TlvDeserialize {
+                .map_err(|err| CommunicationError::TlvDeserialize {
                     tag,
                     err,
                 })?;
@@ -773,19 +773,19 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
             MeasurementHeader::TAG => {
                 let (header, leftover) =
                     gateway_messages::deserialize::<MeasurementHeader>(value)
-                        .map_err(|err| SpCommunicationError::TlvDeserialize {
+                        .map_err(|err| CommunicationError::TlvDeserialize {
                         tag,
                         err,
                     })?;
 
                 if leftover.len() != header.name_length as usize {
-                    return Err(SpCommunicationError::TlvPagination {
+                    return Err(CommunicationError::TlvPagination {
                         reason: "measurement data / header length mismatch",
                     });
                 }
 
                 let name = str::from_utf8(leftover).map_err(|_| {
-                    SpCommunicationError::TlvPagination {
+                    CommunicationError::TlvPagination {
                         reason: "non-UTF8 measurement name",
                     }
                 })?;
@@ -833,8 +833,9 @@ impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
             IgnitionState::TAG => {
                 let (state, leftover) =
                     gateway_messages::deserialize::<IgnitionState>(value)
-                        .map_err(|err| {
-                            SpCommunicationError::TlvDeserialize { tag, err }
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
                         })?;
 
                 if !leftover.is_empty() {
@@ -880,8 +881,9 @@ impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
             LinkEvents::TAG => {
                 let (events, leftover) =
                     gateway_messages::deserialize::<LinkEvents>(value)
-                        .map_err(|err| {
-                            SpCommunicationError::TlvDeserialize { tag, err }
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
                         })?;
 
                 if !leftover.is_empty() {
@@ -996,11 +998,11 @@ impl AttachedSerialConsoleSend {
             // Confirm the ack we got back makes sense; its `n` should be in the
             // range `[self.tx_offset..self.tx_offset + data_sent]`.
             if n < self.tx_offset {
-                return Err(SpCommunicationError::BogusSerialConsoleState);
+                return Err(CommunicationError::BogusSerialConsoleState);
             }
             let bytes_accepted = n - self.tx_offset;
             if bytes_accepted > data_sent {
-                return Err(SpCommunicationError::BogusSerialConsoleState);
+                return Err(CommunicationError::BogusSerialConsoleState);
             }
 
             data = new_data;
@@ -1518,9 +1520,7 @@ impl<T: HostPhase2Provider> Inner<T> {
             }
         }
 
-        Err(SpCommunicationError::ExhaustedNumAttempts(
-            self.max_attempts_per_rpc,
-        ))
+        Err(CommunicationError::ExhaustedNumAttempts(self.max_attempts_per_rpc))
     }
 
     async fn rpc_call_one_attempt(
@@ -1663,7 +1663,7 @@ impl<T: HostPhase2Provider> Inner<T> {
             // Returning an `SpError` here is a little suspect since we didn't
             // actually talk to an SP, but we already know we're attached to it.
             // If we asked it to attach again, it would send back this error.
-            return Err(SpCommunicationError::SpError(
+            return Err(CommunicationError::SpError(
                 SpError::SerialConsoleAlreadyAttached,
             ));
         }
@@ -1714,7 +1714,7 @@ async fn send(
     let n = socket
         .send_to(data, addr)
         .await
-        .map_err(|err| SpCommunicationError::UdpSendTo { addr, err })?;
+        .map_err(|err| CommunicationError::UdpSendTo { addr, err })?;
 
     // `send_to` should never write a partial packet; this is UDP.
     assert_eq!(data.len(), n, "partial UDP packet sent to {}?!", addr);
@@ -1730,7 +1730,7 @@ async fn recv<'a>(
     let (n, peer) = socket
         .recv_from(&mut incoming_buf[..])
         .await
-        .map_err(SpCommunicationError::UdpRecv)?;
+        .map_err(CommunicationError::UdpRecv)?;
 
     probes::recv_packet!(|| {
         (peer, incoming_buf.as_ptr() as usize as u64, n as u64)
@@ -1748,10 +1748,10 @@ async fn recv<'a>(
     // Peel off the header first to check the version.
     let (header, sp_trailing_data) =
         gateway_messages::deserialize::<Header>(&incoming_buf[..n])
-            .map_err(|err| SpCommunicationError::Deserialize { peer, err })?;
+            .map_err(|err| CommunicationError::Deserialize { peer, err })?;
 
     if header.version != version::V2 {
-        return Err(SpCommunicationError::VersionMismatch {
+        return Err(CommunicationError::VersionMismatch {
             sp: header.version,
             mgs: version::V2,
         });
@@ -1760,7 +1760,7 @@ async fn recv<'a>(
     // Parse the remainder of the message and reassemble a `Message`.
     let (kind, sp_trailing_data) =
         gateway_messages::deserialize::<MessageKind>(sp_trailing_data)
-            .map_err(|err| SpCommunicationError::Deserialize { peer, err })?;
+            .map_err(|err| CommunicationError::Deserialize { peer, err })?;
 
     let message = Message { header, kind };
 
