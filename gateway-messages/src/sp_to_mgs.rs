@@ -153,13 +153,42 @@ pub struct SpState {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct RotState {
+pub enum RotSlot {
+    A = 0,
+    B = 1,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub struct RotImageDetails {
+    pub digest: [u8; 32],
     pub version: ImageVersion,
-    pub messages_received: u32,
-    pub invalid_messages_received: u32,
-    pub incomplete_transmissions: u32,
-    pub rx_fifo_overrun: u32,
-    pub tx_fifo_underrun: u32,
+}
+
+/// The boot time details dumped by Stage0 into Hubris on the RoT
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotBootState {
+    pub active: RotSlot,
+    pub slot_a: Option<RotImageDetails>,
+    pub slot_b: Option<RotImageDetails>,
+}
+
+// TODO(AJS): Fill in with runtime state - i.e. updates that have completed before an RoT reset
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotUpdateDetails {
+    pub boot_state: RotBootState,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotState {
+    pub rot_updates: RotUpdateDetails,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
