@@ -5,11 +5,11 @@
 use anyhow::Context;
 use anyhow::Result;
 use async_trait::async_trait;
-use futures::io::AllowStdIo;
+//use futures::io::AllowStdIo;
 use gateway_sp_comms::error::HostPhase2Error;
 use gateway_sp_comms::HostPhase2Provider;
-use sha2::Digest;
-use sha2::Sha256;
+//use sha2::Digest;
+//use sha2::Sha256;
 use slog::info;
 use slog::warn;
 use slog::Logger;
@@ -19,13 +19,30 @@ use std::io::SeekFrom;
 use std::path::Path;
 use tokio::fs;
 use tokio::fs::File;
-use tokio::io;
+//use tokio::io;
 use tokio::io::AsyncReadExt;
 use tokio::io::AsyncSeekExt;
 use tokio::sync::Mutex;
 use tokio_stream::wrappers::ReadDirStream;
 use tokio_stream::StreamExt;
-use tokio_util::compat::FuturesAsyncWriteCompatExt;
+//use tokio_util::compat::FuturesAsyncWriteCompatExt;
+
+use serde::Deserialize;
+use serde_big_array::BigArray;
+
+#[derive(Debug, Deserialize)]
+#[allow(dead_code)]
+struct Header {
+    magic: u32,
+    version: u32,
+    flags: u64,
+    data_size: u64,
+    image_size: u64,
+    target_size: u64,
+    sha256: [u8; 32],
+    #[serde(with = "BigArray")]
+    dataset_name: [u8; 128],
+}
 
 #[derive(Default)]
 pub(crate) struct DirectoryHostPhase2Provider {
@@ -106,38 +123,24 @@ impl DirectoryHostPhase2Provider {
                     }
                 };
 
-                // TODO: When the host requests a phase 2 image by hash, it's
-                // the hash of the file _after_ its 4 KiB header (that header
-                // includes the hash itself). For now in faux-mgs, we'll just
-                // skip over the first 4 KiB when computing the hash of files
-                // we're going to serve. In real MGS, we probably want to do
-                // something smarter here: maybe compute the hash (skipping 4
-                // KiB) and then check against the hash in the header itself?
-                match file.seek(SeekFrom::Start(4096)).await {
-                    Ok(_) => (),
-                    Err(err) => {
-                        warn!(
-                            log, "failed to seek to offset 4096 in {}",
-                            path.display();
-                            "err" => %err,
-                        );
-                        return None;
-                    }
-                }
+                let mut buf = vec![0u8; 1024];
+                let n = file.read(&mut buf).await.ok();
 
-                let mut hasher = AllowStdIo::new(Sha256::new()).compat_write();
-                let digest = match io::copy(&mut file, &mut hasher).await {
-                    Ok(_) => hasher.into_inner().into_inner().finalize(),
-                    Err(err) => {
-                        warn!(
-                            log, "error reading {}", path.display();
-                            "err" => %err,
-                        );
-                        return None;
-                    }
-                };
+                info!(
+                    log, "host phase 2 read";
+                    "bytes" => n,
+                );
 
-                Some((path, digest, file))
+
+                let (header, _) =
+                    hubpack::deserialize::<Header>(&mut buf).unwrap();
+
+                info!(
+                    log, "header";
+                    "header" => format!("{:#x?}", header),
+                );
+
+                Some((path, header.sha256, file))
             })
             .filter_map(convert::identity);
         tokio::pin!(file_hashes);
