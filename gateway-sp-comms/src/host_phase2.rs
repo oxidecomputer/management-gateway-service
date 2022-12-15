@@ -11,6 +11,7 @@ use lru_cache::LruCache;
 use serde::Deserialize;
 use serde_big_array::BigArray;
 use std::convert::TryFrom;
+use std::sync::Arc;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
@@ -44,6 +45,18 @@ pub trait HostPhase2Provider: Send + Sync + 'static {
     ) -> Result<usize, HostPhase2Error>;
 }
 
+#[async_trait]
+impl<T: HostPhase2Provider> HostPhase2Provider for Arc<T> {
+    async fn read_data(
+        &self,
+        sha256_hash: Sha256Digest,
+        offset: u64,
+        out: &mut [u8],
+    ) -> Result<usize, HostPhase2Error> {
+        (*self).read_data(sha256_hash, offset, out).await
+    }
+}
+
 #[derive(Debug, Deserialize, SerializedSize)]
 struct OnDiskHeader {
     magic: u32,
@@ -75,7 +88,7 @@ impl InMemoryHostPhase2Provider {
     pub async fn insert(
         &self,
         image: Vec<u8>,
-    ) -> Result<(), HostPhase2ImageError> {
+    ) -> Result<Sha256Digest, HostPhase2ImageError> {
         let (header, _) = hubpack::deserialize::<OnDiskHeader>(&image)?;
 
         // Basic checks that should prevent inserting non-images:
@@ -106,10 +119,11 @@ impl InMemoryHostPhase2Provider {
         }
 
         // Image looks okay; cache it!
+        let hash = header.sha256;
         let mut cache = self.cache.lock().await;
-        cache.insert(header.sha256, (header, image));
+        cache.insert(hash, (header, image));
 
-        Ok(())
+        Ok(hash)
     }
 }
 
@@ -169,7 +183,7 @@ mod tests {
         let disk_image = fs::read("tests/phase2-trimmed.img").unwrap();
 
         let cache = InMemoryHostPhase2Provider::with_capacity(1);
-        cache.insert(disk_image.clone()).await.unwrap();
+        let inserted_hash = cache.insert(disk_image.clone()).await.unwrap();
 
         let hash =
             "09595e287e60e51e95cc49b861b1134264270e33035f50ecc9d3cca0673b3501";
@@ -179,6 +193,7 @@ mod tests {
         let (header, image) = inner.get_mut(&hash).unwrap();
 
         assert_eq!(header.sha256, hash);
+        assert_eq!(header.sha256, inserted_hash);
         assert_eq!(*image, disk_image);
 
         // We don't inspect any of these fields in actual use, but for our unit
