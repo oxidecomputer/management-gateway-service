@@ -158,7 +158,7 @@ impl DirectoryHostPhase2Provider {
 
 #[async_trait]
 impl HostPhase2Provider for DirectoryHostPhase2Provider {
-    async fn read_phase2_data(
+    async fn read_data(
         &self,
         hash: [u8; 32],
         offset: u64,

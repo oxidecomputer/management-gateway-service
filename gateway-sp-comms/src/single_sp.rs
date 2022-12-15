@@ -11,8 +11,8 @@ use crate::error::HostPhase2Error;
 use crate::error::StartupError;
 use crate::error::UpdateError;
 use crate::sp_response_ext::SpResponseExt;
+use crate::HostPhase2Provider;
 use crate::SwitchPortConfig;
-use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
@@ -107,16 +107,6 @@ pub struct SpDevice {
 #[derive(Debug, Clone)]
 pub struct SpComponentDetails {
     pub entries: Vec<ComponentDetails>,
-}
-
-#[async_trait]
-pub trait HostPhase2Provider: Send + Sync + 'static {
-    async fn read_phase2_data(
-        &self,
-        hash: [u8; 32],
-        offset: u64,
-        out: &mut [u8],
-    ) -> Result<usize, HostPhase2Error>;
 }
 
 #[derive(Debug)]
@@ -1421,7 +1411,7 @@ impl<T: HostPhase2Provider> Inner<T> {
 
         match self
             .host_phase2_provider
-            .read_phase2_data(hash, offset, &mut outgoing_buf[n..])
+            .read_data(hash, offset, &mut outgoing_buf[n..])
             .await
         {
             Ok(m) => {
