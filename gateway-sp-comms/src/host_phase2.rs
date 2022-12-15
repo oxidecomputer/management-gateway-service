@@ -53,7 +53,7 @@ impl<T: HostPhase2Provider> HostPhase2Provider for Arc<T> {
         offset: u64,
         out: &mut [u8],
     ) -> Result<usize, HostPhase2Error> {
-        (*self).read_data(sha256_hash, offset, out).await
+        (**self).read_data(sha256_hash, offset, out).await
     }
 }
 
@@ -182,28 +182,36 @@ mod tests {
         // the truncated length.
         let disk_image = fs::read("tests/phase2-trimmed.img").unwrap();
 
-        let cache = InMemoryHostPhase2Provider::with_capacity(1);
+        let cache = Arc::new(InMemoryHostPhase2Provider::with_capacity(1));
         let inserted_hash = cache.insert(disk_image.clone()).await.unwrap();
 
         let hash =
             "09595e287e60e51e95cc49b861b1134264270e33035f50ecc9d3cca0673b3501";
         let hash = Sha256Digest::try_from(hex::decode(hash).unwrap()).unwrap();
 
-        let mut inner = cache.cache.lock().await;
-        let (header, image) = inner.get_mut(&hash).unwrap();
+        {
+            let mut inner = cache.cache.lock().await;
+            let (header, image) = inner.get_mut(&hash).unwrap();
 
-        assert_eq!(header.sha256, hash);
-        assert_eq!(header.sha256, inserted_hash);
-        assert_eq!(*image, disk_image);
+            assert_eq!(header.sha256, hash);
+            assert_eq!(header.sha256, inserted_hash);
+            assert_eq!(*image, disk_image);
 
-        // We don't inspect any of these fields in actual use, but for our unit
-        // test we can still check them.
-        assert_eq!(header._flags, 1);
-        assert_eq!(header._image_size, 0x3840_0000);
-        assert_eq!(header._target_size, 0x1_0000_0000);
+            // We don't inspect any of these fields in actual use, but for our
+            // unit test we can still check them.
+            assert_eq!(header._flags, 1);
+            assert_eq!(header._image_size, 0x3840_0000);
+            assert_eq!(header._target_size, 0x1_0000_0000);
 
-        let mut dataset_name = b"rpool/ROOT/ramdisk".to_vec();
-        dataset_name.resize(128, 0_u8);
-        assert_eq!(&header._dataset_name[..], dataset_name);
+            let mut dataset_name = b"rpool/ROOT/ramdisk".to_vec();
+            dataset_name.resize(128, 0_u8);
+            assert_eq!(&header._dataset_name[..], dataset_name);
+        }
+
+        // Check that we can read the expected data from it.
+        let mut out = vec![0; disk_image.len()];
+        let n = cache.read_data(hash, 0, &mut out).await.unwrap();
+        assert_eq!(n, out.len());
+        assert_eq!(out, disk_image);
     }
 }
