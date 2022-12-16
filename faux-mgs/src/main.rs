@@ -422,7 +422,8 @@ async fn main() -> Result<()> {
                 println!("set active slot for {component:?} to {slot}");
             } else {
                 let slot = sp.component_active_slot(sp_component).await?;
-                println!("active slot for {component:?}: {slot}");
+                info!(log, "active slot for {component:?}: {slot}");
+                println!("{slot}");
             }
         }
         Command::StartupOptions { options } => {
@@ -601,6 +602,7 @@ async fn main() -> Result<()> {
                     .await
                     .context("failed to get power state")?;
                 info!(log, "SP power state = {state:?}");
+                println!("{state:?}");
             }
         }
         Command::Reset => {
