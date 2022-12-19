@@ -7,11 +7,10 @@
 // Required nightly features for `usdt`
 #![cfg_attr(target_os = "macos", feature(asm_sym))]
 
-//! This crate provides UDP-based communication across the Oxide management
-//! switch to a collection of SPs.
-//!
-//! The primary entry point is [`Communicator`].
+//! This crate provides UDP-based communication to the `control-plane-agent`
+//! task of an SP.
 
+mod host_phase2;
 mod hubris_archive;
 mod single_sp;
 mod sp_response_ext;
@@ -24,10 +23,12 @@ pub use usdt::register_probes;
 pub mod error;
 
 pub use gateway_messages;
+pub use host_phase2::HostPhase2ImageError;
+pub use host_phase2::HostPhase2Provider;
+pub use host_phase2::InMemoryHostPhase2Provider;
 pub use single_sp::AttachedSerialConsole;
 pub use single_sp::AttachedSerialConsoleRecv;
 pub use single_sp::AttachedSerialConsoleSend;
-pub use single_sp::HostPhase2Provider;
 pub use single_sp::SingleSp;
 pub use single_sp::SpDevice;
 pub use single_sp::SpInventory;

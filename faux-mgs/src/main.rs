@@ -17,11 +17,12 @@ use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
+use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SwitchPortConfig;
-use host_phase2::DirectoryHostPhase2Provider;
 use slog::info;
 use slog::o;
+use slog::warn;
 use slog::Drain;
 use slog::Level;
 use slog::Logger;
@@ -30,10 +31,10 @@ use std::fs::File;
 use std::net::SocketAddrV6;
 use std::path::Path;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
 
-mod host_phase2;
 mod picocom_map;
 mod usart;
 
@@ -327,12 +328,10 @@ async fn main() -> Result<()> {
         info!(log, "binding to {}", args.listen_addr);
     }
 
+    // For faux-mgs, we'll serve all images present in the directory the user
+    // requests, so don't cap the LRU cache size.
     let host_phase2_provider =
-        if let Command::ServeHostPhase2 { directory } = &args.command {
-            DirectoryHostPhase2Provider::new(directory, &log).await?
-        } else {
-            DirectoryHostPhase2Provider::default()
-        };
+        Arc::new(InMemoryHostPhase2Provider::with_capacity(usize::MAX));
 
     let sp = SingleSp::new(
         SwitchPortConfig {
@@ -342,7 +341,7 @@ async fn main() -> Result<()> {
         },
         args.max_attempts,
         per_attempt_timeout,
-        host_phase2_provider,
+        Arc::clone(&host_phase2_provider),
         log.clone(),
     );
 
@@ -495,7 +494,9 @@ async fn main() -> Result<()> {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
         }
-        Command::ServeHostPhase2 { .. } => {
+        Command::ServeHostPhase2 { directory } => {
+            populate_phase2_images(&host_phase2_provider, &directory, &log)
+                .await?;
             info!(log, "serving host phase 2 images (ctrl-c to stop)");
             loop {
                 tokio::time::sleep(Duration::from_secs(1024)).await;
@@ -699,4 +700,59 @@ async fn update(
         }
         tokio::time::sleep(Duration::from_secs(1)).await;
     }
+}
+
+async fn populate_phase2_images(
+    cache: &InMemoryHostPhase2Provider,
+    path: &Path,
+    log: &Logger,
+) -> Result<()> {
+    let dir_iter = fs::read_dir(path).with_context(|| {
+        format!("failed to open directory for reading: {}", path.display())
+    })?;
+
+    for entry in dir_iter {
+        let entry = entry.with_context(|| {
+            format!("failed to read directory entry in {}", path.display())
+        })?;
+        let entry_path = entry.path();
+
+        let file_type = entry.file_type().with_context(|| {
+            format!("failed to read file type of {}", entry_path.display())
+        })?;
+
+        if file_type.is_symlink() {
+            let meta = fs::metadata(&entry_path).with_context(|| {
+                format!("failed to metadata of {}", entry_path.display())
+            })?;
+            if !meta.file_type().is_file() {
+                continue;
+            }
+        } else if !file_type.is_file() {
+            continue;
+        }
+
+        let data = fs::read(&entry_path).with_context(|| {
+            format!("failed to read {}", entry_path.display())
+        })?;
+
+        match cache.insert(data).await {
+            Ok(hash) => {
+                info!(
+                    log, "added phase2 image to server cache";
+                    "hash" => hex::encode(hash),
+                    "path" => entry_path.display(),
+                );
+            }
+            Err(err) => {
+                warn!(
+                    log, "skipping file (not a phase2 image?)";
+                    "path" => entry_path.display(),
+                    "err" => %err,
+                );
+            }
+        }
+    }
+
+    Ok(())
 }
