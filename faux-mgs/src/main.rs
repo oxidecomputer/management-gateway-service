@@ -54,9 +54,10 @@ struct Args {
     #[clap(long)]
     logfile: Option<PathBuf>,
 
-    /// Address to bind to locally.
-    #[clap(long, default_value_t = gateway_sp_comms::default_listen_addr())]
-    listen_addr: SocketAddrV6,
+    /// Address to bind to locally [default: [::]:0 for client commands,
+    /// [::]:22222 for server commands]
+    #[clap(long)]
+    listen_addr: Option<SocketAddrV6>,
 
     /// Address to use to discover the SP. May be a specific SP's address to
     /// bypass multicast discovery.
@@ -231,6 +232,24 @@ enum Command {
     Reset,
 }
 
+impl Command {
+    // If the user didn't specify a listening address, what should we use? We
+    // allow this to vary by command so that client commands (most of them) can
+    // pick port 0 (i.e., let the OS choose an arbitrary available port), but
+    // server commands can still default to the port on which the SP expects to
+    // find MGS.
+    fn default_listen_addr(&self) -> SocketAddrV6 {
+        let mut default_addr = gateway_sp_comms::default_listen_addr();
+        match self {
+            // Server commands; leave `default_addr` unchanged
+            Command::ServeHostPhase2 { .. } => (),
+            // Client commands: change port to 0
+            _ => default_addr.set_port(0),
+        }
+        default_addr
+    }
+}
+
 #[derive(Debug, Clone, Copy)]
 struct IgnitionLinkEventsTarget(Option<u8>);
 
@@ -322,10 +341,12 @@ async fn main() -> Result<()> {
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
 
+    let listen_addr =
+        args.listen_addr.unwrap_or_else(|| args.command.default_listen_addr());
     if let Some(interface) = args.interface.as_ref() {
-        info!(log, "binding to {} on {}", args.listen_addr, interface);
+        info!(log, "binding to {} on {}", listen_addr, interface);
     } else {
-        info!(log, "binding to {}", args.listen_addr);
+        info!(log, "binding to {}", listen_addr);
     }
 
     // For faux-mgs, we'll serve all images present in the directory the user
@@ -335,7 +356,7 @@ async fn main() -> Result<()> {
 
     let sp = SingleSp::new(
         SwitchPortConfig {
-            listen_addr: args.listen_addr,
+            listen_addr,
             discovery_addr: args.discovery_addr,
             interface: args.interface,
         },
