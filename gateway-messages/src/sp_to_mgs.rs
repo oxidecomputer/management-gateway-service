@@ -133,16 +133,6 @@ pub struct ImageVersion {
     pub version: u32,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub struct SpStateV0 {
-    pub serial_number: [u8; 16],
-    pub version: ImageVersion,
-    pub power_state: PowerState,
-    pub rot: Result<RotState, RotError>,
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize)]
 pub struct SpState {
     pub hubris_archive_id: [u8; 8],
@@ -155,6 +145,17 @@ pub struct SpState {
     pub version: ImageVersion,
     pub power_state: PowerState,
     pub rot: Result<RotState, RotError>,
+}
+
+// Only used by HACK HACK HACK and unit tests - remove ASAP.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+struct SpStateV0 {
+    serial_number: [u8; 16],
+    version: ImageVersion,
+    power_state: PowerState,
+    rot: Result<RotState, RotError>,
 }
 
 // HACK HACK HACK
