@@ -144,6 +144,7 @@ pub struct SpState {
     pub serial_number: [u8; 32],
     pub model: [u8; 32],
     pub revision: u32,
+    pub base_mac_address: [u8; 6],
     pub version: ImageVersion,
     pub power_state: PowerState,
     pub rot: Result<RotState, RotError>,

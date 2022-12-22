@@ -399,7 +399,39 @@ async fn main() -> Result<()> {
             }
         }
         Command::State => {
-            info!(log, "{:?}", sp.state().await?);
+            let state = sp.state().await?;
+            info!(log, "{state:?}");
+            println!(
+                "hubris archive: {}",
+                hex::encode(state.hubris_archive_id)
+            );
+
+            let zero_padded_to_str = |bytes: [u8; 32]| {
+                let stop =
+                    bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
+                String::from_utf8_lossy(&bytes[..stop]).to_string()
+            };
+
+            println!(
+                "serial number: {}",
+                zero_padded_to_str(state.serial_number)
+            );
+            println!("model: {}", zero_padded_to_str(state.model));
+            println!("revision: {}", state.revision);
+            println!(
+                "base MAC address: {}",
+                state
+                    .base_mac_address
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect::<Vec<_>>()
+                    .join(":")
+            );
+            println!("hubris version: {:?}", state.version);
+            println!("power state: {:?}", state.power_state);
+
+            // TODO: pretty print RoT state?
+            println!("RoT state: {:?}", state.rot);
         }
         Command::Ignition { target } => {
             if let Some(target) = target.0 {
