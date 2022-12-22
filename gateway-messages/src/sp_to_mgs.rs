@@ -125,9 +125,6 @@ pub struct DiscoverResponse {
     pub sp_port: SpPort,
 }
 
-// TODO how is this reported? Same/different for components?
-pub type SerialNumber = [u8; 16];
-
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
@@ -140,7 +137,13 @@ pub struct ImageVersion {
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct SpState {
-    pub serial_number: SerialNumber,
+    pub hubris_archive_id: [u8; 8],
+    // Serial and revision are only 11 bytes in practice; we have plenty of room
+    // so we'll leave the fields wider in case we grow it in the future. The
+    // values are 0-padded.
+    pub serial_number: [u8; 32],
+    pub model: [u8; 32],
+    pub revision: u32,
     pub version: ImageVersion,
     pub power_state: PowerState,
     pub rot: Result<RotState, RotError>,
