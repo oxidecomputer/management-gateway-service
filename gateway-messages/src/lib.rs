@@ -140,6 +140,9 @@ impl SpComponent {
     /// The sidecar management network switch.
     pub const MONORAIL: Self = Self { id: *b"monorail\0\0\0\0\0\0\0\0" };
 
+    // The RoT attached to the SP via SPI
+    pub const ROT: Self = Self { id: *b"rot\0\0\0\0\0\0\0\0\0\0\0\0\0" };
+
     /// Prefix for devices that are identified generically by index (e.g.,
     /// `dev-17`).
     pub const GENERIC_DEVICE_PREFIX: &'static str = "dev-";
