@@ -10,8 +10,6 @@
 //! SPs are logically identified by interface names, and scope IDs are mapped to
 //! those interface names.
 
-#![allow(dead_code)] // TODO remove once this is used
-
 use fxhash::FxHashMap;
 use gateway_messages::version;
 use gateway_messages::Header;

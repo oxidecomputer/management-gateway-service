@@ -10,6 +10,9 @@ use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
+use futures::stream::FuturesOrdered;
+use futures::FutureExt;
+use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::PowerState;
@@ -18,8 +21,10 @@ use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
+use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SwitchPortConfig;
+use gateway_sp_comms::MGS_PORT;
 use slog::info;
 use slog::o;
 use slog::warn;
@@ -54,20 +59,22 @@ struct Args {
     #[clap(long)]
     logfile: Option<PathBuf>,
 
-    /// Address to bind to locally [default: [::]:0 for client commands,
-    /// [::]:22222 for server commands]
+    /// Port to bind to locally [default: 0 for client commands, 22222 for
+    /// server commands]
     #[clap(long)]
-    listen_addr: Option<SocketAddrV6>,
+    listen_port: Option<u16>,
 
     /// Address to use to discover the SP. May be a specific SP's address to
     /// bypass multicast discovery.
     #[clap(long, default_value_t = gateway_sp_comms::default_discovery_addr())]
     discovery_addr: SocketAddrV6,
 
-    /// Interface to specify as the scope ID for both `listen_addr` and
-    /// `discovery_addr`.
-    #[clap(long)]
-    interface: Option<String>,
+    /// Interface(s) to use to communicate with target SP(s).
+    ///
+    /// Supports shell-like glob patterns (e.g., "gimlet*"). May be specified
+    /// multiple times.
+    #[clap(long, required = true)]
+    interface: Vec<String>,
 
     /// Maximum number of attempts to make when sending requests to the SP.
     #[clap(long, default_value = "5")]
@@ -89,7 +96,7 @@ fn level_from_str(s: &str) -> Result<Level> {
     }
 }
 
-#[derive(Subcommand, Debug)]
+#[derive(Subcommand, Debug, Clone)]
 enum Command {
     /// Discover a connected SP.
     Discover,
@@ -206,7 +213,14 @@ enum Command {
     /// 2. Specify slot 0 (the SP only has a single updateable slot: its
     ///    alternate bank).
     /// 3. Pass the path to a hubris archive as `image`.
-    Update { component: String, slot: u16, image: PathBuf },
+    Update {
+        #[clap(long)]
+        allow_multiple_update: bool,
+
+        component: String,
+        slot: u16,
+        image: PathBuf,
+    },
 
     /// Get the status of an update to the specified component.
     UpdateStatus { component: String },
@@ -233,20 +247,18 @@ enum Command {
 }
 
 impl Command {
-    // If the user didn't specify a listening address, what should we use? We
+    // If the user didn't specify a listening port, what should we use? We
     // allow this to vary by command so that client commands (most of them) can
     // pick port 0 (i.e., let the OS choose an arbitrary available port), but
     // server commands can still default to the port on which the SP expects to
     // find MGS.
-    fn default_listen_addr(&self) -> SocketAddrV6 {
-        let mut default_addr = gateway_sp_comms::default_listen_addr();
+    fn default_listen_port(&self) -> u16 {
         match self {
-            // Server commands; leave `default_addr` unchanged
-            Command::ServeHostPhase2 { .. } => (),
-            // Client commands: change port to 0
-            _ => default_addr.set_port(0),
+            // Server commands; use standard MGS port
+            Command::ServeHostPhase2 { .. } => MGS_PORT,
+            // Client commands: use port 0
+            _ => 0,
         }
-        default_addr
     }
 }
 
@@ -332,6 +344,42 @@ fn build_logger(level: Level, path: Option<&Path>) -> Result<Logger> {
     Ok(Logger::root(drain, o!("component" => "faux-mgs")))
 }
 
+fn build_requested_interfaces(patterns: Vec<String>) -> Result<Vec<String>> {
+    let mut sys_ifaces = Vec::new();
+    let ifaddrs = nix::ifaddrs::getifaddrs().context("getifaddrs() failed")?;
+    for ifaddr in ifaddrs {
+        sys_ifaces.push(ifaddr.interface_name);
+    }
+
+    let mut requested_ifaces = Vec::new();
+    for pattern in patterns {
+        let pattern = glob::Pattern::new(&pattern).with_context(|| {
+            format!("failed to build glob pattern for {pattern}")
+        })?;
+
+        let prev_count = requested_ifaces.len();
+        let mut matched_existing = false;
+        for sys_iface in &sys_ifaces {
+            if pattern.matches(sys_iface) {
+                if requested_ifaces.contains(sys_iface) {
+                    matched_existing = true;
+                } else {
+                    requested_ifaces.push(sys_iface.clone());
+                }
+            }
+        }
+        if requested_ifaces.len() == prev_count {
+            if matched_existing {
+                bail!("`--interface {pattern}` did not match any interfaces not already covered by previous `--interface` arguments");
+            } else {
+                bail!("`--interface {pattern}` did not match any interfaces");
+            }
+        }
+    }
+
+    Ok(requested_ifaces)
+}
+
 #[tokio::main]
 async fn main() -> Result<()> {
     let args = Args::parse();
@@ -341,70 +389,190 @@ async fn main() -> Result<()> {
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
 
-    let listen_addr =
-        args.listen_addr.unwrap_or_else(|| args.command.default_listen_addr());
-    if let Some(interface) = args.interface.as_ref() {
-        info!(log, "binding to {} on {}", listen_addr, interface);
-    } else {
-        info!(log, "binding to {}", listen_addr);
-    }
+    let listen_port =
+        args.listen_port.unwrap_or_else(|| args.command.default_listen_port());
 
     // For faux-mgs, we'll serve all images present in the directory the user
     // requests, so don't cap the LRU cache size.
     let host_phase2_provider =
         Arc::new(InMemoryHostPhase2Provider::with_capacity(usize::MAX));
 
-    let sp = SingleSp::new(
-        SwitchPortConfig {
-            listen_addr,
-            discovery_addr: args.discovery_addr,
-            interface: args.interface,
-        },
-        args.max_attempts,
-        per_attempt_timeout,
+    let shared_socket = SharedSocket::bind(
+        listen_port,
         Arc::clone(&host_phase2_provider),
         log.clone(),
-    );
+    )
+    .await
+    .context("SharedSocket:bind() failed")?;
 
-    // Wait for `sp` to finish starting up.
-    sp.wait_for_startup_completion()
-        .await
-        .with_context(|| "SP communicator startup failed")?;
+    let interfaces = build_requested_interfaces(args.interface)?;
+    let mut sps = Vec::with_capacity(interfaces.len());
+    for interface in interfaces {
+        info!(log, "creating SP handle on interface {interface}");
+        sps.push(
+            SingleSp::new(
+                &shared_socket,
+                SwitchPortConfig {
+                    discovery_addr: args.discovery_addr,
+                    interface,
+                },
+                args.max_attempts,
+                per_attempt_timeout,
+            )
+            .await,
+        );
+    }
 
-    match args.command {
-        Command::Discover => {
-            info!(log, "attempting SP discovery");
+    let num_sps = sps.len();
 
-            // `sp_addr_watch()` can only fail if startup fails, which we waited
-            // for and checked above; this is safe to unwrap.
-            let mut addr_watch = sp.sp_addr_watch().unwrap().clone();
+    // Special case commands that do not make sense to run against multiple SPs:
+    //
+    // 1. usart-attach takes over the terminal, and we should reject multiple
+    //    SPs.
+    // 2. serve-host-phase2 runs forever; we _should_ accept multiple SPs (all
+    //    the SPs to serve) but only need to run the command once.
+    // 3. update: ensure the user passed `--allow-multiple-update` if they gave
+    //    us multiple SPs to avoid accidentally trying to update many SPs
+    //    simultaneously. (Actually peforming the update is still handled
+    //    below.)
+    //
+    // All other commands can be run on any number of SPs; we'll handle those
+    // below.
+    match args.command.clone() {
+        Command::UsartAttach {
+            raw,
+            stdin_buffer_time_millis,
+            imap,
+            omap,
+            uart_logfile,
+        } => {
+            assert_eq!(
+                num_sps, 1,
+                "cannot specify multiple interfaces for usart-attach"
+            );
+            usart::run(
+                sps.remove(0),
+                raw,
+                Duration::from_millis(stdin_buffer_time_millis),
+                imap,
+                omap,
+                uart_logfile,
+            )
+            .await?;
 
-            // "None" command indicates only discovery was requested; loop until
-            // discovery completes, then log the result.
+            // If usart::run() returns, the user detached; exit.
+            return Ok(());
+        }
+        Command::ServeHostPhase2 { directory } => {
+            populate_phase2_images(&host_phase2_provider, &directory, &log)
+                .await?;
+            info!(log, "serving host phase 2 images (ctrl-c to stop)");
+
+            // Loop forever. If we have multiple `sps`, we'll never actually
+            // iterate and move on to the next, but that's fine - the
+            // underlying `SharedSocket` will respond to requests from any
+            // of our created SPs.
             loop {
-                let current = *addr_watch.borrow();
-                match current {
-                    Some((addr, port)) => {
-                        info!(
-                            log, "SP discovered";
-                            "addr" => %addr,
-                            "port" => ?port,
-                        );
-                        break;
-                    }
-                    None => {
-                        addr_watch.changed().await.unwrap();
+                tokio::time::sleep(Duration::from_secs(1024)).await;
+            }
+        }
+        Command::Update { allow_multiple_update, .. } => {
+            if num_sps > 1 && !allow_multiple_update {
+                bail!("Did you mean to attempt to update multiple SPs? If so, add `--allow-multiple-updates`.");
+            }
+        }
+
+        _ => (),
+    }
+
+    let maxwidth = sps.iter().map(|sp| sp.interface().len()).max().unwrap_or(0);
+
+    let mut all_results = sps
+        .into_iter()
+        .map(|sp| {
+            let interface = sp.interface().to_string();
+            run_command(sp, args.command.clone(), log.clone())
+                .map(|result| (interface, result))
+        })
+        .collect::<FuturesOrdered<_>>();
+
+    while let Some((interface, result)) = all_results.next().await {
+        let prefix = if num_sps > 1 {
+            format!("{interface:maxwidth$} ")
+        } else {
+            String::new()
+        };
+        match result {
+            Ok(lines) => {
+                for line in lines {
+                    println!("{prefix}{line}");
+                }
+            }
+            Err(err) => println!("{prefix}Error: {err}"),
+        }
+    }
+
+    Ok(())
+}
+
+async fn run_command(
+    sp: SingleSp,
+    command: Command,
+    log: Logger,
+) -> Result<Vec<String>> {
+    // Wait until we discover `sp`'s address; this allows us to put a reasonable
+    // timeout on commands without knowing how long the command might take: we
+    // instead put a timeout on discovery, and allow the command to run with no
+    // timeout if we find the SP.
+    const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
+    info!(log, "waiting for SP discovery on {}", sp.interface());
+    let (addr, port) = {
+        let mut addr_watch = sp.sp_addr_watch().clone();
+        loop {
+            let current = *addr_watch.borrow();
+            match current {
+                Some((addr, port)) => {
+                    info!(
+                        log, "SP discovered";
+                        "interface" => sp.interface(),
+                        "addr" => %addr,
+                        "port" => ?port,
+                    );
+                    break (addr, port);
+                }
+                None => {
+                    match tokio::time::timeout(
+                        DISCOVERY_TIMEOUT,
+                        addr_watch.changed(),
+                    )
+                    .await
+                    {
+                        Ok(recv_result) => recv_result.unwrap(),
+                        Err(_) => bail!(
+                            "dicovery failed (waited {DISCOVERY_TIMEOUT:?})"
+                        ),
                     }
                 }
             }
         }
+    };
+
+    match command {
+        // Skip special commands handled by `main()` above.
+        Command::UsartAttach { .. } | Command::ServeHostPhase2 { .. } => {
+            unreachable!()
+        }
+
+        // Remainder of commands.
+        Command::Discover => Ok(vec![format!("addr={addr}, port={port:?}")]),
         Command::State => {
             let state = sp.state().await?;
             info!(log, "{state:?}");
-            println!(
+            let mut lines = Vec::new();
+            lines.push(format!(
                 "hubris archive: {}",
                 hex::encode(state.hubris_archive_id)
-            );
+            ));
 
             let zero_padded_to_str = |bytes: [u8; 32]| {
                 let stop =
@@ -412,13 +580,13 @@ async fn main() -> Result<()> {
                 String::from_utf8_lossy(&bytes[..stop]).to_string()
             };
 
-            println!(
+            lines.push(format!(
                 "serial number: {}",
                 zero_padded_to_str(state.serial_number)
-            );
-            println!("model: {}", zero_padded_to_str(state.model));
-            println!("revision: {}", state.revision);
-            println!(
+            ));
+            lines.push(format!("model: {}", zero_padded_to_str(state.model)));
+            lines.push(format!("revision: {}", state.revision));
+            lines.push(format!(
                 "base MAC address: {}",
                 state
                     .base_mac_address
@@ -426,43 +594,50 @@ async fn main() -> Result<()> {
                     .map(|b| format!("{b:02x}"))
                     .collect::<Vec<_>>()
                     .join(":")
-            );
-            println!("hubris version: {:?}", state.version);
-            println!("power state: {:?}", state.power_state);
+            ));
+            lines.push(format!("hubris version: {:?}", state.version));
+            lines.push(format!("power state: {:?}", state.power_state));
 
             // TODO: pretty print RoT state?
-            println!("RoT state: {:?}", state.rot);
+            lines.push(format!("RoT state: {:?}", state.rot));
+            Ok(lines)
         }
         Command::Ignition { target } => {
+            let mut lines = Vec::new();
             if let Some(target) = target.0 {
                 let state = sp.ignition_state(target).await?;
-                println!("target {target}: {state:?}");
+                lines.push(format!("target {target}: {state:?}"));
             } else {
                 let states = sp.bulk_ignition_state().await?;
                 for (i, state) in states.into_iter().enumerate() {
-                    println!("target {i}: {state:?}");
+                    lines.push(format!("target {i}: {state:?}"));
                 }
             }
+            Ok(lines)
         }
         Command::IgnitionCommand { target, command } => {
             sp.ignition_command(target, command).await?;
             info!(log, "ignition command {command:?} send to target {target}");
+            Ok(vec![format!("successfully send {command:?}")])
         }
         Command::IgnitionLinkEvents { target } => {
+            let mut lines = Vec::new();
             if let Some(target) = target.0 {
                 let events = sp.ignition_link_events(target).await;
-                println!("target {target}: {events:?}");
+                lines.push(format!("target {target}: {events:?}"));
             } else {
                 let events = sp.bulk_ignition_link_events().await?;
                 for (i, events) in events.into_iter().enumerate() {
-                    println!("target {i}: {events:?}");
+                    lines.push(format!("target {i}: {events:?}"));
                 }
             }
+            Ok(lines)
         }
         Command::ClearIgnitionLinkEvents { target, transceiver_select } => {
             sp.clear_ignition_link_events(target.0, transceiver_select.0)
                 .await?;
             info!(log, "ignition link events cleared");
+            Ok(vec!["ignition link events cleared".to_string()])
         }
         Command::ComponentActiveSlot { component, set } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -471,11 +646,11 @@ async fn main() -> Result<()> {
                 })?;
             if let Some(slot) = set {
                 sp.set_component_active_slot(sp_component, slot).await?;
-                println!("set active slot for {component:?} to {slot}");
+                Ok(vec![format!("set active slot for {component:?} to {slot}")])
             } else {
                 let slot = sp.component_active_slot(sp_component).await?;
                 info!(log, "active slot for {component:?}: {slot}");
-                println!("{slot}");
+                Ok(vec![format!("{slot}")])
             }
         }
         Command::StartupOptions { options } => {
@@ -485,28 +660,32 @@ async fn main() -> Result<()> {
                         format!("invalid startup options bits: {options:#x}")
                     })?;
                 sp.set_startup_options(options).await?;
-                println!("successfully set startup options to {options:?}");
+                Ok(vec![format!(
+                    "successfully set startup options to {options:?}"
+                )])
             } else {
                 let options = sp.get_startup_options().await?;
-                println!("startup options: {options:?}");
+                Ok(vec![format!("startup options: {options:?}")])
             }
         }
         Command::Inventory => {
+            let mut lines = Vec::new();
             let inventory = sp.inventory().await?;
-            println!(
+            lines.push(format!(
                 "{:<16} {:<12} {:<16} {:<}",
                 "COMPONENT", "STATUS", "DEVICE", "DESCRIPTION (CAPABILITIES)"
-            );
+            ));
             for d in inventory.devices {
-                println!(
+                lines.push(format!(
                     "{:<16} {:<12} {:<16} {} ({:?})",
                     d.component.as_str().unwrap_or("???"),
                     format!("{:?}", d.presence),
                     d.device,
                     d.description,
                     d.capabilities,
-                );
+                ));
             }
+            Ok(lines)
         }
         Command::ComponentDetails { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -514,9 +693,11 @@ async fn main() -> Result<()> {
                     anyhow!("invalid component name: {}", component)
                 })?;
             let details = sp.component_details(sp_component).await?;
+            let mut lines = Vec::new();
             for entry in details.entries {
-                println!("{entry:?}");
+                lines.push(format!("{entry:?}"));
             }
+            Ok(lines)
         }
         Command::ComponentClearStatus { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -525,37 +706,14 @@ async fn main() -> Result<()> {
                 })?;
             sp.component_clear_status(sp_component).await?;
             info!(log, "status cleared for component {component}");
-        }
-        Command::UsartAttach {
-            raw,
-            stdin_buffer_time_millis,
-            imap,
-            omap,
-            uart_logfile,
-        } => {
-            usart::run(
-                sp,
-                raw,
-                Duration::from_millis(stdin_buffer_time_millis),
-                imap,
-                omap,
-                uart_logfile,
-            )
-            .await?;
+            Ok(vec!["status cleared".to_string()])
         }
         Command::UsartDetach => {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
+            Ok(vec!["SP serial console detached".to_string()])
         }
-        Command::ServeHostPhase2 { directory } => {
-            populate_phase2_images(&host_phase2_provider, &directory, &log)
-                .await?;
-            info!(log, "serving host phase 2 images (ctrl-c to stop)");
-            loop {
-                tokio::time::sleep(Duration::from_secs(1024)).await;
-            }
-        }
-        Command::Update { component, slot, image } => {
+        Command::Update { component, slot, image, .. } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| {
                     anyhow!("invalid component name: {}", component)
@@ -573,6 +731,7 @@ async fn main() -> Result<()> {
                     )
                 },
             )?;
+            Ok(vec!["update complete".to_string()])
         }
         Command::UpdateStatus { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -583,20 +742,16 @@ async fn main() -> Result<()> {
                         "failed to get update status to component {component}"
                     )
                 })?;
-            match status {
+            let status = match status {
                 UpdateStatus::Preparing(sub_status) => {
                     let id = Uuid::from(sub_status.id);
                     if let Some(progress) = sub_status.progress {
-                        info!(
-                            log, "update still preparing (progress: {}/{})",
-                            progress.current, progress.total;
-                            "id" => %id,
-                        );
+                        format!(
+                            "update {id} preparing (progress: {}/{})",
+                            progress.current, progress.total
+                        )
                     } else {
-                        info!(
-                            log, "update still preparing (no progress available)";
-                            "id" => %id,
-                        );
+                        format!("update {id} preparing (no progress available)")
                     }
                 }
                 UpdateStatus::SpUpdateAuxFlashChckScan {
@@ -605,37 +760,31 @@ async fn main() -> Result<()> {
                     ..
                 } => {
                     let id = Uuid::from(id);
-                    info!(
-                        log, "aux flash scan complete";
-                        "id" => %id,
-                        "found_match" => found_match,
-                    );
+                    format!("update {id} aux flash scan complete (found_match={found_match}")
                 }
                 UpdateStatus::InProgress(sub_status) => {
                     let id = Uuid::from(sub_status.id);
-                    info!(
-                        log, "update in progress";
-                        "id" => %id,
-                        "bytes_received" => sub_status.bytes_received,
-                        "total_size" => sub_status.total_size,
-                    );
+                    format!(
+                        "update {id} in progress ({} of {} received)",
+                        sub_status.bytes_received, sub_status.total_size,
+                    )
                 }
                 UpdateStatus::Complete(id) => {
                     let id = Uuid::from(id);
-                    info!(log, "update complete"; "id" => %id);
+                    format!("update {id} complete")
                 }
                 UpdateStatus::Aborted(id) => {
                     let id = Uuid::from(id);
-                    info!(log, "update aborted"; "id" => %id);
+                    format!("update {id} aborted")
                 }
                 UpdateStatus::Failed { id, code } => {
                     let id = Uuid::from(id);
-                    info!(log, "update failed"; "id" => %id, "code" => code);
+                    format!("update {id} failed (code={code})")
                 }
-                UpdateStatus::None => {
-                    info!(log, "no update status available");
-                }
-            }
+                UpdateStatus::None => "no update status available".to_string(),
+            };
+            info!(log, "{status}");
+            Ok(vec![status])
         }
         Command::UpdateAbort { component, update_id } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -643,6 +792,7 @@ async fn main() -> Result<()> {
             sp.update_abort(sp_component, update_id).await.with_context(
                 || format!("aborting update to {} failed", component),
             )?;
+            Ok(vec!["update {update_id} aborted".to_string()])
         }
         Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
@@ -650,13 +800,16 @@ async fn main() -> Result<()> {
                     format!("failed to set power state to {state:?}")
                 })?;
                 info!(log, "successfully set SP power state to {state:?}");
+                Ok(vec![format!(
+                    "successfully set SP power state to {state:?}"
+                )])
             } else {
                 let state = sp
                     .power_state()
                     .await
                     .context("failed to get power state")?;
                 info!(log, "SP power state = {state:?}");
-                println!("{state:?}");
+                Ok(vec![format!("{state:?}")])
             }
         }
         Command::Reset => {
@@ -664,10 +817,9 @@ async fn main() -> Result<()> {
             info!(log, "SP is prepared to reset");
             sp.reset_trigger().await?;
             info!(log, "SP reset complete");
+            Ok(vec!["reset complete".to_string()])
         }
     }
-
-    Ok(())
 }
 
 async fn update(

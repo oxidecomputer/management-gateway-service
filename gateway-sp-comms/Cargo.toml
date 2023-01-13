@@ -12,11 +12,14 @@ fxhash = "0.2.1"
 hex = "0.4.3"
 hubpack = "0.1"
 lru-cache = "0.1.2"
-nix = { version = "0.26", default-features = false, features = ["net"] }
+# TODO: Replace with real nix after https://github.com/nix-rust/nix/pull/1973 is
+# merged / released
+nix = { git = "https://github.com/jgallagher/nix", branch = "illumos" }
 once_cell = "1.15.0"
 serde = { version = "1.0", features = ["derive"] }
 serde-big-array = "0.4.1"
 slog = "2.7"
+socket2 = "0.4.7"
 string_cache = "0.8.4"
 thiserror = "1.0.37"
 tlvc = {git = "https://github.com/oxidecomputer/tlvc.git"}
