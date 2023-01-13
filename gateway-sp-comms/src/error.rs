@@ -23,6 +23,14 @@ pub enum HostPhase2Error {
     Other { hash: String, offset: u64, err: String },
 }
 
+/*
+#[derive(Debug, Clone, Error)]
+pub enum ConfigError {
+    #[error("either `interface` or `listen_addr` must be provided")]
+    MissingInterfaceAndListenAddr,
+}
+*/
+
 #[derive(Debug, Clone, Error)]
 pub enum StartupError {
     #[error("waiting for interface to exist: {0}")]

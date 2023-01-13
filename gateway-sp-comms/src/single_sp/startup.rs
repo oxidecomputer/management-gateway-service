@@ -11,13 +11,17 @@ use super::Inner;
 use super::InnerCommand;
 use crate::error::StartupError;
 use crate::SwitchPortConfig;
+use crate::SwitchPortListenConfig;
+use crate::MGS_PORT;
 use crate::SP_TO_MGS_MULTICAST_ADDR;
 use futures::Future;
 use gateway_messages::SpPort;
 use once_cell::sync::OnceCell;
 use slog::info;
+use slog::warn;
 use slog::Logger;
 use std::net::SocketAddrV6;
+use std::thread;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
@@ -61,29 +65,60 @@ impl State {
         host_phase2_provider: T,
         log: Logger,
     ) -> (Self, impl Future<Output = Option<Inner<T>>>) {
-        let initial_state = if let Some(interface) = config.interface.clone() {
-            StartupState::WaitingForInterface(interface)
-        } else {
-            StartupState::WaitingToBind(config.listen_addr)
+        let initial_state = match &config.listen {
+            SwitchPortListenConfig::Interface { name, .. } => {
+                StartupState::WaitingForInterface(name.clone())
+            }
+            SwitchPortListenConfig::Address(addr) => {
+                StartupState::WaitingToBind(*addr)
+            }
         };
 
         let (startup_tx, startup_rx) = watch::channel(initial_state);
 
         let startup_fut = async move {
+            let listen_addr = match config.listen {
+                SwitchPortListenConfig::Interface { name, port } => {
+                    let log = log.clone();
+                    let addr = tokio::task::spawn_blocking(move || {
+                        wait_for_interface_blocking(
+                            &name,
+                            &log,
+                            port.unwrap_or(MGS_PORT),
+                        )
+                    })
+                    .await
+                    .unwrap();
+
+                    // Notify any waiters that we've converted the interface
+                    // name into a socket address.
+                    startup_tx.send_modify(|s| {
+                        *s = StartupState::WaitingToBind(addr)
+                    });
+
+                    addr
+                }
+                SwitchPortListenConfig::Address(addr) => addr,
+            };
+            /*
             // If we've been given the name of an interface, wait for it to
             // exist.
-            let scope_id = match config.interface.as_deref() {
+            let listen_addr = match config.interface.as_deref() {
                 Some(interface) => {
-                    wait_for_interface_scope_id(interface, &log).await
+                    wait_for_interface_addr(interface, &log).await
                 }
-                None => 0,
+                None => {
+                    // We checked above that if `config.interface` is `None`,
+                    // then `config.listen_addr` is `Some(_)`, so we can u
+                    //
+                },
             };
+            */
 
-            let mut listen_addr = config.listen_addr;
             let mut discovery_addr = config.discovery_addr;
-            listen_addr.set_scope_id(scope_id);
-            discovery_addr.set_scope_id(scope_id);
+            discovery_addr.set_scope_id(listen_addr.scope_id());
 
+            /*
             // If we had to do an interface lookup, notify any waiters that
             // we're transitioning to a new state.
             if config.interface.is_some() {
@@ -91,18 +126,38 @@ impl State {
                     *s = StartupState::WaitingToBind(listen_addr)
                 });
             }
+            */
 
-            // Attempt to bind; if this fails, we are misconfigured and will
-            // forever return errors from all of our methods.
-            let socket = match UdpSocket::bind(listen_addr).await {
+            // Create a socket via `socket2` so we can set `SO_REUSEADDR`, which
+            // is necessary because our vlan interfaces all share the same
+            // address (even though they have different scope IDs). Getting
+            // "address in use" for the same address but a different scope ID
+            // might be an illumos bug; if it is and it's fixed, we could remove
+            // this in the future and just use `UdpSocket::bind()`.
+            //
+            // If binding fails, we assume we are misconfigured and will forever
+            // return errors from all of our methods.
+            info!(log, "binding to {}", listen_addr);
+            let socket = match socket2::Socket::new(
+                socket2::Domain::IPV6,
+                socket2::Type::DGRAM,
+                None,
+            )
+            .and_then(|s| {
+                s.set_reuse_address(true)?;
+                s.set_nonblocking(true)?;
+                s.bind(&listen_addr.into())?;
+                Ok(s)
+            })
+            .map_err(|e| e.to_string())
+            .and_then(|s| {
+                UdpSocket::from_std(s.into()).map_err(|e| e.to_string())
+            }) {
                 Ok(socket) => socket,
                 Err(err) => {
                     startup_tx.send_modify(|s| {
                         *s = StartupState::Complete(Err(
-                            StartupError::UdpBind {
-                                addr: listen_addr,
-                                err: err.to_string(),
-                            },
+                            StartupError::UdpBind { addr: listen_addr, err },
                         ));
                     });
                     return None;
@@ -110,9 +165,10 @@ impl State {
             };
 
             // Join the multicast group SPs use to send us requests.
-            if let Err(err) =
-                socket.join_multicast_v6(&SP_TO_MGS_MULTICAST_ADDR, scope_id)
-            {
+            if let Err(err) = socket.join_multicast_v6(
+                &SP_TO_MGS_MULTICAST_ADDR,
+                listen_addr.scope_id(),
+            ) {
                 startup_tx.send_modify(|s| {
                     *s = StartupState::Complete(Err(
                         StartupError::JoinMulticast {
@@ -216,9 +272,17 @@ impl State {
     }
 }
 
-// Helper wrapper around `if_nametoindex()` that retries indefinitely if the
+// Helper wrapper around `getifaddrs()` that retries indefinitely if the
 // lookup fails.
-async fn wait_for_interface_scope_id(interface: &str, log: &Logger) -> u32 {
+//
+// NOTE: This is a non-async function that sleeps; it should be spawned onto a
+// background task! The `ifaddrs` iterator used internally is not `Send`,
+// causing problems with our futures above if we try to use async sleeps.
+fn wait_for_interface_blocking(
+    interface: &str,
+    log: &Logger,
+    port: u16,
+) -> SocketAddrV6 {
     // We're going to constantly spin waiting for `config.interface` to exist;
     // how long do we sleep between attempts?
     //
@@ -226,22 +290,54 @@ async fn wait_for_interface_scope_id(interface: &str, log: &Logger) -> u32 {
     const SLEEP_BETWEEN_RETRY: Duration = Duration::from_secs(5);
 
     loop {
-        match nix::net::if_::if_nametoindex(interface) {
-            Ok(id) => return id,
+        let ifaddrs = match nix::ifaddrs::getifaddrs() {
+            Ok(ifaddrs) => ifaddrs,
             Err(err) => {
-                // TODO This assumes something else is responsible for
-                // creating the interface we're supposed to use; if it needs
-                // to be us (or if we need to do extra work to use it) we
-                // need to do more here.
-                info!(
+                warn!(
                     log,
-                    "if_nametoindex failed; will retry after {:?}",
+                    "getifaddrs() failed; will retry after {:?}",
                     SLEEP_BETWEEN_RETRY;
                     "interface" => interface,
                     "err" => %err,
                 );
-                tokio::time::sleep(SLEEP_BETWEEN_RETRY).await;
+                thread::sleep(SLEEP_BETWEEN_RETRY);
+                continue;
+            }
+        };
+
+        for ifaddr in ifaddrs {
+            if ifaddr.interface_name == interface {
+                if let Some(addr) =
+                    ifaddr.address.and_then(|s| s.as_sockaddr_in6().copied())
+                {
+                    let mut addr = SocketAddrV6::new(
+                        addr.ip(),
+                        port,
+                        addr.flowinfo(),
+                        addr.scope_id(),
+                    );
+
+                    // On Linux, link-local addresses returned from
+                    // `getifaddrs()` include a nonzero scope_id, but on illumos
+                    // they do not: attempt to look it up.
+                    if addr.scope_id() == 0 {
+                        if let Ok(id) = nix::net::if_::if_nametoindex(interface)
+                        {
+                            addr.set_scope_id(id);
+                        }
+                    }
+
+                    return addr;
+                }
             }
         }
+
+        warn!(
+            log,
+            "did not find an ipv6 address for interface; will retry after {:?}",
+            SLEEP_BETWEEN_RETRY;
+            "interface" => interface,
+        );
+        thread::sleep(SLEEP_BETWEEN_RETRY);
     }
 }

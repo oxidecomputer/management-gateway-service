@@ -3,11 +3,13 @@ members = [
     "faux-mgs",
     "gateway-messages",
     "gateway-sp-comms",
+    "multiple-vlan-debugging",
 ]
 
 default-members = [
     "faux-mgs",
     "gateway-messages",
     "gateway-sp-comms",
+    "multiple-vlan-debugging",
 ]
 resolver = "2"

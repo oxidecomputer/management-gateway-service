@@ -20,6 +20,7 @@ use gateway_messages::UpdateStatus;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SwitchPortConfig;
+use gateway_sp_comms::SwitchPortListenConfig;
 use slog::info;
 use slog::o;
 use slog::warn;
@@ -28,6 +29,7 @@ use slog::Level;
 use slog::Logger;
 use std::fs;
 use std::fs::File;
+use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
 use std::path::Path;
 use std::path::PathBuf;
@@ -54,20 +56,29 @@ struct Args {
     #[clap(long)]
     logfile: Option<PathBuf>,
 
-    /// Address to bind to locally [default: [::]:0 for client commands,
-    /// [::]:22222 for server commands]
-    #[clap(long)]
+    /// IP address to bind to locally.
+    ///
+    /// Prefer `--interface` and `--listen-port` instead, which chooses the
+    /// first IPv6 address of the specified interface.
+    #[clap(long, conflicts_with_all = ["listen_port", "interface"])]
     listen_addr: Option<SocketAddrV6>,
+
+    /// Port to bind to locally [default: 0 for client commands, 22222 for
+    /// server commands]
+    #[clap(long, requires = "interface")]
+    listen_port: Option<u16>,
+
+    /// Interface on which to communicate.
+    ///
+    /// This is used both to determine our IPv6 scope ID and our listening
+    /// address.
+    #[clap(long, conflicts_with = "listen_addr")]
+    interface: Option<String>,
 
     /// Address to use to discover the SP. May be a specific SP's address to
     /// bypass multicast discovery.
     #[clap(long, default_value_t = gateway_sp_comms::default_discovery_addr())]
     discovery_addr: SocketAddrV6,
-
-    /// Interface to specify as the scope ID for both `listen_addr` and
-    /// `discovery_addr`.
-    #[clap(long)]
-    interface: Option<String>,
 
     /// Maximum number of attempts to make when sending requests to the SP.
     #[clap(long, default_value = "5")]
@@ -238,15 +249,13 @@ impl Command {
     // pick port 0 (i.e., let the OS choose an arbitrary available port), but
     // server commands can still default to the port on which the SP expects to
     // find MGS.
-    fn default_listen_addr(&self) -> SocketAddrV6 {
-        let mut default_addr = gateway_sp_comms::default_listen_addr();
+    fn default_listen_port(&self) -> u16 {
         match self {
-            // Server commands; leave `default_addr` unchanged
-            Command::ServeHostPhase2 { .. } => (),
+            // Server commands; use the default port.
+            Command::ServeHostPhase2 { .. } => gateway_sp_comms::MGS_PORT,
             // Client commands: change port to 0
-            _ => default_addr.set_port(0),
+            _ => 0,
         }
-        default_addr
     }
 }
 
@@ -341,13 +350,28 @@ async fn main() -> Result<()> {
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
 
-    let listen_addr =
+    let listen_port =
+        args.listen_port.unwrap_or_else(|| args.command.default_listen_port());
+    let listen = if let Some(name) = args.interface {
+        SwitchPortListenConfig::Interface { name, port: Some(listen_port) }
+    } else if let Some(addr) = args.listen_addr {
+        SwitchPortListenConfig::Address(addr)
+    } else {
+        SwitchPortListenConfig::Address(SocketAddrV6::new(
+            Ipv6Addr::UNSPECIFIED,
+            listen_port,
+            0,
+            0,
+        ))
+    };
+    /*
         args.listen_addr.unwrap_or_else(|| args.command.default_listen_addr());
     if let Some(interface) = args.interface.as_ref() {
         info!(log, "binding to {} on {}", listen_addr, interface);
     } else {
         info!(log, "binding to {}", listen_addr);
     }
+    */
 
     // For faux-mgs, we'll serve all images present in the directory the user
     // requests, so don't cap the LRU cache size.
@@ -355,11 +379,7 @@ async fn main() -> Result<()> {
         Arc::new(InMemoryHostPhase2Provider::with_capacity(usize::MAX));
 
     let sp = SingleSp::new(
-        SwitchPortConfig {
-            listen_addr,
-            discovery_addr: args.discovery_addr,
-            interface: args.interface,
-        },
+        SwitchPortConfig { listen, discovery_addr: args.discovery_addr },
         args.max_attempts,
         per_attempt_timeout,
         Arc::clone(&host_phase2_provider),
