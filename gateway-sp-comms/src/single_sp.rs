@@ -55,6 +55,7 @@ use std::str;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
@@ -1305,47 +1306,22 @@ impl<T: InnerSocket> Inner<T> {
     }
 
     async fn run(mut self) {
-        // If discovery fails (typically due to timeout, but also possible due
-        // to misconfiguration where we can't send packets at all), how long do
-        // we wait before retrying? If failure is due to misconfiguration, we
-        // will never succeed - how do we cope with that?
-        const SLEEP_BETWEEN_DISCOVERY_RETRY: Duration = Duration::from_secs(1);
-
         let maybe_known_addr = *self.sp_addr_tx.borrow();
         let mut sp_addr = match maybe_known_addr {
             Some((addr, _port)) => addr,
-            None => {
-                // We can't do anything useful until we find an SP; loop
-                // discovery packets first.
-                debug!(
-                    self.log(), "attempting SP discovery";
-                    "discovery_addr" => %self.socket_handle.discovery_addr(),
-                );
-                loop {
-                    match self.discover().await {
-                        Ok(addr) => {
-                            info!(
-                                self.log(),
-                                "initial discovery complete";
-                                "addr" => %addr,
-                            );
-                            break addr;
-                        }
-                        Err(err) => {
-                            info!(
-                                self.log(),
-                                "discovery failed";
-                                "err" => %err,
-                                "addr" => %self.socket_handle.discovery_addr(),
-                            );
-                            tokio::time::sleep(SLEEP_BETWEEN_DISCOVERY_RETRY)
-                                .await;
-                            continue;
-                        }
-                    }
-                }
-            }
+            None => match self.initial_discovery().await {
+                Some(addr) => addr,
+                // initial_discovery only returns `None` if `cmds_rx` is closed,
+                // which means the `SingleSp` that spawned us is gone.
+                None => return,
+            },
         };
+
+        info!(
+            self.log(),
+            "initial discovery complete";
+            "addr" => %sp_addr,
+        );
 
         let mut discovery_idle = time::interval_at(
             Instant::now() + DISCOVERY_INTERVAL_IDLE,
@@ -1397,6 +1373,60 @@ impl<T: InnerSocket> Inner<T> {
                             );
                         }
                     }
+                }
+            }
+        }
+    }
+
+    // Waits until we've discovered an SP for the first time. Only returns none
+    // if `cmds_rx` is closed, indicating our corresponding `SingleSp` is gone.
+    async fn initial_discovery(&mut self) -> Option<SocketAddrV6> {
+        // We can't do anything useful until we find an SP; loop
+        // discovery packets first.
+        debug!(
+            self.log(), "attempting initial SP discovery";
+            "discovery_addr" => %self.socket_handle.discovery_addr(),
+        );
+
+        loop {
+            match self.discover().await {
+                Ok(addr) => return Some(addr),
+                Err(err) => {
+                    info!(
+                        self.log(),
+                        "initial discovery failed";
+                        "err" => %err,
+                        "addr" => %self.socket_handle.discovery_addr(),
+                    );
+                }
+            }
+
+            // Before re-attempting discovery, peel out any pending commands and
+            // fail them.
+            loop {
+                let response_is_ok = match self.cmds_rx.try_recv() {
+                    Ok(InnerCommand::Rpc(rpc)) => rpc
+                        .response_tx
+                        .send(RpcResponse {
+                            result: Err(CommunicationError::NoSpDiscovered),
+                            our_trailing_data: rpc.our_trailing_data,
+                        })
+                        .is_ok(),
+                    Ok(InnerCommand::SerialConsoleAttach(_, tx)) => {
+                        tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
+                    }
+                    Ok(InnerCommand::SerialConsoleDetach(_, tx)) => {
+                        tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => return None,
+                };
+
+                if !response_is_ok {
+                    warn!(
+                        self.log(),
+                        "RPC requester disappeared while waiting for response"
+                    );
                 }
             }
         }

@@ -520,43 +520,6 @@ async fn run_command(
     command: Command,
     log: Logger,
 ) -> Result<Vec<String>> {
-    // Wait until we discover `sp`'s address; this allows us to put a reasonable
-    // timeout on commands without knowing how long the command might take: we
-    // instead put a timeout on discovery, and allow the command to run with no
-    // timeout if we find the SP.
-    const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(3);
-    info!(log, "waiting for SP discovery on {}", sp.interface());
-    let (addr, port) = {
-        let mut addr_watch = sp.sp_addr_watch().clone();
-        loop {
-            let current = *addr_watch.borrow();
-            match current {
-                Some((addr, port)) => {
-                    info!(
-                        log, "SP discovered";
-                        "interface" => sp.interface(),
-                        "addr" => %addr,
-                        "port" => ?port,
-                    );
-                    break (addr, port);
-                }
-                None => {
-                    match tokio::time::timeout(
-                        DISCOVERY_TIMEOUT,
-                        addr_watch.changed(),
-                    )
-                    .await
-                    {
-                        Ok(recv_result) => recv_result.unwrap(),
-                        Err(_) => bail!(
-                            "dicovery failed (waited {DISCOVERY_TIMEOUT:?})"
-                        ),
-                    }
-                }
-            }
-        }
-    };
-
     match command {
         // Skip special commands handled by `main()` above.
         Command::UsartAttach { .. } | Command::ServeHostPhase2 { .. } => {
@@ -564,7 +527,35 @@ async fn run_command(
         }
 
         // Remainder of commands.
-        Command::Discover => Ok(vec![format!("addr={addr}, port={port:?}")]),
+        Command::Discover => {
+            const DISCOVERY_TIMEOUT: Duration = Duration::from_secs(5);
+            let mut addr_watch = sp.sp_addr_watch().clone();
+            loop {
+                let current = *addr_watch.borrow();
+                match current {
+                    Some((addr, port)) => {
+                        info!(
+                            log, "SP discovered";
+                            "interface" => sp.interface(),
+                            "addr" => %addr,
+                            "port" => ?port,
+                        );
+                        break Ok(vec![format!("addr={addr}, port={port:?}")]);
+                    }
+                    None => match tokio::time::timeout(
+                        DISCOVERY_TIMEOUT,
+                        addr_watch.changed(),
+                    )
+                    .await
+                    {
+                        Ok(recv_result) => recv_result.unwrap(),
+                        Err(_) => bail!(
+                            "discovery failed (waited {DISCOVERY_TIMEOUT:?})"
+                        ),
+                    },
+                }
+            }
+        }
         Command::State => {
             let state = sp.state().await?;
             info!(log, "{state:?}");

@@ -36,6 +36,8 @@ pub enum CommunicationError {
     UdpSendTo { addr: SocketAddrV6, interface: String, err: io::Error },
     #[error("failed to recv UDP packet: {0}")]
     UdpRecv(io::Error),
+    #[error("no SP discovered")]
+    NoSpDiscovered,
     #[error("failed to deserialize SP message from {peer}: {err}")]
     Deserialize { peer: SocketAddrV6, err: gateway_messages::HubpackError },
     #[error("RPC call failed (gave up after {0} attempts)")]
