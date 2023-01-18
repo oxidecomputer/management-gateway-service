@@ -1381,6 +1381,12 @@ impl<T: InnerSocket> Inner<T> {
     // Waits until we've discovered an SP for the first time. Only returns none
     // if `cmds_rx` is closed, indicating our corresponding `SingleSp` is gone.
     async fn initial_discovery(&mut self) -> Option<SocketAddrV6> {
+        // If discovery fails (typically due to timeout, but also possible due
+        // to misconfiguration where we can't send packets at all), how long do
+        // we wait before retrying? If failure is due to misconfiguration, we
+        // will never succeed.
+        const SLEEP_BETWEEN_DISCOVERY_RETRY: Duration = Duration::from_secs(1);
+
         // We can't do anything useful until we find an SP; loop
         // discovery packets first.
         debug!(
@@ -1429,6 +1435,8 @@ impl<T: InnerSocket> Inner<T> {
                     );
                 }
             }
+
+            tokio::time::sleep(SLEEP_BETWEEN_DISCOVERY_RETRY).await;
         }
     }
 
