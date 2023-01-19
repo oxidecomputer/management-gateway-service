@@ -12,6 +12,7 @@
 
 mod host_phase2;
 mod hubris_archive;
+mod scope_id_cache;
 mod single_sp;
 mod sp_response_ext;
 
