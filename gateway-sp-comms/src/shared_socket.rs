@@ -210,6 +210,9 @@ pub(crate) enum SingleSpHandleError {
     #[error("send_to({addr:}) on {interface} failed: {err}")]
     SendTo { addr: SocketAddrV6, interface: String, err: io::Error },
 
+    #[error("scope ID of interface {interface} changing too frequently")]
+    ScopeIdChangingFrequently { interface: String },
+
     #[error("cannot determine scope ID for interface: {0}")]
     InterfaceError(#[from] InterfaceError),
 }
@@ -288,12 +291,24 @@ impl SingleSpHandle {
         &mut self,
         data: &[u8],
     ) -> Result<(), SingleSpHandleError> {
+        // We typically expect the loop below to _not_ loop; i.e., sends will
+        // either succeed (in which case we're done, successfully) or fail but
+        // our scope ID doesn't change (in which case we're done,
+        // unsuccessfully). If we fail and our scope ID has changed, we'll
+        // iterate, and this is the cap on the maximum number of scope ID
+        // refreshes we're willing to try. The only way we could iterate more
+        // than once is if some other part of the system is (quickly) destroying
+        // and recreating the interface we're using, but if that's happening,
+        // it's better for us to error out than stay stuck in an infinite loop
+        // retrying with new scope IDs each time.
+        const MAX_SCOPE_ID_REFRESHES: usize = 5;
+
         // Is this the first time we're being used? Update our scope ID.
         if self.discovery_addr.scope_id() == 0 {
             self.refresh_scope_id().await?;
         }
 
-        loop {
+        for _ in 0..MAX_SCOPE_ID_REFRESHES {
             let err = match self.socket.send_to(data, self.discovery_addr).await
             {
                 Ok(n) => {
@@ -320,6 +335,10 @@ impl SingleSpHandle {
                 });
             }
         }
+
+        Err(SingleSpHandleError::ScopeIdChangingFrequently {
+            interface: self.interface.to_string(),
+        })
     }
 
     pub(crate) async fn recv(&mut self) -> SingleSpMessage {
