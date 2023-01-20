@@ -6,8 +6,6 @@
 
 //! Cache of interface names to indices and vice versa.
 
-#![allow(dead_code)] // TODO remove once this is used
-
 use fxhash::FxHashMap;
 use nix::libc::c_uint;
 use nix::net::if_::if_nameindex;
@@ -77,10 +75,6 @@ impl Default for ScopeIdCache {
 impl ScopeIdCache {
     pub(crate) async fn index_to_name(&self, index: u32) -> Result<Name> {
         self.inner.index_to_name(index).await
-    }
-
-    pub(crate) async fn name_to_index(&self, name: &str) -> Result<u32> {
-        self.inner.name_to_index(name).await
     }
 
     pub(crate) async fn refresh_by_name(&self, name: &str) -> Result<u32> {
@@ -154,6 +148,9 @@ where
         Ok(Name(name))
     }
 
+    // We currently only use this function in unit tests. If we ever need this
+    // in real code, remove this cfg and add a wrapper in `ScopeIdCache`.
+    #[cfg(test)]
     async fn name_to_index(&self, name: &str) -> Result<u32> {
         // Intern `name` for cache lookup.
         let name = DefaultAtom::from(name);

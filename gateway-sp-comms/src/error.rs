@@ -11,6 +11,9 @@ use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
 use thiserror::Error;
 
+pub use crate::scope_id_cache::InterfaceError;
+use crate::shared_socket::SingleSpHandleError;
+
 #[derive(Debug, Clone, Error)]
 pub enum HostPhase2Error {
     #[error("host image with hash {hash} unavailable")]
@@ -23,26 +26,20 @@ pub enum HostPhase2Error {
     Other { hash: String, offset: u64, err: String },
 }
 
-#[derive(Debug, Clone, Error)]
-pub enum StartupError {
-    #[error("waiting for interface to exist: {0}")]
-    WaitingForInterface(String),
-    #[error("waiting to bind to listening address: {0}")]
-    WaitingToBind(SocketAddrV6),
-    #[error("error binding to UDP address {addr}: {err}")]
-    UdpBind { addr: SocketAddrV6, err: String },
-    #[error("error joining UDP multicast group {group}: {err}")]
-    JoinMulticast { group: Ipv6Addr, err: String },
-}
-
 #[derive(Debug, Error)]
 pub enum CommunicationError {
-    #[error("interface startup incomplete or failed: {0}")]
-    StartupError(#[from] StartupError),
-    #[error("failed to send UDP packet to {addr}: {err}")]
-    UdpSendTo { addr: SocketAddrV6, err: io::Error },
+    #[error(transparent)]
+    InterfaceError(#[from] InterfaceError),
+    #[error("scope ID of interface {interface} changing too frequently")]
+    ScopeIdChangingFrequently { interface: String },
+    #[error("failed to join multicast group {group} on {interface}: {err}")]
+    JoinMulticast { group: Ipv6Addr, interface: String, err: io::Error },
+    #[error("failed to send UDP packet to {addr} on {interface}: {err}")]
+    UdpSendTo { addr: SocketAddrV6, interface: String, err: io::Error },
     #[error("failed to recv UDP packet: {0}")]
     UdpRecv(io::Error),
+    #[error("no SP discovered")]
+    NoSpDiscovered,
     #[error("failed to deserialize SP message from {peer}: {err}")]
     Deserialize { peer: SocketAddrV6, err: gateway_messages::HubpackError },
     #[error("RPC call failed (gave up after {0} attempts)")]
@@ -63,10 +60,25 @@ pub enum CommunicationError {
     TlvPagination { reason: &'static str },
 }
 
+impl From<SingleSpHandleError> for CommunicationError {
+    fn from(err: SingleSpHandleError) -> Self {
+        match err {
+            SingleSpHandleError::JoinMulticast { group, interface, err } => {
+                Self::JoinMulticast { group, interface, err }
+            }
+            SingleSpHandleError::ScopeIdChangingFrequently { interface } => {
+                Self::ScopeIdChangingFrequently { interface }
+            }
+            SingleSpHandleError::SendTo { addr, interface, err } => {
+                Self::UdpSendTo { addr, interface, err }
+            }
+            SingleSpHandleError::InterfaceError(err) => Self::from(err),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum UpdateError {
-    #[error("interface startup incomplete or failed: {0}")]
-    StartupError(#[from] StartupError),
     #[error("update image cannot be empty")]
     ImageEmpty,
     #[error("update image is too large")]

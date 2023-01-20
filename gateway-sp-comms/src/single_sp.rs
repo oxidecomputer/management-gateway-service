@@ -7,12 +7,14 @@
 //! Interface for communicating with a single SP.
 
 use crate::error::CommunicationError;
-use crate::error::HostPhase2Error;
-use crate::error::StartupError;
 use crate::error::UpdateError;
+use crate::shared_socket::SingleSpHandle;
+use crate::shared_socket::SingleSpHandleError;
+use crate::shared_socket::SingleSpMessage;
 use crate::sp_response_ext::SpResponseExt;
-use crate::HostPhase2Provider;
+use crate::SharedSocket;
 use crate::SwitchPortConfig;
+use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
@@ -27,9 +29,7 @@ use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::Message;
 use gateway_messages::MessageKind;
-use gateway_messages::MgsError;
 use gateway_messages::MgsRequest;
-use gateway_messages::MgsResponse;
 use gateway_messages::PowerState;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
@@ -55,14 +55,15 @@ use std::str;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
+use tokio::sync::mpsc::error::TryRecvError;
 use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time;
 use tokio::time::timeout;
+use tokio::time::Instant;
 use uuid::Uuid;
 
-mod startup;
 mod update;
 
 use self::update::start_component_update;
@@ -111,7 +112,9 @@ pub struct SpComponentDetails {
 
 #[derive(Debug)]
 pub struct SingleSp {
-    state: startup::State,
+    interface: String,
+    cmds_tx: mpsc::Sender<InnerCommand>,
+    sp_addr_rx: watch::Receiver<Option<(SocketAddrV6, SpPort)>>,
     inner_task: JoinHandle<()>,
     log: Logger,
 }
@@ -139,52 +142,99 @@ impl SingleSp {
     ///    determined by the previous step). If this bind fails (e.g., because
     ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
     ///    a "UDP bind failed" error from all methods forever.
-    pub fn new<T: HostPhase2Provider>(
+    pub async fn new(
+        shared_socket: &SharedSocket,
         config: SwitchPortConfig,
         max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
-        host_phase2_provider: T,
-        log: Logger,
     ) -> Self {
-        let (state, run_startup) = startup::State::new(
-            config,
+        let handle = shared_socket
+            .single_sp_handler(&config.interface, config.discovery_addr)
+            .await;
+
+        let log = handle.log().clone();
+
+        Self::new_impl(
+            handle,
+            config.interface,
             max_attempts_per_rpc,
             per_attempt_timeout,
-            host_phase2_provider,
-            log.clone(),
-        );
-
-        let inner_task = tokio::spawn(async move {
-            // If `run_startup` returns `None`, it has failed, and we'll return
-            // errors from all of our methods below. Otherwise, it gave us an
-            // `Inner`, and we can start it up.
-            if let Some(inner) = run_startup.await {
-                inner.run().await;
-            }
-        });
-
-        Self { state, inner_task, log }
+            log,
+        )
     }
 
-    /// Block until all our local setup (see [`SingleSp::new()`] is complete.
-    pub async fn wait_for_startup_completion(
-        &self,
-    ) -> Result<(), StartupError> {
-        self.state.wait_for_startup_completion().await
+    /// Create a new `SingleSp` instance specifically for testing (i.e.,
+    /// communicating with a simulated SP).
+    ///
+    /// Unlike [`SingleSp::new()`], this method takes an existing bound
+    /// [`UdpSocket`] and the target address of the SP. This allows multiple
+    /// `SingleSp`s to exist on the same interface (e.g., the loopback
+    /// interface) for testing.
+    pub fn new_direct_socket_for_testing(
+        socket: UdpSocket,
+        discovery_addr: SocketAddrV6,
+        max_attempts_per_rpc: usize,
+        per_attempt_timeout: Duration,
+        log: Logger,
+    ) -> Self {
+        let wrapper =
+            InnerSocketWrapper { socket, discovery_addr, log: log.clone() };
+
+        Self::new_impl(
+            wrapper,
+            "(direct socket handle)".to_string(),
+            max_attempts_per_rpc,
+            per_attempt_timeout,
+            log,
+        )
+    }
+
+    // Shared implementation of `new` and `new_direct_socket_for_testing` that
+    // doesn't care whether we're using a `SharedSocket` or a
+    // `InnerSocketWrapper` (the latter for tests).
+    fn new_impl<T: InnerSocket + Send + 'static>(
+        socket: T,
+        interface: String,
+        max_attempts_per_rpc: usize,
+        per_attempt_timeout: Duration,
+        log: Logger,
+    ) -> Self {
+        // SPs don't support pipelining, so any command we send to
+        // `Inner` that involves contacting an SP will effectively block
+        // until it completes. We use a more-or-less arbitrary chanel
+        // size of 8 here to allow (a) non-SP commands (e.g., detaching
+        // the serial console) and (b) a small number of enqueued SP
+        // commands to be submitted without blocking the caller.
+        let (cmds_tx, cmds_rx) = mpsc::channel(8);
+        let (sp_addr_tx, sp_addr_rx) = watch::channel(None);
+
+        let inner = Inner::new(
+            socket,
+            sp_addr_tx,
+            max_attempts_per_rpc,
+            per_attempt_timeout,
+            cmds_rx,
+        );
+
+        let inner_task = tokio::spawn(inner.run());
+
+        Self { interface, cmds_tx, sp_addr_rx, inner_task, log }
+    }
+
+    fn log(&self) -> &Logger {
+        &self.log
+    }
+
+    pub fn interface(&self) -> &str {
+        &self.interface
     }
 
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
     /// SP's address.
-    ///
-    /// This function only returns an error if startup has failed; if startup
-    /// has succeeded, always returns `Ok(_)` even if no SP has been discovered
-    /// yet (in which case the returned receiver will be holding the value
-    /// `None`).
     pub fn sp_addr_watch(
         &self,
-    ) -> Result<&watch::Receiver<Option<(SocketAddrV6, SpPort)>>, StartupError>
-    {
-        self.state.sp_addr_rx()
+    ) -> &watch::Receiver<Option<(SocketAddrV6, SpPort)>> {
+        &self.sp_addr_rx
     }
 
     /// Request the state of an ignition target.
@@ -206,7 +256,7 @@ impl SingleSp {
     /// querying (which must be an ignition controller)! If this function
     /// returns successfully, it's on. Is that good enough?
     pub async fn bulk_ignition_state(&self) -> Result<Vec<IgnitionState>> {
-        self.get_paginated_tlv_data(BulkIgnitionStateTlvRpc { log: &self.log })
+        self.get_paginated_tlv_data(BulkIgnitionStateTlvRpc { log: self.log() })
             .await
     }
 
@@ -227,7 +277,7 @@ impl SingleSp {
     /// querying (which must be an ignition controller)!
     pub async fn bulk_ignition_link_events(&self) -> Result<Vec<LinkEvents>> {
         self.get_paginated_tlv_data(BulkIgnitionLinkEventsTlvRpc {
-            log: &self.log,
+            log: self.log(),
         })
         .await
     }
@@ -295,7 +345,7 @@ impl SingleSp {
         let entries = self
             .get_paginated_tlv_data(ComponentDetailsTlvRpc {
                 component,
-                log: &self.log,
+                log: self.log(),
             })
             .await?;
 
@@ -405,7 +455,7 @@ impl SingleSp {
                     entries.push(entry);
                 } else {
                     info!(
-                        self.log,
+                        self.log(),
                         "skipping unknown tag {tag:?} while parsing {}",
                         T::LOG_NAME
                     );
@@ -465,8 +515,6 @@ impl SingleSp {
         slot: u16,
         image: Vec<u8>,
     ) -> Result<(), UpdateError> {
-        let cmds_tx = self.state.cmds_tx()?;
-
         if image.is_empty() {
             return Err(UpdateError::ImageEmpty);
         }
@@ -483,10 +531,15 @@ impl SingleSp {
                     ),
                 ));
             }
-            start_sp_update(cmds_tx, update_id, image, &self.log).await
+            start_sp_update(&self.cmds_tx, update_id, image, self.log()).await
         } else {
             start_component_update(
-                cmds_tx, component, update_id, slot, image, &self.log,
+                &self.cmds_tx,
+                component,
+                update_id,
+                slot,
+                image,
+                self.log(),
             )
             .await
         }
@@ -497,8 +550,7 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<UpdateStatus> {
-        let cmds_tx = self.state.cmds_tx()?;
-        update_status(cmds_tx, component).await
+        update_status(&self.cmds_tx, component).await
     }
 
     /// Abort an in-progress update.
@@ -576,12 +628,11 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<AttachedSerialConsole> {
-        let cmds_tx = self.state.cmds_tx()?;
         let (tx, rx) = oneshot::channel();
 
         // `Inner::run()` doesn't exit until we are dropped, so unwrapping here
         // only panics if it itself panicked.
-        cmds_tx
+        self.cmds_tx
             .send(InnerCommand::SerialConsoleAttach(component, tx))
             .await
             .unwrap();
@@ -591,19 +642,18 @@ impl SingleSp {
         Ok(AttachedSerialConsole {
             key: attachment.key,
             rx: attachment.incoming,
-            inner_tx: cmds_tx.clone(),
-            log: self.log.clone(),
+            inner_tx: self.cmds_tx.clone(),
+            log: self.log().clone(),
         })
     }
 
     /// Detach any existing attached serial console connection.
     pub async fn serial_console_detach(&self) -> Result<()> {
-        let cmds_tx = self.state.cmds_tx()?;
         let (tx, rx) = oneshot::channel();
 
         // `Inner::run()` doesn't exit until we are dropped, so unwrapping here
         // only panics if it itself panicked.
-        cmds_tx
+        self.cmds_tx
             .send(InnerCommand::SerialConsoleDetach(None, tx))
             .await
             .unwrap();
@@ -615,8 +665,7 @@ impl SingleSp {
         &self,
         kind: MgsRequest,
     ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
-        let cmds_tx = self.state.cmds_tx()?;
-        rpc(cmds_tx, kind, None).await.result
+        rpc(&self.cmds_tx, kind, None).await.result
     }
 }
 
@@ -1096,90 +1145,188 @@ enum InnerCommand {
     SerialConsoleDetach(Option<u64>, oneshot::Sender<Result<()>>),
 }
 
-struct Inner<T> {
-    log: Logger,
+#[async_trait]
+trait InnerSocket {
+    fn log(&self) -> &Logger;
+    fn discovery_addr(&self) -> SocketAddrV6;
+    async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError>;
+    async fn recv(&mut self) -> SingleSpMessage;
+}
+
+#[async_trait]
+impl InnerSocket for SingleSpHandle {
+    fn log(&self) -> &Logger {
+        SingleSpHandle::log(self)
+    }
+
+    fn discovery_addr(&self) -> SocketAddrV6 {
+        SingleSpHandle::discovery_addr(self)
+    }
+
+    async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError> {
+        SingleSpHandle::send(self, data).await
+    }
+
+    async fn recv(&mut self) -> SingleSpMessage {
+        SingleSpHandle::recv(self).await
+    }
+}
+
+struct InnerSocketWrapper {
     socket: UdpSocket,
-    sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
     discovery_addr: SocketAddrV6,
+    log: Logger,
+}
+
+#[async_trait]
+impl InnerSocket for InnerSocketWrapper {
+    fn log(&self) -> &Logger {
+        &self.log
+    }
+
+    fn discovery_addr(&self) -> SocketAddrV6 {
+        self.discovery_addr
+    }
+
+    async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError> {
+        self.socket
+            .send_to(data, self.discovery_addr)
+            .await
+            .map(|n| assert_eq!(n, data.len()))
+            .map_err(|err| SingleSpHandleError::SendTo {
+                addr: self.discovery_addr,
+                interface: "(direct socket handle)".to_string(),
+                err,
+            })
+    }
+
+    // This function is only used if we were created with
+    // `new_direct_socket_for_testing()`, so we're a little lazy with error
+    // handling. The real `SingleSpHandle` handles errors internally, so this
+    // `recv()` is defined as infallible in our trait that wraps both the real
+    // handle and this wrapper-for-tests.
+    async fn recv(&mut self) -> SingleSpMessage {
+        let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+        loop {
+            let (peer, buf) = match self.socket.recv_from(&mut buf).await {
+                Ok((n, SocketAddr::V6(peer))) => (peer, &buf[..n]),
+                Ok((_, SocketAddr::V4(_))) => unreachable!(),
+                Err(err) => {
+                    error!(self.log, "failed to recv"; "err" => %err);
+                    continue;
+                }
+            };
+
+            let (message, data) =
+                match gateway_messages::deserialize::<Message>(buf) {
+                    Ok((message, data)) => (message, data),
+                    Err(err) => {
+                        error!(
+                            self.log, "failed to deserialize packet";
+                            "err" => %err,
+                        );
+                        continue;
+                    }
+                };
+
+            match &message.kind {
+                // TODO: We could handle `HostPhase2Data` requests with some
+                // work, but currently we have no simulations / tests that need
+                // it, so we omit it for now.
+                MessageKind::MgsRequest(_)
+                | MessageKind::MgsResponse(_)
+                | MessageKind::SpRequest(SpRequest::HostPhase2Data {
+                    ..
+                }) => {
+                    warn!(
+                        self.log, "message kind unsupported by test socket";
+                        "message" => ?message,
+                    );
+                    continue;
+                }
+                &MessageKind::SpRequest(SpRequest::SerialConsole {
+                    component,
+                    offset,
+                }) => {
+                    return SingleSpMessage::SerialConsole {
+                        component,
+                        offset,
+                        data: data.to_owned(),
+                    };
+                }
+                MessageKind::SpResponse(response) => {
+                    return SingleSpMessage::SpResponse {
+                        peer,
+                        header: message.header,
+                        response: *response,
+                        data: data.to_owned(),
+                    };
+                }
+            }
+        }
+    }
+}
+
+struct Inner<T> {
+    socket_handle: T,
+    sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
     max_attempts_per_rpc: usize,
     per_attempt_timeout: Duration,
     serial_console_tx: Option<mpsc::Sender<(u64, Vec<u8>)>>,
     cmds_rx: mpsc::Receiver<InnerCommand>,
     message_id: u32,
     serial_console_connection_key: u64,
-    host_phase2_provider: T,
 }
 
-impl<T: HostPhase2Provider> Inner<T> {
+impl<T: InnerSocket> Inner<T> {
     // This is a private function; squishing the number of arguments down seems
     // like more trouble than it's worth.
     #[allow(clippy::too_many_arguments)]
     fn new(
-        log: Logger,
-        socket: UdpSocket,
+        socket_handle: T,
         sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
-        discovery_addr: SocketAddrV6,
         max_attempts_per_rpc: usize,
         per_attempt_timeout: Duration,
         cmds_rx: mpsc::Receiver<InnerCommand>,
-        host_phase2_provider: T,
     ) -> Self {
         Self {
-            log,
-            socket,
+            socket_handle,
             sp_addr_tx,
-            discovery_addr,
             max_attempts_per_rpc,
             per_attempt_timeout,
             serial_console_tx: None,
             cmds_rx,
             message_id: 0,
             serial_console_connection_key: 0,
-            host_phase2_provider,
         }
     }
 
+    fn log(&self) -> &Logger {
+        self.socket_handle.log()
+    }
+
     async fn run(mut self) {
-        // If discovery fails (typically due to timeout, but also possible due
-        // to misconfiguration where we can't send packets at all), how long do
-        // we wait before retrying? If failure is due to misconfiguration, we
-        // will never succeed - how do we cope with that?
-        const SLEEP_BETWEEN_DISCOVERY_RETRY: Duration = Duration::from_secs(1);
-
-        let mut incoming_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
-
         let maybe_known_addr = *self.sp_addr_tx.borrow();
         let mut sp_addr = match maybe_known_addr {
             Some((addr, _port)) => addr,
-            None => {
-                // We can't do anything useful until we find an SP; loop
-                // discovery packets first.
-                debug!(
-                    self.log, "attempting SP discovery";
-                    "discovery_addr" => %self.discovery_addr,
-                );
-                loop {
-                    match self.discover(&mut incoming_buf).await {
-                        Ok(addr) => {
-                            break addr;
-                        }
-                        Err(err) => {
-                            info!(
-                                self.log,
-                                "discovery failed";
-                                "err" => %err,
-                                "addr" => %self.discovery_addr,
-                            );
-                            tokio::time::sleep(SLEEP_BETWEEN_DISCOVERY_RETRY)
-                                .await;
-                            continue;
-                        }
-                    }
-                }
-            }
+            None => match self.initial_discovery().await {
+                Some(addr) => addr,
+                // initial_discovery only returns `None` if `cmds_rx` is closed,
+                // which means the `SingleSp` that spawned us is gone.
+                None => return,
+            },
         };
 
-        let mut discovery_idle = time::interval(DISCOVERY_INTERVAL_IDLE);
+        info!(
+            self.log(),
+            "initial discovery complete";
+            "addr" => %sp_addr,
+        );
+
+        let mut discovery_idle = time::interval_at(
+            Instant::now() + DISCOVERY_INTERVAL_IDLE,
+            DISCOVERY_INTERVAL_IDLE,
+        );
 
         loop {
             tokio::select! {
@@ -1189,34 +1336,39 @@ impl<T: HostPhase2Provider> Inner<T> {
                         None => return,
                     };
 
-                    self.handle_command(sp_addr, cmd, &mut incoming_buf).await;
+                    self.handle_command(cmd).await;
                     discovery_idle.reset();
                 }
 
-                result = recv(&self.socket, &mut incoming_buf, &self.log) => {
-                    self.handle_incoming_message(result).await;
+                message = self.socket_handle.recv() => {
+                    self.handle_incoming_message(message).await;
                     discovery_idle.reset();
                 }
 
                 _ = discovery_idle.tick() => {
                     debug!(
-                        self.log, "attempting SP discovery (idle timeout)";
-                        "discovery_addr" => %self.discovery_addr,
+                        self.log(), "attempting SP discovery (idle timeout)";
+                        "discovery_addr" => %self.socket_handle.discovery_addr(),
                     );
-                    match self.discover(&mut incoming_buf).await {
+                    match self.discover().await {
                         Ok(addr) => {
-                            if sp_addr != addr {
+                            if sp_addr == addr {
+                                debug!(
+                                    self.log(), "discovered same SP";
+                                    "addr" => %addr,
+                                );
+                            } else {
                                 warn!(
-                                    self.log, "discovered new SP";
+                                    self.log(), "discovered new SP";
                                     "new_addr" => %addr,
                                     "old_addr" => %sp_addr,
                                 );
+                                sp_addr = addr;
                             }
-                            sp_addr = addr;
                         }
                         Err(err) => {
                             warn!(
-                                self.log, "idle discovery check failed";
+                                self.log(), "idle discovery check failed";
                                 "err" => %err,
                             );
                         }
@@ -1226,18 +1378,71 @@ impl<T: HostPhase2Provider> Inner<T> {
         }
     }
 
-    async fn discover(
-        &mut self,
-        incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) -> Result<SocketAddrV6> {
-        let (addr, response, _data) = self
-            .rpc_call(
-                self.discovery_addr,
-                MgsRequest::Discover,
-                None,
-                incoming_buf,
-            )
-            .await?;
+    // Waits until we've discovered an SP for the first time. Only returns none
+    // if `cmds_rx` is closed, indicating our corresponding `SingleSp` is gone.
+    async fn initial_discovery(&mut self) -> Option<SocketAddrV6> {
+        // If discovery fails (typically due to timeout, but also possible due
+        // to misconfiguration where we can't send packets at all), how long do
+        // we wait before retrying? If failure is due to misconfiguration, we
+        // will never succeed.
+        const SLEEP_BETWEEN_DISCOVERY_RETRY: Duration = Duration::from_secs(1);
+
+        // We can't do anything useful until we find an SP; loop
+        // discovery packets first.
+        debug!(
+            self.log(), "attempting initial SP discovery";
+            "discovery_addr" => %self.socket_handle.discovery_addr(),
+        );
+
+        loop {
+            match self.discover().await {
+                Ok(addr) => return Some(addr),
+                Err(err) => {
+                    info!(
+                        self.log(),
+                        "initial discovery failed";
+                        "err" => %err,
+                        "addr" => %self.socket_handle.discovery_addr(),
+                    );
+                }
+            }
+
+            // Before re-attempting discovery, peel out any pending commands and
+            // fail them.
+            loop {
+                let response_is_ok = match self.cmds_rx.try_recv() {
+                    Ok(InnerCommand::Rpc(rpc)) => rpc
+                        .response_tx
+                        .send(RpcResponse {
+                            result: Err(CommunicationError::NoSpDiscovered),
+                            our_trailing_data: rpc.our_trailing_data,
+                        })
+                        .is_ok(),
+                    Ok(InnerCommand::SerialConsoleAttach(_, tx)) => {
+                        tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
+                    }
+                    Ok(InnerCommand::SerialConsoleDetach(_, tx)) => {
+                        tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
+                    }
+                    Err(TryRecvError::Empty) => break,
+                    Err(TryRecvError::Disconnected) => return None,
+                };
+
+                if !response_is_ok {
+                    warn!(
+                        self.log(),
+                        "RPC requester disappeared while waiting for response"
+                    );
+                }
+            }
+
+            tokio::time::sleep(SLEEP_BETWEEN_DISCOVERY_RETRY).await;
+        }
+    }
+
+    async fn discover(&mut self) -> Result<SocketAddrV6> {
+        let (addr, response, _data) =
+            self.rpc_call(MgsRequest::Discover, None).await?;
 
         let discovery = response.expect_discover()?;
 
@@ -1249,21 +1454,11 @@ impl<T: HostPhase2Provider> Inner<T> {
         Ok(addr)
     }
 
-    async fn handle_command(
-        &mut self,
-        sp_addr: SocketAddrV6,
-        command: InnerCommand,
-        incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) {
+    async fn handle_command(&mut self, command: InnerCommand) {
         match command {
             InnerCommand::Rpc(mut rpc) => {
                 let result = self
-                    .rpc_call(
-                        sp_addr,
-                        rpc.kind,
-                        rpc.our_trailing_data.as_mut(),
-                        incoming_buf,
-                    )
+                    .rpc_call(rpc.kind, rpc.our_trailing_data.as_mut())
                     .await;
                 let response = RpcResponse {
                     result,
@@ -1272,22 +1467,20 @@ impl<T: HostPhase2Provider> Inner<T> {
 
                 if rpc.response_tx.send(response).is_err() {
                     warn!(
-                        self.log,
+                        self.log(),
                         "RPC requester disappeared while waiting for response"
                     );
                 }
             }
             InnerCommand::SerialConsoleAttach(component, response_tx) => {
-                let resp = self
-                    .attach_serial_console(sp_addr, component, incoming_buf)
-                    .await;
+                let resp = self.attach_serial_console(component).await;
                 response_tx.send(resp).unwrap();
             }
             InnerCommand::SerialConsoleDetach(key, response_tx) => {
                 let resp = if key.is_none()
                     || key == Some(self.serial_console_connection_key)
                 {
-                    self.detach_serial_console(sp_addr, incoming_buf).await
+                    self.detach_serial_console().await
                 } else {
                     Ok(())
                 };
@@ -1296,164 +1489,29 @@ impl<T: HostPhase2Provider> Inner<T> {
         }
     }
 
-    async fn handle_incoming_message(
-        &mut self,
-        result: Result<(SocketAddrV6, Message, &[u8])>,
-    ) {
-        let (peer, message, sp_trailing_data) = match result {
-            Ok((peer, message, sp_trailing_data)) => {
-                (peer, message, sp_trailing_data)
+    async fn handle_incoming_message(&mut self, message: SingleSpMessage) {
+        match message {
+            SingleSpMessage::SerialConsole { component, offset, data } => {
+                self.forward_serial_console(component, offset, &data);
             }
-            Err(err) => {
-                error!(
-                    self.log,
-                    "error processing incoming data (ignoring)";
-                    "err" => %err,
-                );
-                return;
-            }
-        };
+            SingleSpMessage::SpResponse { header, response, .. } => {
+                // Reconstruct the message for logging.
+                let message =
+                    Message { header, kind: MessageKind::SpResponse(response) };
 
-        // TODO-correctness / TODO-security What does it mean to receive a
-        // message that doesn't match what we believe the SP's address is? For
-        // now, we will log and drop it, but this needs work.
-        if let Some(&(addr, _port)) = self.sp_addr_tx.borrow().as_ref() {
-            if peer != addr {
                 warn!(
-                    self.log,
-                    "ignoring message from unexpected IPv6 address";
-                    "address" => %peer,
-                    "sp_address" => %addr,
-                );
-                return;
-            }
-        }
-
-        match message.kind {
-            MessageKind::MgsRequest(_) | MessageKind::MgsResponse(_) => {
-                warn!(
-                    self.log, "ignoring non-SP message";
-                    "message" => ?message,
-                );
-            }
-            MessageKind::SpResponse(_) => {
-                warn!(
-                    self.log,
+                    self.log(),
                     "ignoring unexpected RPC response";
                     "message" => ?message,
                 );
             }
-            MessageKind::SpRequest(request) => {
-                self.handle_sp_request(
-                    peer,
-                    message.header.message_id,
-                    request,
-                    sp_trailing_data,
-                )
-                .await
-            }
-        }
-    }
-
-    async fn handle_sp_request(
-        &mut self,
-        addr: SocketAddrV6,
-        message_id: u32,
-        request: SpRequest,
-        sp_trailing_data: &[u8],
-    ) {
-        match request {
-            SpRequest::SerialConsole { component, offset } => {
-                self.forward_serial_console(
-                    component,
-                    offset,
-                    sp_trailing_data,
-                );
-            }
-            SpRequest::HostPhase2Data { hash, offset } => {
-                if !sp_trailing_data.is_empty() {
-                    warn!(
-                        self.log,
-                        "ignoring unexpected trailing data in host phase2 request";
-                        "length" => sp_trailing_data.len(),
-                    );
-                }
-                self.send_host_phase2_data(addr, message_id, hash, offset)
-                    .await;
-            }
-        }
-    }
-
-    async fn send_host_phase2_data(
-        &self,
-        addr: SocketAddrV6,
-        message_id: u32,
-        hash: [u8; 32],
-        offset: u64,
-    ) {
-        // We will optimistically attempt to serialize a successful response
-        // directly into an outgoing buffer. If our phase2 data provider cannot
-        // give us the data, we'll bail out and reserialize an error response.
-        let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
-
-        // Optimistically serialize a success response, so we can fetch host
-        // phase 2 data into the remainder of the buffer.
-        let mut message = Message {
-            header: Header { version: version::V2, message_id },
-            kind: MessageKind::MgsResponse(MgsResponse::HostPhase2Data {
-                hash,
-                offset,
-            }),
-        };
-
-        let mut n =
-            gateway_messages::serialize(&mut outgoing_buf, &message).unwrap();
-
-        match self
-            .host_phase2_provider
-            .read_data(hash, offset, &mut outgoing_buf[n..])
-            .await
-        {
-            Ok(m) => {
-                n += m;
-            }
-            Err(err) => {
-                warn!(
-                    self.log, "cannot fulfill SP request for host phase 2 data";
-                    "err" => %err,
-                );
-                let error_kind = match err {
-                    HostPhase2Error::NoImage { .. }
-                    | HostPhase2Error::Other { .. } => {
-                        MgsError::HostPhase2Unavailable { hash }
-                    }
-                    HostPhase2Error::BadOffset { .. } => {
-                        MgsError::HostPhase2ImageBadOffset { hash, offset }
-                    }
-                };
-                message.kind =
-                    MessageKind::MgsResponse(MgsResponse::Error(error_kind));
-
-                n = gateway_messages::serialize(&mut outgoing_buf, &message)
-                    .unwrap();
-            }
-        }
-
-        let serialized_message = &outgoing_buf[..n];
-        if let Err(err) = send(&self.socket, addr, serialized_message).await {
-            warn!(
-                self.log, "failed to respond to SP host phase 2 data request";
-                "err" => %err,
-            );
         }
     }
 
     async fn rpc_call(
         &mut self,
-        addr: SocketAddrV6,
         kind: MgsRequest,
         our_trailing_data: Option<&mut Cursor<Vec<u8>>>,
-        incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
     ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
         // Build and serialize our request once.
         self.message_id += 1;
@@ -1491,18 +1549,13 @@ impl<T: HostPhase2Provider> Inner<T> {
 
         for attempt in 1..=self.max_attempts_per_rpc {
             trace!(
-                self.log, "sending request to SP";
+                self.log(), "sending request to SP";
                 "request" => ?request,
                 "attempt" => attempt,
             );
 
             match self
-                .rpc_call_one_attempt(
-                    addr,
-                    request.header.message_id,
-                    outgoing_buf,
-                    incoming_buf,
-                )
+                .rpc_call_one_attempt(request.header.message_id, outgoing_buf)
                 .await?
             {
                 Some(result) => return Ok(result),
@@ -1515,10 +1568,8 @@ impl<T: HostPhase2Provider> Inner<T> {
 
     async fn rpc_call_one_attempt(
         &mut self,
-        addr: SocketAddrV6,
         message_id: u32,
         serialized_request: &[u8],
-        incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
     ) -> Result<Option<(SocketAddrV6, SpResponse, Vec<u8>)>> {
         // We consider an RPC attempt to be our attempt to contact the SP. It's
         // possible for the SP to respond and say it's busy; we shouldn't count
@@ -1526,12 +1577,23 @@ impl<T: HostPhase2Provider> Inner<T> {
         // attempt" function to handle busy SP responses.
         let mut busy_sp_backoff = sp_busy_policy();
 
-        loop {
-            send(&self.socket, addr, serialized_request).await?;
+        // We usually resend the request in each iteration of the loop below,
+        // but we skip that if we receive an out-of-band packet from the SP
+        // (e.g., a serial console relay).
+        let mut resend_request = true;
 
-            let result = match timeout(
+        loop {
+            if resend_request {
+                self.socket_handle.send(serialized_request).await?;
+            }
+
+            // Reset our default policy of resending requests if we iterate on
+            // this loop.
+            resend_request = true;
+
+            let message = match timeout(
                 self.per_attempt_timeout,
-                recv(&self.socket, incoming_buf, &self.log),
+                self.socket_handle.recv(),
             )
             .await
             {
@@ -1539,48 +1601,42 @@ impl<T: HostPhase2Provider> Inner<T> {
                 Err(_elapsed) => return Ok(None),
             };
 
-            let (peer, message, sp_trailing_data) = match result {
-                Ok((peer, message, data)) => (peer, message, data),
-                Err(err) => {
-                    warn!(
-                        self.log, "error receiving message";
-                        "err" => %err,
-                    );
-                    return Ok(None);
-                }
-            };
+            let (peer, header, response, sp_trailing_data) = match message {
+                SingleSpMessage::SerialConsole { component, offset, data } => {
+                    self.forward_serial_console(component, offset, &data);
 
-            let response = match message.kind {
-                MessageKind::MgsRequest(_) | MessageKind::MgsResponse(_) => {
-                    warn!(
-                        self.log, "ignoring non-SP message";
-                        "message" => ?message,
-                    );
-                    return Ok(None);
-                }
-                MessageKind::SpRequest(request) => {
-                    self.handle_sp_request(
-                        peer,
-                        message.header.message_id,
-                        request,
-                        sp_trailing_data,
-                    )
-                    .await;
+                    // This is the only case where we want to go straight back
+                    // to `recv()` again without resending our request; the SP
+                    // might have already sent our response but we got a serial
+                    // console packet to handle first.
+                    resend_request = false;
+
                     continue;
                 }
-                MessageKind::SpResponse(response) => {
-                    if message_id == message.header.message_id {
-                        response
+                SingleSpMessage::SpResponse {
+                    peer,
+                    header,
+                    response,
+                    data,
+                } => {
+                    if message_id == header.message_id {
+                        (peer, header, response, data)
                     } else {
                         debug!(
-                            self.log, "ignoring unexpected response";
-                            "id" => message.header.message_id,
+                            self.log(), "ignoring unexpected response";
+                            "id" => header.message_id,
                             "peer" => %peer,
                         );
                         return Ok(None);
                     }
                 }
             };
+
+            trace!(
+                self.log(), "received response from SP";
+                "header" => ?header,
+                "response" => ?response,
+            );
 
             match response {
                 SpResponse::Error(SpError::Busy) => {
@@ -1622,21 +1678,19 @@ impl<T: HostPhase2Provider> Inner<T> {
                 }
                 Err(mpsc::error::TrySendError::Full(_)) => {
                     error!(
-                        self.log,
+                        self.log(),
                         "discarding SP serial console data (buffer full)"
                     );
                     return;
                 }
             }
         }
-        warn!(self.log, "discarding SP serial console data (no receiver)");
+        warn!(self.log(), "discarding SP serial console data (no receiver)");
     }
 
     async fn attach_serial_console(
         &mut self,
-        sp_addr: SocketAddrV6,
         component: SpComponent,
-        incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
     ) -> Result<SerialConsoleAttachment> {
         // When a caller attaches to the SP's serial console, we return an
         // `mpsc::Receiver<_>` on which we send any packets received from the
@@ -1659,12 +1713,7 @@ impl<T: HostPhase2Provider> Inner<T> {
         }
 
         let (_peer, response, _data) = self
-            .rpc_call(
-                sp_addr,
-                MgsRequest::SerialConsoleAttach(component),
-                None,
-                incoming_buf,
-            )
+            .rpc_call(MgsRequest::SerialConsoleAttach(component), None)
             .await?;
         response.expect_serial_console_attach_ack()?;
 
@@ -1677,90 +1726,13 @@ impl<T: HostPhase2Provider> Inner<T> {
         })
     }
 
-    async fn detach_serial_console(
-        &mut self,
-        sp_addr: SocketAddrV6,
-        incoming_buf: &mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    ) -> Result<()> {
-        let (_peer, response, _data) = self
-            .rpc_call(
-                sp_addr,
-                MgsRequest::SerialConsoleDetach,
-                None,
-                incoming_buf,
-            )
-            .await?;
+    async fn detach_serial_console(&mut self) -> Result<()> {
+        let (_peer, response, _data) =
+            self.rpc_call(MgsRequest::SerialConsoleDetach, None).await?;
         response.expect_serial_console_detach_ack()?;
         self.serial_console_tx = None;
         Ok(())
     }
-}
-
-async fn send(
-    socket: &UdpSocket,
-    addr: SocketAddrV6,
-    data: &[u8],
-) -> Result<()> {
-    let n = socket
-        .send_to(data, addr)
-        .await
-        .map_err(|err| CommunicationError::UdpSendTo { addr, err })?;
-
-    // `send_to` should never write a partial packet; this is UDP.
-    assert_eq!(data.len(), n, "partial UDP packet sent to {}?!", addr);
-
-    Ok(())
-}
-
-async fn recv<'a>(
-    socket: &UdpSocket,
-    incoming_buf: &'a mut [u8; gateway_messages::MAX_SERIALIZED_SIZE],
-    log: &Logger,
-) -> Result<(SocketAddrV6, Message, &'a [u8])> {
-    let (n, peer) = socket
-        .recv_from(&mut incoming_buf[..])
-        .await
-        .map_err(CommunicationError::UdpRecv)?;
-
-    probes::recv_packet!(|| {
-        (peer, incoming_buf.as_ptr() as usize as u64, n as u64)
-    });
-
-    let peer = match peer {
-        SocketAddr::V6(addr) => addr,
-        SocketAddr::V4(_) => {
-            // We're exclusively using IPv6; we can't get a response from an
-            // IPv4 peer.
-            unreachable!()
-        }
-    };
-
-    // Peel off the header first to check the version.
-    let (header, sp_trailing_data) =
-        gateway_messages::deserialize::<Header>(&incoming_buf[..n])
-            .map_err(|err| CommunicationError::Deserialize { peer, err })?;
-
-    if header.version != version::V2 {
-        return Err(CommunicationError::VersionMismatch {
-            sp: header.version,
-            mgs: version::V2,
-        });
-    }
-
-    // Parse the remainder of the message and reassemble a `Message`.
-    let (kind, sp_trailing_data) =
-        gateway_messages::deserialize::<MessageKind>(sp_trailing_data)
-            .map_err(|err| CommunicationError::Deserialize { peer, err })?;
-
-    let message = Message { header, kind };
-
-    trace!(
-        log, "received message from SP";
-        "sp" => %peer,
-        "message" => ?message,
-    );
-
-    Ok((peer, message, sp_trailing_data))
 }
 
 fn sp_busy_policy() -> backoff::ExponentialBackoff {
