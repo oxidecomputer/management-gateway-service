@@ -30,6 +30,8 @@ pub enum HostPhase2Error {
 pub enum CommunicationError {
     #[error(transparent)]
     InterfaceError(#[from] InterfaceError),
+    #[error("scope ID of interface {interface} changing too frequently")]
+    ScopeIdChangingFrequently { interface: String },
     #[error("failed to join multicast group {group} on {interface}: {err}")]
     JoinMulticast { group: Ipv6Addr, interface: String, err: io::Error },
     #[error("failed to send UDP packet to {addr} on {interface}: {err}")]
@@ -63,6 +65,9 @@ impl From<SingleSpHandleError> for CommunicationError {
         match err {
             SingleSpHandleError::JoinMulticast { group, interface, err } => {
                 Self::JoinMulticast { group, interface, err }
+            }
+            SingleSpHandleError::ScopeIdChangingFrequently { interface } => {
+                Self::ScopeIdChangingFrequently { interface }
             }
             SingleSpHandleError::SendTo { addr, interface, err } => {
                 Self::UdpSendTo { addr, interface, err }
