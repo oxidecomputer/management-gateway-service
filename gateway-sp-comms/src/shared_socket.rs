@@ -452,7 +452,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                     // Failing to recv _probably_ means our socket is
                     // irrecoverably broken, but there isn't much we can do
                     // about that from here. We'll sleep to avoid spamming the
-                    // logs, but someone will have no notice we're dead and
+                    // logs, but someone will have to notice we're dead and
                     // restart us.
                     error!(
                         self.log, "failed to recv on shared MGS socket";
