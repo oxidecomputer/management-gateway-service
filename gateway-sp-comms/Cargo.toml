@@ -14,7 +14,7 @@ hubpack = "0.1"
 lru-cache = "0.1.2"
 # TODO: Replace with real nix after https://github.com/nix-rust/nix/pull/1973 is
 # merged / released
-nix = { git = "https://github.com/jgallagher/nix", branch = "illumos" }
+nix = { git = "https://github.com/jgallagher/nix", branch = "r0.26-illumos" }
 once_cell = "1.15.0"
 serde = { version = "1.0", features = ["derive"] }
 serde-big-array = "0.4.1"
