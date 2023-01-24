@@ -446,6 +446,8 @@ pub enum SpError {
     ComponentOperationFailed(u32),
     /// The update exceeds our slot capacity
     UpdateIsTooLarge,
+    /// The update must cover an exact number of sectors
+    UpdateHasPartialSectors,
 }
 
 impl fmt::Display for SpError {
@@ -511,6 +513,9 @@ impl fmt::Display for SpError {
             }
             Self::UpdateIsTooLarge => {
                 write!(f, "update is too large")
+            }
+            Self::UpdateHasPartialSectors => {
+                write!(f, "update does not cover an exact number of sectors")
             }
         }
     }
