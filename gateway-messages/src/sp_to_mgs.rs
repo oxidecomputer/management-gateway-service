@@ -444,6 +444,10 @@ pub enum SpError {
     /// The requested operation on the component failed with the associated
     /// code.
     ComponentOperationFailed(u32),
+    /// The update exceeds our slot capacity
+    UpdateIsTooLarge,
+    /// The update must cover an exact number of sectors
+    UpdateHasPartialSectors,
 }
 
 impl fmt::Display for SpError {
@@ -506,6 +510,12 @@ impl fmt::Display for SpError {
             }
             Self::ComponentOperationFailed(code) => {
                 write!(f, "component operation failed (code {code})")
+            }
+            Self::UpdateIsTooLarge => {
+                write!(f, "update is too large")
+            }
+            Self::UpdateHasPartialSectors => {
+                write!(f, "update does not cover an exact number of sectors")
             }
         }
     }
