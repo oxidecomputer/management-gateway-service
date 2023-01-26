@@ -1070,6 +1070,20 @@ impl AttachedSerialConsoleSend {
 
         rx.await.unwrap()
     }
+
+    pub async fn send_break(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+        self.inner_tx
+            .send(InnerCommand::Rpc(RpcRequest {
+                kind: MgsRequest::SerialConsoleBreak,
+                our_trailing_data: None,
+                response_tx: tx,
+            }))
+            .await
+            .unwrap();
+        rx.await.unwrap();
+        Ok(())
+    }
 }
 
 #[derive(Debug)]

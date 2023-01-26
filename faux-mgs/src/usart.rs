@@ -24,6 +24,7 @@ use crate::picocom_map::RemapRules;
 
 const CTRL_A: u8 = b'\x01';
 const CTRL_X: u8 = b'\x18';
+const CTRL_BACKSLASH: u8 = b'\x1c';
 
 pub(crate) async fn run(
     sp: SingleSp,
@@ -94,6 +95,11 @@ pub(crate) async fn run(
                         tx_to_sp_handle.await.unwrap();
                         return Ok(());
                     }
+                    IngestResult::Break => {
+                        send_tx.send(SendTxData::Break)
+                            .await
+                            .with_context(|| "failed to send data (task shutdown?)")?;
+                    }
                 }
 
                 flush_delay.start_if_unstarted().await;
@@ -117,7 +123,7 @@ pub(crate) async fn run(
 
             _ = flush_delay.ready() => {
                 send_tx
-                    .send(out_buf.steal_buf())
+                    .send(SendTxData::Buf(out_buf.steal_buf()))
                     .await
                     .with_context(|| "failed to send data (task shutdown?)")?;
             }
@@ -127,14 +133,23 @@ pub(crate) async fn run(
 
 async fn relay_data_to_sp(
     mut console_tx: AttachedSerialConsoleSend,
-    mut data_rx: mpsc::Receiver<Vec<u8>>,
+    mut data_rx: mpsc::Receiver<SendTxData>,
 ) -> Result<()> {
     while let Some(data) = data_rx.recv().await {
-        console_tx.write(data).await?;
+        match data {
+            SendTxData::Buf(buf) => console_tx.write(buf).await?,
+            SendTxData::Break => console_tx.send_break().await?,
+        }
     }
     console_tx.detach().await?;
 
     Ok(())
+}
+
+#[derive(Debug)]
+enum SendTxData {
+    Buf(Vec<u8>),
+    Break,
 }
 
 struct UnrawTermiosGuard {
@@ -211,6 +226,9 @@ struct StdinOutBuf {
 enum IngestResult {
     Ok,
     Exit,
+
+    /// Send a break on the UART
+    Break,
 }
 
 impl StdinOutBuf {
@@ -241,6 +259,13 @@ impl StdinOutBuf {
                     if self.in_prefix {
                         // Exit on Ctrl-A Ctrl-X
                         return IngestResult::Exit;
+                    } else {
+                        self.buf.push(c);
+                    }
+                }
+                CTRL_BACKSLASH => {
+                    if self.in_prefix {
+                        return IngestResult::Break;
                     } else {
                         self.buf.push(c);
                     }
