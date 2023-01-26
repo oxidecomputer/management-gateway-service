@@ -97,6 +97,8 @@ pub enum SpResponse {
     ComponentClearStatusAck,
     ComponentActiveSlot(u16),
     ComponentSetActiveSlotAck,
+    SerialConsoleBreakAck,
+    SendHostNmiAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

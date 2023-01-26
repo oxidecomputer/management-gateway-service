@@ -93,6 +93,10 @@ pub enum MgsRequest {
         component: SpComponent,
         slot: u16,
     },
+    /// Send a break on the host serial console
+    SerialConsoleBreak,
+    /// Send an NMI to the host by toggling a GPIO
+    SendHostNmi,
 }
 
 #[derive(

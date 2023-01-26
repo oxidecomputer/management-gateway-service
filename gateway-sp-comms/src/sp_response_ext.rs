@@ -103,6 +103,9 @@ impl SpResponseExt for SpResponse {
             Self::SerialConsoleDetachAck => {
                 response_kind_names::SERIAL_CONSOLE_DETACH_ACK
             }
+            Self::SerialConsoleBreakAck => {
+                response_kind_names::SERIAL_CONSOLE_BREAK_ACK
+            }
             Self::SpUpdatePrepareAck => {
                 response_kind_names::SP_UPDATE_PREPARE_ACK
             }
@@ -131,6 +134,7 @@ impl SpResponseExt for SpResponse {
             Self::ComponentSetActiveSlotAck => {
                 response_kind_names::COMPONENT_SET_ACTIVE_SLOT_ACK
             }
+            Self::SendHostNmiAck => response_kind_names::SEND_HOST_NMI_ACK,
         }
     }
 
@@ -440,6 +444,8 @@ mod response_kind_names {
         "serial_console_write_ack";
     pub(super) const SERIAL_CONSOLE_DETACH_ACK: &str =
         "serial_console_detach_ack";
+    pub(super) const SERIAL_CONSOLE_BREAK_ACK: &str =
+        "serial_console_break_ack";
     pub(super) const SP_UPDATE_PREPARE_ACK: &str = "sp_update_prepare_ack";
     pub(super) const COMPONENT_UPDATE_PREPARE_ACK: &str =
         "component_update_prepare_ack";
@@ -459,4 +465,5 @@ mod response_kind_names {
     pub(super) const COMPONENT_ACTIVE_SLOT: &str = "component_active_slot";
     pub(super) const COMPONENT_SET_ACTIVE_SLOT_ACK: &str =
         "component_set_active_slot_ack";
+    pub(super) const SEND_HOST_NMI_ACK: &str = "send_host_nmi_ack";
 }
