@@ -73,6 +73,8 @@ pub(crate) trait SpResponseExt {
     fn expect_component_active_slot(self) -> Result<u16>;
 
     fn expect_component_set_active_slot_ack(self) -> Result<()>;
+
+    fn expect_send_host_nmi_ack(self) -> Result<()>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -434,6 +436,17 @@ impl SpResponseExt for SpResponse {
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::COMPONENT_SET_ACTIVE_SLOT_ACK,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_send_host_nmi_ack(self) -> Result<()> {
+        match self {
+            Self::SendHostNmiAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::SP_STATE,
                 got: other.name(),
             }),
         }
