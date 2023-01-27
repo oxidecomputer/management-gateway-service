@@ -99,7 +99,7 @@ pub(crate) async fn run(
                         send_tx.send(SendTxData::Break)
                             .await
                             .with_context(|| "failed to send data (task shutdown?)")?;
-                        println!("\n*** break sent ***");
+                        println!("\n\r*** break sent ***\r");
                     }
                 }
 
