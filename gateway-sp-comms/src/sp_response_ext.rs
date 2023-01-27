@@ -42,6 +42,8 @@ pub(crate) trait SpResponseExt {
 
     fn expect_serial_console_detach_ack(self) -> Result<()>;
 
+    fn expect_serial_console_break_ack(self) -> Result<()>;
+
     fn expect_sp_update_prepare_ack(self) -> Result<()>;
 
     fn expect_component_update_prepare_ack(self) -> Result<()>;
@@ -253,6 +255,17 @@ impl SpResponseExt for SpResponse {
     fn expect_serial_console_detach_ack(self) -> Result<()> {
         match self {
             Self::SerialConsoleDetachAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::SP_STATE,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_serial_console_break_ack(self) -> Result<()> {
+        match self {
+            Self::SerialConsoleBreakAck => Ok(()),
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SP_STATE,
