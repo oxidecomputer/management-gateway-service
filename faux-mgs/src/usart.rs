@@ -245,6 +245,7 @@ impl StdinOutBuf {
             return IngestResult::Ok;
         }
 
+        let mut result = IngestResult::Ok;
         for c in buf {
             match c {
                 CTRL_A => {
@@ -266,7 +267,11 @@ impl StdinOutBuf {
                 }
                 CTRL_BACKSLASH => {
                     if self.in_prefix {
-                        return IngestResult::Break;
+                        // Keep processing the buffer, but return a flag
+                        // indicating that the host wants a USART break to be
+                        // sent.
+                        result = IngestResult::Break;
+                        self.in_prefix = false;
                     } else {
                         self.buf.push(c);
                     }
@@ -278,7 +283,7 @@ impl StdinOutBuf {
             }
         }
 
-        IngestResult::Ok
+        result
     }
 
     fn steal_buf(&mut self) -> Vec<u8> {
