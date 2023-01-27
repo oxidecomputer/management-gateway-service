@@ -214,6 +214,12 @@ pub trait SpHandler {
         port: SpPort,
     ) -> Result<(), SpError>;
 
+    fn serial_console_break(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+    ) -> Result<(), SpError>;
+
     fn reset_prepare(
         &mut self,
         sender: SocketAddrV6,
@@ -326,6 +332,11 @@ pub trait SpHandler {
         offset: u64,
         data: &[u8],
     );
+    fn send_host_nmi(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -683,6 +694,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SerialConsoleDetach => handler
             .serial_console_detach(sender, port)
             .map(|()| SpResponse::SerialConsoleDetachAck),
+        MgsRequest::SerialConsoleBreak => handler
+            .serial_console_break(sender, port)
+            .map(|()| SpResponse::SerialConsoleBreakAck),
         MgsRequest::GetPowerState => {
             handler.power_state(sender, port).map(SpResponse::PowerState)
         }
@@ -751,6 +765,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentSetActiveSlot { component, slot } => handler
             .component_set_active_slot(sender, port, component, slot)
             .map(|()| SpResponse::ComponentSetActiveSlotAck),
+        MgsRequest::SendHostNmi => handler
+            .send_host_nmi(sender, port)
+            .map(|()| SpResponse::SendHostNmiAck),
     };
 
     let response = match result {
@@ -949,6 +966,14 @@ mod tests {
             unimplemented!()
         }
 
+        fn serial_console_break(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
         fn reset_prepare(
             &mut self,
             _sender: SocketAddrV6,
@@ -1056,6 +1081,14 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
             _slot: u16,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn send_host_nmi(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
         ) -> Result<(), SpError> {
             unimplemented!()
         }

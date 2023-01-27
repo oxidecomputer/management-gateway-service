@@ -667,6 +667,12 @@ impl SingleSp {
     ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
         rpc(&self.cmds_tx, kind, None).await.result
     }
+
+    pub async fn send_host_nmi(&self) -> Result<()> {
+        self.rpc(MgsRequest::SendHostNmi).await.and_then(
+            |(_peer, response, _data)| response.expect_send_host_nmi_ack(),
+        )
+    }
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)
@@ -1069,6 +1075,15 @@ impl AttachedSerialConsoleSend {
             .unwrap();
 
         rx.await.unwrap()
+    }
+
+    pub async fn send_break(&self) -> Result<()> {
+        rpc(&self.inner_tx, MgsRequest::SerialConsoleBreak, None)
+            .await
+            .result
+            .and_then(|(_peer, response, _data)| {
+                response.expect_serial_console_break_ack()
+            })
     }
 }
 

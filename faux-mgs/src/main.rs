@@ -242,6 +242,9 @@ enum Command {
         new_power_state: Option<PowerState>,
     },
 
+    /// Sends an NMI to the host (SP3) CPU by toggling a GPIO
+    SendHostNmi,
+
     /// Instruct the SP to reset.
     Reset,
 }
@@ -809,6 +812,10 @@ async fn run_command(
             sp.reset_trigger().await?;
             info!(log, "SP reset complete");
             Ok(vec!["reset complete".to_string()])
+        }
+        Command::SendHostNmi => {
+            sp.send_host_nmi().await?;
+            Ok(vec!["done".to_string()])
         }
     }
 }
