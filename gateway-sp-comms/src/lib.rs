@@ -34,6 +34,7 @@ pub use single_sp::AttachedSerialConsole;
 pub use single_sp::AttachedSerialConsoleRecv;
 pub use single_sp::AttachedSerialConsoleSend;
 pub use single_sp::SingleSp;
+pub use single_sp::SpComponentDetails;
 pub use single_sp::SpDevice;
 pub use single_sp::SpInventory;
 
