@@ -245,6 +245,14 @@ enum Command {
     /// Sends an NMI to the host (SP3) CPU by toggling a GPIO
     SendHostNmi,
 
+    /// Set an IPCC key/value
+    SetIpccKeyValue {
+        key: u8,
+
+        /// Path to a file containing the value
+        value_path: PathBuf,
+    },
+
     /// Instruct the SP to reset.
     Reset,
 }
@@ -815,6 +823,13 @@ async fn run_command(
         }
         Command::SendHostNmi => {
             sp.send_host_nmi().await?;
+            Ok(vec!["done".to_string()])
+        }
+        Command::SetIpccKeyValue { key, value_path } => {
+            let value = fs::read(&value_path).with_context(|| {
+                format!("failed to read {}", value_path.display())
+            })?;
+            sp.set_ipcc_key_lookup_value(key, value).await?;
             Ok(vec!["done".to_string()])
         }
     }

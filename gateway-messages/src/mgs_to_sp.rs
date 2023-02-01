@@ -97,6 +97,14 @@ pub enum MgsRequest {
     SerialConsoleBreak,
     /// Send an NMI to the host by toggling a GPIO
     SendHostNmi,
+    /// Set the value for an IPCC `KeyLookup` request across the host/SP control
+    /// uart.
+    ///
+    /// The value is appended as trailing data. We currently assume that the max
+    /// length for any value fits into the trailing data of a single packet.
+    SetIpccKeyLookupValue {
+        key: u8,
+    },
 }
 
 #[derive(

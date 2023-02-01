@@ -58,6 +58,8 @@ pub enum CommunicationError {
     TlvDecode(#[from] tlv::DecodeError),
     #[error("invalid pagination: {reason}")]
     TlvPagination { reason: &'static str },
+    #[error("IPCC key lookup value too large")]
+    IpccKeyLookupValueTooLarge,
 }
 
 impl From<SingleSpHandleError> for CommunicationError {

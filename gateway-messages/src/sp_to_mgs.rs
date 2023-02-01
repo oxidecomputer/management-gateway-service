@@ -99,6 +99,7 @@ pub enum SpResponse {
     ComponentSetActiveSlotAck,
     SerialConsoleBreakAck,
     SendHostNmiAck,
+    SetIpccKeyLookupValueAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -448,6 +449,8 @@ pub enum SpError {
     ComponentOperationFailed(u32),
     /// The update exceeds our slot capacity
     UpdateIsTooLarge,
+    /// Setting requested IPCC key/value failed.
+    SetIpccKeyLookupValueFailed(IpccKeyLookupValueError),
 }
 
 impl fmt::Display for SpError {
@@ -514,12 +517,37 @@ impl fmt::Display for SpError {
             Self::UpdateIsTooLarge => {
                 write!(f, "update is too large")
             }
+            Self::SetIpccKeyLookupValueFailed(err) => {
+                write!(f, "failed to set IPCC key/value: {err}")
+            }
         }
     }
 }
 
 #[cfg(feature = "std")]
 impl std::error::Error for SpError {}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum IpccKeyLookupValueError {
+    InvalidKey,
+    ValueTooLong { max_len: u16 },
+}
+
+impl fmt::Display for IpccKeyLookupValueError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            IpccKeyLookupValueError::InvalidKey => write!(f, "invalid key"),
+            IpccKeyLookupValueError::ValueTooLong { max_len } => {
+                write!(f, "value too long (limit: {max_len})")
+            }
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for IpccKeyLookupValueError {}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,

@@ -75,6 +75,8 @@ pub(crate) trait SpResponseExt {
     fn expect_component_set_active_slot_ack(self) -> Result<()>;
 
     fn expect_send_host_nmi_ack(self) -> Result<()>;
+
+    fn expect_set_ipcc_key_lookup_value_ack(self) -> Result<()>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -139,6 +141,9 @@ impl SpResponseExt for SpResponse {
                 response_kind_names::COMPONENT_SET_ACTIVE_SLOT_ACK
             }
             Self::SendHostNmiAck => response_kind_names::SEND_HOST_NMI_ACK,
+            Self::SetIpccKeyLookupValueAck => {
+                response_kind_names::SET_IPCC_KEY_LOOKUP_VALUE_ACK
+            }
         }
     }
 
@@ -451,6 +456,17 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_set_ipcc_key_lookup_value_ack(self) -> Result<()> {
+        match self {
+            Self::SetIpccKeyLookupValueAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::SP_STATE,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -492,4 +508,6 @@ mod response_kind_names {
     pub(super) const COMPONENT_SET_ACTIVE_SLOT_ACK: &str =
         "component_set_active_slot_ack";
     pub(super) const SEND_HOST_NMI_ACK: &str = "send_host_nmi_ack";
+    pub(super) const SET_IPCC_KEY_LOOKUP_VALUE_ACK: &str =
+        "set_ipcc_key_lookup_value_ack";
 }
