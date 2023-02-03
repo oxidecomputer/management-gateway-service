@@ -332,10 +332,19 @@ pub trait SpHandler {
         offset: u64,
         data: &[u8],
     );
+
     fn send_host_nmi(
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
+    ) -> Result<(), SpError>;
+
+    fn set_ipcc_key_lookup_value(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        key: u8,
+        value: &[u8],
     ) -> Result<(), SpError>;
 }
 
@@ -593,9 +602,9 @@ fn handle_mgs_request<H: SpHandler>(
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
     let trailing_data = match &kind {
-        MgsRequest::UpdateChunk(_) | MgsRequest::SerialConsoleWrite { .. } => {
-            leftover
-        }
+        MgsRequest::UpdateChunk(_)
+        | MgsRequest::SerialConsoleWrite { .. }
+        | MgsRequest::SetIpccKeyLookupValue { .. } => leftover,
         _ => {
             if !leftover.is_empty() {
                 return (
@@ -768,6 +777,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SendHostNmi => handler
             .send_host_nmi(sender, port)
             .map(|()| SpResponse::SendHostNmiAck),
+        MgsRequest::SetIpccKeyLookupValue { key } => handler
+            .set_ipcc_key_lookup_value(sender, port, key, trailing_data)
+            .map(|()| SpResponse::SetIpccKeyLookupValueAck),
     };
 
     let response = match result {
@@ -1089,6 +1101,16 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn set_ipcc_key_lookup_value(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _key: u8,
+            _value: &[u8],
         ) -> Result<(), SpError> {
             unimplemented!()
         }

@@ -40,6 +40,7 @@ use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
+use gateway_messages::MIN_TRAILING_DATA_LEN;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -672,6 +673,33 @@ impl SingleSp {
         self.rpc(MgsRequest::SendHostNmi).await.and_then(
             |(_peer, response, _data)| response.expect_send_host_nmi_ack(),
         )
+    }
+
+    pub async fn set_ipcc_key_lookup_value(
+        &self,
+        key: u8,
+        data: Vec<u8>,
+    ) -> Result<()> {
+        // We currently only support ipcc values that fit in a single packet;
+        // immediately fail if this one doesn't.
+        if data.len() > MIN_TRAILING_DATA_LEN {
+            return Err(CommunicationError::IpccKeyLookupValueTooLarge);
+        }
+
+        let (result, leftover_data) = rpc_with_trailing_data(
+            &self.cmds_tx,
+            MgsRequest::SetIpccKeyLookupValue { key },
+            Cursor::new(data),
+        )
+        .await;
+
+        // We checked that `data.len()` fits in one packet above, so we should
+        // never have any leftover data.
+        assert!(CursorExt::is_empty(&leftover_data));
+
+        result.and_then(|(_peer, response, _data)| {
+            response.expect_set_ipcc_key_lookup_value_ack()
+        })
     }
 }
 
