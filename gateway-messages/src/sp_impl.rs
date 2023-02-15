@@ -300,6 +300,7 @@ pub trait SpHandler {
         port: SpPort,
         component: SpComponent,
         slot: u16,
+        persist: bool,
     ) -> Result<(), SpError>;
 
     fn get_startup_options(
@@ -772,8 +773,13 @@ fn handle_mgs_request<H: SpHandler>(
             .component_get_active_slot(sender, port, component)
             .map(SpResponse::ComponentActiveSlot),
         MgsRequest::ComponentSetActiveSlot { component, slot } => handler
-            .component_set_active_slot(sender, port, component, slot)
+            .component_set_active_slot(sender, port, component, slot, false)
             .map(|()| SpResponse::ComponentSetActiveSlotAck),
+        MgsRequest::ComponentSetAndPersistActiveSlot { component, slot } => {
+            handler
+                .component_set_active_slot(sender, port, component, slot, true)
+                .map(|()| SpResponse::ComponentSetAndPersistActiveSlotAck)
+        }
         MgsRequest::SendHostNmi => handler
             .send_host_nmi(sender, port)
             .map(|()| SpResponse::SendHostNmiAck),
@@ -1093,6 +1099,7 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
             _slot: u16,
+            _persist: bool,
         ) -> Result<(), SpError> {
             unimplemented!()
         }

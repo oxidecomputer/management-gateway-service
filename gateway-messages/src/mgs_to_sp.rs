@@ -105,6 +105,18 @@ pub enum MgsRequest {
     SetIpccKeyLookupValue {
         key: u8,
     },
+
+    /// For components with multiple slots (e.g., host boot flash), set the
+    /// currently-active slot and persist it to non-volatile memory.
+    ///
+    /// The effect/timing of setting the active slot is component-defined; e.g.,
+    /// it make not take effect until the component or SP is next booted.
+    // TODO: combine this with `ComponentSetActiveSlot` with `persist: bool` on
+    // the next version bump.
+    ComponentSetAndPersistActiveSlot {
+        component: SpComponent,
+        slot: u16,
+    },
 }
 
 #[derive(
