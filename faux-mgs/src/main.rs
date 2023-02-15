@@ -155,6 +155,13 @@ enum Command {
         component: String,
         #[clap(short, long, value_name = "SLOT", help = "set the active slot")]
         set: Option<u16>,
+        #[clap(
+            short,
+            long,
+            requires = "set",
+            help = "persist the active slot to non-volatile memory"
+        )]
+        persist: bool,
     },
 
     /// Get or set startup options on an SP.
@@ -641,13 +648,14 @@ async fn run_command(
             info!(log, "ignition link events cleared");
             Ok(vec!["ignition link events cleared".to_string()])
         }
-        Command::ComponentActiveSlot { component, set } => {
+        Command::ComponentActiveSlot { component, set, persist } => {
             let sp_component = SpComponent::try_from(component.as_str())
                 .map_err(|_| {
                     anyhow!("invalid component name: {}", component)
                 })?;
             if let Some(slot) = set {
-                sp.set_component_active_slot(sp_component, slot).await?;
+                sp.set_component_active_slot(sp_component, slot, persist)
+                    .await?;
                 Ok(vec![format!("set active slot for {component:?} to {slot}")])
             } else {
                 let slot = sp.component_active_slot(sp_component).await?;
