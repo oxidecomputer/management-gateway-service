@@ -376,7 +376,11 @@ impl SingleSp {
             MgsRequest::ComponentSetActiveSlot { component, slot }
         };
         self.rpc(msg).await.and_then(|(_peer, response, _data)| {
-            response.expect_component_set_active_slot_ack()
+            if persist {
+                response.expect_component_set_and_persist_active_slot_ack()
+            } else {
+                response.expect_component_set_active_slot_ack()
+            }
         })
     }
 
