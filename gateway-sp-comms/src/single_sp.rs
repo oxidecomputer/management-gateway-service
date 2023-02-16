@@ -368,12 +368,20 @@ impl SingleSp {
         &self,
         component: SpComponent,
         slot: u16,
+        persist: bool,
     ) -> Result<()> {
-        self.rpc(MgsRequest::ComponentSetActiveSlot { component, slot })
-            .await
-            .and_then(|(_peer, response, _data)| {
+        let msg = if persist {
+            MgsRequest::ComponentSetAndPersistActiveSlot { component, slot }
+        } else {
+            MgsRequest::ComponentSetActiveSlot { component, slot }
+        };
+        self.rpc(msg).await.and_then(|(_peer, response, _data)| {
+            if persist {
+                response.expect_component_set_and_persist_active_slot_ack()
+            } else {
                 response.expect_component_set_active_slot_ack()
-            })
+            }
+        })
     }
 
     /// Request that the status of a component be cleared (e.g., resetting

@@ -74,6 +74,8 @@ pub(crate) trait SpResponseExt {
 
     fn expect_component_set_active_slot_ack(self) -> Result<()>;
 
+    fn expect_component_set_and_persist_active_slot_ack(self) -> Result<()>;
+
     fn expect_send_host_nmi_ack(self) -> Result<()>;
 
     fn expect_set_ipcc_key_lookup_value_ack(self) -> Result<()>;
@@ -139,6 +141,9 @@ impl SpResponseExt for SpResponse {
             }
             Self::ComponentSetActiveSlotAck => {
                 response_kind_names::COMPONENT_SET_ACTIVE_SLOT_ACK
+            }
+            Self::ComponentSetAndPersistActiveSlotAck => {
+                response_kind_names::COMPONENT_SET_AND_PERSIST_ACTIVE_SLOT_ACK
             }
             Self::SendHostNmiAck => response_kind_names::SEND_HOST_NMI_ACK,
             Self::SetIpccKeyLookupValueAck => {
@@ -446,6 +451,17 @@ impl SpResponseExt for SpResponse {
         }
     }
 
+    fn expect_component_set_and_persist_active_slot_ack(self) -> Result<()> {
+        match self {
+            Self::ComponentSetAndPersistActiveSlotAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::COMPONENT_SET_AND_PERSIST_ACTIVE_SLOT_ACK,
+                got: other.name(),
+            }),
+        }
+    }
+
     fn expect_send_host_nmi_ack(self) -> Result<()> {
         match self {
             Self::SendHostNmiAck => Ok(()),
@@ -507,6 +523,8 @@ mod response_kind_names {
     pub(super) const COMPONENT_ACTIVE_SLOT: &str = "component_active_slot";
     pub(super) const COMPONENT_SET_ACTIVE_SLOT_ACK: &str =
         "component_set_active_slot_ack";
+    pub(super) const COMPONENT_SET_AND_PERSIST_ACTIVE_SLOT_ACK: &str =
+        "component_set_and_persist_active_slot_ack";
     pub(super) const SEND_HOST_NMI_ACK: &str = "send_host_nmi_ack";
     pub(super) const SET_IPCC_KEY_LOOKUP_VALUE_ACK: &str =
         "set_ipcc_key_lookup_value_ack";
