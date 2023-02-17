@@ -32,3 +32,8 @@ gateway-messages = { path = "../gateway-messages", features = ["std"] }
 [dependencies.tokio]
 version = "1.21"
 features = [ "full" ]
+
+# This is required for the build.rs script to check for an appropriate compiler
+# version so that `usdt` can be built on stable rust.
+[build-dependencies]
+version_check = "0.9.4"
