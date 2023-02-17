@@ -4,8 +4,9 @@
 
 // Copyright 2023 Oxide Computer Company
 
-// Required nightly features for `usdt`
-#![cfg_attr(target_os = "macos", feature(asm_sym))]
+// The `usdt` crate may require features depending on the compiler version.
+#![cfg_attr(usdt_need_asm, feature(asm))]
+#![cfg_attr(usdt_need_asm_sym, feature(asm_sym))]
 
 //! This crate provides UDP-based communication to the `control-plane-agent`
 //! task of an SP.
