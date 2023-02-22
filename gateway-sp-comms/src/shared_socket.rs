@@ -38,11 +38,13 @@ use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
 use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
+use tokio::time::Instant;
 
 use crate::error::HostPhase2Error;
 use crate::scope_id_cache::InterfaceError;
 use crate::scope_id_cache::Name;
 use crate::scope_id_cache::ScopeIdCache;
+use crate::single_sp::HostPhase2Request;
 use crate::HostPhase2Provider;
 use crate::SP_TO_MGS_MULTICAST_ADDR;
 
@@ -416,6 +418,7 @@ enum RecvError {
 // we look up the `SingleSp` instance by the scope ID of the source of the
 // packet then send it an instance of this enum to handle.
 pub(crate) enum SingleSpMessage {
+    HostPhase2Request(HostPhase2Request),
     SerialConsole {
         component: SpComponent,
         offset: u64,
@@ -560,7 +563,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
             MessageKind::MgsResponse(_) => {
                 Err(RecvError::InvalidMessageKind("MgsResponse"))
             }
-            MessageKind::SpRequest(SpRequest::HostPhase2Data {
+            &MessageKind::SpRequest(SpRequest::HostPhase2Data {
                 hash,
                 offset,
             }) => {
@@ -573,6 +576,18 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                     );
                 }
 
+                // Notify our handler of this request so it can report progress
+                // to its clients.
+                self.forward_to_single_sp(
+                    peer,
+                    SingleSpMessage::HostPhase2Request(HostPhase2Request {
+                        hash,
+                        offset,
+                        received: Instant::now(),
+                    }),
+                )
+                .await?;
+
                 // Spawn the handler for reading and sending host phase2 data
                 // onto a background task to avoid blocking additional `recv`s
                 // on it. We do not attempt to retry or handle errors in this
@@ -583,8 +598,8 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                     Arc::clone(&self.host_phase2_provider),
                     peer,
                     message.header.message_id,
-                    *hash,
-                    *offset,
+                    hash,
+                    offset,
                     self.log.clone(),
                 ));
                 Ok(())

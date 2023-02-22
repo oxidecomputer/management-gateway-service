@@ -92,6 +92,13 @@ const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HostPhase2Request {
+    pub hash: [u8; 32],
+    pub offset: u64,
+    pub received: Instant,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SpInventory {
     pub devices: Vec<SpDevice>,
@@ -236,6 +243,24 @@ impl SingleSp {
         &self,
     ) -> &watch::Receiver<Option<(SocketAddrV6, SpPort)>> {
         &self.sp_addr_rx
+    }
+
+    /// Get the most recent host phase 2 request we've received from our target
+    /// SP.
+    ///
+    /// This method does not actively communicate with the SP; it only reports
+    /// the most recent request we've received from it (if any).
+    pub async fn most_recent_host_phase2_request(
+        &self,
+    ) -> Option<HostPhase2Request> {
+        let (tx, rx) = oneshot::channel();
+
+        self.cmds_tx
+            .send(InnerCommand::GetMostRecentHostPhase2Request(tx))
+            .await
+            .unwrap();
+
+        rx.await.unwrap()
     }
 
     /// Request the state of an ignition target.
@@ -1184,6 +1209,7 @@ struct SerialConsoleAttachment {
 #[allow(clippy::large_enum_variant)]
 enum InnerCommand {
     Rpc(RpcRequest),
+    GetMostRecentHostPhase2Request(oneshot::Sender<Option<HostPhase2Request>>),
     SerialConsoleAttach(
         SpComponent,
         oneshot::Sender<Result<SerialConsoleAttachment>>,
@@ -1327,6 +1353,7 @@ struct Inner<T> {
     cmds_rx: mpsc::Receiver<InnerCommand>,
     message_id: u32,
     serial_console_connection_key: u64,
+    most_recent_host_phase2_request: Option<HostPhase2Request>,
 }
 
 impl<T: InnerSocket> Inner<T> {
@@ -1349,6 +1376,7 @@ impl<T: InnerSocket> Inner<T> {
             cmds_rx,
             message_id: 0,
             serial_console_connection_key: 0,
+            most_recent_host_phase2_request: None,
         }
     }
 
@@ -1469,6 +1497,9 @@ impl<T: InnerSocket> Inner<T> {
                             our_trailing_data: rpc.our_trailing_data,
                         })
                         .is_ok(),
+                    Ok(InnerCommand::GetMostRecentHostPhase2Request(tx)) => {
+                        tx.send(self.most_recent_host_phase2_request).is_ok()
+                    }
                     Ok(InnerCommand::SerialConsoleAttach(_, tx)) => {
                         tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
                     }
@@ -1523,9 +1554,12 @@ impl<T: InnerSocket> Inner<T> {
                     );
                 }
             }
+            InnerCommand::GetMostRecentHostPhase2Request(response_tx) => {
+                _ = response_tx.send(self.most_recent_host_phase2_request);
+            }
             InnerCommand::SerialConsoleAttach(component, response_tx) => {
                 let resp = self.attach_serial_console(component).await;
-                response_tx.send(resp).unwrap();
+                _ = response_tx.send(resp);
             }
             InnerCommand::SerialConsoleDetach(key, response_tx) => {
                 let resp = if key.is_none()
@@ -1535,13 +1569,16 @@ impl<T: InnerSocket> Inner<T> {
                 } else {
                     Ok(())
                 };
-                response_tx.send(resp).unwrap();
+                _ = response_tx.send(resp);
             }
         }
     }
 
     async fn handle_incoming_message(&mut self, message: SingleSpMessage) {
         match message {
+            SingleSpMessage::HostPhase2Request(request) => {
+                self.set_most_recent_host_phase2_request(request);
+            }
             SingleSpMessage::SerialConsole { component, offset, data } => {
                 self.forward_serial_console(component, offset, &data);
             }
@@ -1653,13 +1690,20 @@ impl<T: InnerSocket> Inner<T> {
             };
 
             let (peer, header, response, sp_trailing_data) = match message {
+                SingleSpMessage::HostPhase2Request(request) => {
+                    self.set_most_recent_host_phase2_request(request);
+
+                    // This is not a response from the SP; we should recv the
+                    // next message without resending our request.
+                    resend_request = false;
+
+                    continue;
+                }
                 SingleSpMessage::SerialConsole { component, offset, data } => {
                     self.forward_serial_console(component, offset, &data);
 
-                    // This is the only case where we want to go straight back
-                    // to `recv()` again without resending our request; the SP
-                    // might have already sent our response but we got a serial
-                    // console packet to handle first.
+                    // This is not a response from the SP; we should recv the
+                    // next message without resending our request.
                     resend_request = false;
 
                     continue;
@@ -1708,6 +1752,17 @@ impl<T: InnerSocket> Inner<T> {
                 }
             }
         }
+    }
+
+    fn set_most_recent_host_phase2_request(
+        &mut self,
+        request: HostPhase2Request,
+    ) {
+        trace!(
+            self.log(), "recording host phase 2 request";
+            "request" => ?request,
+        );
+        self.most_recent_host_phase2_request = Some(request);
     }
 
     fn forward_serial_console(
