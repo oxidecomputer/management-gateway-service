@@ -35,6 +35,12 @@ pub enum HostPhase2ImageError {
 
 #[async_trait]
 pub trait HostPhase2Provider: Send + Sync + 'static {
+    /// Report the total size of the image identified by `sha256_hash`.
+    async fn total_size(
+        &self,
+        sha256_hash: Sha256Digest,
+    ) -> Result<u64, HostPhase2Error>;
+
     /// Read data from the phase 2 image identified by `sha256_hash` starting at
     /// `offset` into `out`, returning the number of bytes copied.
     async fn read_data(
@@ -47,6 +53,13 @@ pub trait HostPhase2Provider: Send + Sync + 'static {
 
 #[async_trait]
 impl<T: HostPhase2Provider> HostPhase2Provider for Arc<T> {
+    async fn total_size(
+        &self,
+        sha256_hash: Sha256Digest,
+    ) -> Result<u64, HostPhase2Error> {
+        (**self).total_size(sha256_hash).await
+    }
+
     async fn read_data(
         &self,
         sha256_hash: Sha256Digest,
@@ -129,6 +142,20 @@ impl InMemoryHostPhase2Provider {
 
 #[async_trait]
 impl HostPhase2Provider for InMemoryHostPhase2Provider {
+    async fn total_size(
+        &self,
+        sha256_hash: Sha256Digest,
+    ) -> Result<u64, HostPhase2Error> {
+        let mut cache = self.cache.lock().await;
+
+        let (_header, image) =
+            cache.get_mut(&sha256_hash).ok_or_else(|| {
+                HostPhase2Error::NoImage { hash: hex::encode(sha256_hash) }
+            })?;
+
+        Ok(image.len() as u64)
+    }
+
     async fn read_data(
         &self,
         sha256_hash: Sha256Digest,
