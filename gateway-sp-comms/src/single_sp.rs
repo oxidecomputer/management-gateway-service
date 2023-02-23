@@ -263,6 +263,24 @@ impl SingleSp {
         rx.await.unwrap()
     }
 
+    /// Clear the most recent host phase 2 request we've received from our
+    /// target SP.
+    ///
+    /// This method does not actively communicate with the SP, but is inherently
+    /// racy with it: we could receive a host phase 2 request from our SP at any
+    /// time, including immediately after we clear it but even before this
+    /// function returns.
+    pub async fn clear_most_recent_host_phase2_request(&self) {
+        let (tx, rx) = oneshot::channel();
+
+        self.cmds_tx
+            .send(InnerCommand::ClearMostRecentHostPhase2Request(tx))
+            .await
+            .unwrap();
+
+        rx.await.unwrap()
+    }
+
     /// Request the state of an ignition target.
     ///
     /// This will fail if this SP is not connected to an ignition controller.
@@ -1210,6 +1228,7 @@ struct SerialConsoleAttachment {
 enum InnerCommand {
     Rpc(RpcRequest),
     GetMostRecentHostPhase2Request(oneshot::Sender<Option<HostPhase2Request>>),
+    ClearMostRecentHostPhase2Request(oneshot::Sender<()>),
     SerialConsoleAttach(
         SpComponent,
         oneshot::Sender<Result<SerialConsoleAttachment>>,
@@ -1500,6 +1519,10 @@ impl<T: InnerSocket> Inner<T> {
                     Ok(InnerCommand::GetMostRecentHostPhase2Request(tx)) => {
                         tx.send(self.most_recent_host_phase2_request).is_ok()
                     }
+                    Ok(InnerCommand::ClearMostRecentHostPhase2Request(tx)) => {
+                        self.clear_most_recent_host_phase2_request();
+                        tx.send(()).is_ok()
+                    }
                     Ok(InnerCommand::SerialConsoleAttach(_, tx)) => {
                         tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
                     }
@@ -1556,6 +1579,10 @@ impl<T: InnerSocket> Inner<T> {
             }
             InnerCommand::GetMostRecentHostPhase2Request(response_tx) => {
                 _ = response_tx.send(self.most_recent_host_phase2_request);
+            }
+            InnerCommand::ClearMostRecentHostPhase2Request(response_tx) => {
+                self.clear_most_recent_host_phase2_request();
+                _ = response_tx.send(());
             }
             InnerCommand::SerialConsoleAttach(component, response_tx) => {
                 let resp = self.attach_serial_console(component).await;
@@ -1763,6 +1790,10 @@ impl<T: InnerSocket> Inner<T> {
             "request" => ?request,
         );
         self.most_recent_host_phase2_request = Some(request);
+    }
+
+    fn clear_most_recent_host_phase2_request(&mut self) {
+        self.most_recent_host_phase2_request = None;
     }
 
     fn forward_serial_console(
