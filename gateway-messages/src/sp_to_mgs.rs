@@ -427,7 +427,9 @@ pub enum SpError {
     UpdateNotPrepared,
     /// An update-related message arrived at the SP, but its update ID does not
     /// match the update ID the SP is currently processing.
-    InvalidUpdateId { sp_update_id: UpdateId },
+    InvalidUpdateId {
+        sp_update_id: UpdateId,
+    },
     /// An update is already in progress with the specified amount of data
     /// already provided. MGS should resume the update at that offset.
     UpdateInProgress(UpdateStatus),
@@ -461,6 +463,8 @@ pub enum SpError {
     NoSuchCabooseKey([u8; 4]),
     /// The given caboose value would overflow the trailing packet data
     CabooseValueOverflow(u32),
+    CabooseReadError,
+    BadCabooseChecksum,
 }
 
 impl fmt::Display for SpError {
@@ -547,6 +551,12 @@ impl fmt::Display for SpError {
                     "caboose value is too large to fit in a packet \
                      ({size} bytes)"
                 )
+            }
+            Self::CabooseReadError => {
+                write!(f, "failed to read data from the caboose")
+            }
+            Self::BadCabooseChecksum => {
+                write!(f, "a data checksum in the caboose is invalid")
             }
         }
     }
