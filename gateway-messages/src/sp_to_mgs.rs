@@ -101,6 +101,9 @@ pub enum SpResponse {
     SendHostNmiAck,
     SetIpccKeyLookupValueAck,
     ComponentSetAndPersistActiveSlotAck,
+
+    /// The size of the trailing caboose data
+    CabooseValue(u32),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -452,6 +455,12 @@ pub enum SpError {
     UpdateIsTooLarge,
     /// Setting requested IPCC key/value failed.
     SetIpccKeyLookupValueFailed(IpccKeyLookupValueError),
+    /// The image does not have a caboose
+    NoCaboose,
+    /// The given key is not available in the caboose
+    NoSuchCabooseKey([u8; 4]),
+    /// The given caboose value would overflow the trailing packet data
+    CabooseValueOverflow(u32),
 }
 
 impl fmt::Display for SpError {
@@ -520,6 +529,24 @@ impl fmt::Display for SpError {
             }
             Self::SetIpccKeyLookupValueFailed(err) => {
                 write!(f, "failed to set IPCC key/value: {err}")
+            }
+            Self::NoCaboose => {
+                write!(f, "the image does not include a caboose")
+            }
+            Self::NoSuchCabooseKey(key) => {
+                write!(f, "the image caboose does not contain ").and_then(
+                    |_| match core::str::from_utf8(key) {
+                        Ok(s) => write!(f, "'{s}'"),
+                        Err(_) => write!(f, "{key:#x?}"),
+                    },
+                )
+            }
+            Self::CabooseValueOverflow(size) => {
+                write!(
+                    f,
+                    "caboose value is too large to fit in a packet \
+                     ({size} bytes)"
+                )
             }
         }
     }
