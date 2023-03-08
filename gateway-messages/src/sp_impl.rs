@@ -797,9 +797,15 @@ fn handle_mgs_request<H: SpHandler>(
             .map(|()| SpResponse::SetIpccKeyLookupValueAck),
         MgsRequest::ReadCaboose { key } => {
             handler.get_caboose_value(key).map(|data| {
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::CabooseData(data));
-                SpResponse::CabooseValue(data.len() as u32)
+                if data.len() > crate::MIN_TRAILING_DATA_LEN {
+                    SpResponse::Error(SpError::CabooseValueOverflow(
+                        data.len() as u32
+                    ))
+                } else {
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::CabooseData(data));
+                    SpResponse::CabooseValue(data.len() as u32)
+                }
             })
         }
     };
