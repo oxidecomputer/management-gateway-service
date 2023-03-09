@@ -752,6 +752,16 @@ impl SingleSp {
             response.expect_set_ipcc_key_lookup_value_ack()
         })
     }
+
+    pub async fn get_caboose_value(&self, key: [u8; 4]) -> Result<Vec<u8>> {
+        let result =
+            rpc(&self.cmds_tx, MgsRequest::ReadCaboose { key }, None).await;
+
+        result.result.and_then(|(_peer, response, data)| {
+            response.expect_caboose_value().unwrap();
+            Ok(data)
+        })
+    }
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)
