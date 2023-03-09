@@ -757,9 +757,9 @@ impl SingleSp {
         let result =
             rpc(&self.cmds_tx, MgsRequest::ReadCaboose { key }, None).await;
 
-        result.result.and_then(|(_peer, response, data)| {
+        result.result.map(|(_peer, response, data)| {
             response.expect_caboose_value().unwrap();
-            Ok(data)
+            data
         })
     }
 }
