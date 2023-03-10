@@ -26,8 +26,31 @@ pub use sp_to_mgs::*;
 /// Maximum size in bytes for a serialized message.
 pub const MAX_SERIALIZED_SIZE: usize = 1024;
 
+/// Module specifying the minimum and current version of the MGS protocol.
+///
+/// Our primary mechanism for serializing requests and responses is enums
+/// encoded via hubpack. It is easy to extend these enums by adding new
+/// variants, but changing, reordering, or removing existing variants is
+/// (usually) a breaking change.
+///
+/// Our plan for versioning this protocol is simple: for as long as we can,
+/// leave `version::MIN` unchanged, and do not change, reorder, or remove
+/// existing variants. When we add new variants, increase `CURRENT. Both the SP
+/// and MGS will attempt to deserialize any message with a version that is at
+/// least `MIN`. If the deserialization fails and the message version is higher
+/// than `CURRENT`, we note a version mismatch error (with the expectation that
+/// the failure is due to a new message type we don't understand): the SP will
+/// response with a version mismatch error, and MGS will log it / return an
+/// error to its caller. (If deserialization fails despite the message version
+/// being in the range `MIN..=CURRENT`, we fail with a general deserialization
+/// error.)
+///
+/// This is lifted from the versioning strategy taken by the transceivers
+/// protocol; see https://github.com/oxidecomputer/transceiver-control/pull/66
+/// for more detail and discussion.
 pub mod version {
-    pub const V2: u32 = 2;
+    pub const MIN: u32 = 2;
+    pub const CURRENT: u32 = 2;
 }
 
 #[derive(

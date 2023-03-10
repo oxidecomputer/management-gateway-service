@@ -532,17 +532,31 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
         // Peel off the header first to check the version.
         let (header, remaining) = gateway_messages::deserialize::<Header>(data)
             .map_err(RecvError::DeserializeHeader)?;
-        if header.version != version::V2 {
+        if header.version < version::MIN {
             return Err(RecvError::VersionMismatch {
-                expected: version::V2,
+                expected: version::CURRENT,
                 sp: header.version,
             });
         }
 
         // Parse the remainder.
         let (kind, sp_trailing_data) =
-            gateway_messages::deserialize::<MessageKind>(remaining)
-                .map_err(RecvError::DeserializeBody)?;
+            match gateway_messages::deserialize::<MessageKind>(remaining) {
+                Ok((kind, sp_trailing_data)) => (kind, sp_trailing_data),
+                // We failed to deserialize, and the message version is higher
+                // than what we know. This almost certainly means they sent a
+                // new message we don't understand; return a version mismatch
+                // error.
+                Err(_) if header.version > version::CURRENT => {
+                    return Err(RecvError::VersionMismatch {
+                        expected: version::CURRENT,
+                        sp: header.version,
+                    })
+                }
+                // We failed to deserialize but the version is in the range we
+                // should have understood; return a deserialization error.
+                Err(err) => return Err(RecvError::DeserializeBody(err)),
+            };
 
         Ok((header, kind, sp_trailing_data))
     }
@@ -695,7 +709,7 @@ async fn send_host_phase2_data<T: HostPhase2Provider>(
     // Optimistically serialize a success response, so we can fetch host
     // phase 2 data into the remainder of the buffer.
     let mut message = Message {
-        header: Header { version: version::V2, message_id },
+        header: Header { version: version::CURRENT, message_id },
         kind: MessageKind::MgsResponse(MgsResponse::HostPhase2Data {
             hash,
             offset,
