@@ -468,11 +468,12 @@ pub fn handle_message<H: SpHandler>(
                 }),
             )
         }
-        None => 0,
         Some(OutgoingTrailingData::CabooseData(data)) => {
             out[n..n + data.len()].copy_from_slice(data);
             data.len()
         }
+
+        None => 0,
     };
 
     Some(n)
@@ -804,7 +805,7 @@ fn handle_mgs_request<H: SpHandler>(
                 } else {
                     outgoing_trailing_data =
                         Some(OutgoingTrailingData::CabooseData(data));
-                    SpResponse::CabooseValue(data.len() as u32)
+                    SpResponse::CabooseValue
                 }
             })
         }

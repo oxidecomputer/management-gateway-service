@@ -151,7 +151,7 @@ impl SpResponseExt for SpResponse {
             Self::SetIpccKeyLookupValueAck => {
                 response_kind_names::SET_IPCC_KEY_LOOKUP_VALUE_ACK
             }
-            Self::CabooseValue(..) => response_kind_names::CABOOSE_VALUE,
+            Self::CabooseValue => response_kind_names::CABOOSE_VALUE,
         }
     }
 
@@ -489,7 +489,7 @@ impl SpResponseExt for SpResponse {
 
     fn expect_caboose_value(self) -> Result<()> {
         match self {
-            Self::CabooseValue(..) => Ok(()),
+            Self::CabooseValue => Ok(()),
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::CABOOSE_VALUE,

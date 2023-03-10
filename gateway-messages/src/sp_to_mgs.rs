@@ -102,8 +102,8 @@ pub enum SpResponse {
     SetIpccKeyLookupValueAck,
     ComponentSetAndPersistActiveSlotAck,
 
-    /// The size of the trailing caboose data
-    CabooseValue(u32),
+    /// The packet contains trailing caboose data
+    CabooseValue,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
