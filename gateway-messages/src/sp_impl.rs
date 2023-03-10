@@ -347,6 +347,11 @@ pub trait SpHandler {
         key: u8,
         value: &[u8],
     ) -> Result<(), SpError>;
+
+    fn get_caboose_value(
+        &mut self,
+        key: [u8; 4],
+    ) -> Result<&'static [u8], SpError>;
 }
 
 /// Handle a single incoming message.
@@ -463,6 +468,11 @@ pub fn handle_message<H: SpHandler>(
                 }),
             )
         }
+        Some(OutgoingTrailingData::CabooseData(data)) => {
+            out[n..n + data.len()].copy_from_slice(data);
+            data.len()
+        }
+
         None => 0,
     };
 
@@ -786,6 +796,19 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SetIpccKeyLookupValue { key } => handler
             .set_ipcc_key_lookup_value(sender, port, key, trailing_data)
             .map(|()| SpResponse::SetIpccKeyLookupValueAck),
+        MgsRequest::ReadCaboose { key } => {
+            handler.get_caboose_value(key).map(|data| {
+                if data.len() > crate::MIN_TRAILING_DATA_LEN {
+                    SpResponse::Error(SpError::CabooseValueOverflow(
+                        data.len() as u32
+                    ))
+                } else {
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::CabooseData(data));
+                    SpResponse::CabooseValue
+                }
+            })
+        }
     };
 
     let response = match result {
@@ -801,6 +824,7 @@ enum OutgoingTrailingData<H: SpHandler> {
     ComponentDetails { component: SpComponent, offset: u32, total: u32 },
     BulkIgnitionState(H::BulkIgnitionStateIter),
     BulkIgnitionLinkEvents(H::BulkIgnitionLinkEventsIter),
+    CabooseData(&'static [u8]),
 }
 
 #[cfg(test)]
@@ -1119,6 +1143,13 @@ mod tests {
             _key: u8,
             _value: &[u8],
         ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn get_caboose_value(
+            &mut self,
+            _key: [u8; 4],
+        ) -> Result<&'static [u8], SpError> {
             unimplemented!()
         }
     }

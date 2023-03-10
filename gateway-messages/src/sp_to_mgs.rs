@@ -101,6 +101,9 @@ pub enum SpResponse {
     SendHostNmiAck,
     SetIpccKeyLookupValueAck,
     ComponentSetAndPersistActiveSlotAck,
+
+    /// The packet contains trailing caboose data
+    CabooseValue,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -424,7 +427,9 @@ pub enum SpError {
     UpdateNotPrepared,
     /// An update-related message arrived at the SP, but its update ID does not
     /// match the update ID the SP is currently processing.
-    InvalidUpdateId { sp_update_id: UpdateId },
+    InvalidUpdateId {
+        sp_update_id: UpdateId,
+    },
     /// An update is already in progress with the specified amount of data
     /// already provided. MGS should resume the update at that offset.
     UpdateInProgress(UpdateStatus),
@@ -452,6 +457,14 @@ pub enum SpError {
     UpdateIsTooLarge,
     /// Setting requested IPCC key/value failed.
     SetIpccKeyLookupValueFailed(IpccKeyLookupValueError),
+    /// The image does not have a caboose
+    NoCaboose,
+    /// The given key is not available in the caboose
+    NoSuchCabooseKey([u8; 4]),
+    /// The given caboose value would overflow the trailing packet data
+    CabooseValueOverflow(u32),
+    CabooseReadError,
+    BadCabooseChecksum,
 }
 
 impl fmt::Display for SpError {
@@ -520,6 +533,30 @@ impl fmt::Display for SpError {
             }
             Self::SetIpccKeyLookupValueFailed(err) => {
                 write!(f, "failed to set IPCC key/value: {err}")
+            }
+            Self::NoCaboose => {
+                write!(f, "the image does not include a caboose")
+            }
+            Self::NoSuchCabooseKey(key) => {
+                write!(f, "the image caboose does not contain ").and_then(
+                    |_| match core::str::from_utf8(key) {
+                        Ok(s) => write!(f, "'{s}'"),
+                        Err(_) => write!(f, "{key:#x?}"),
+                    },
+                )
+            }
+            Self::CabooseValueOverflow(size) => {
+                write!(
+                    f,
+                    "caboose value is too large to fit in a packet \
+                     ({size} bytes)"
+                )
+            }
+            Self::CabooseReadError => {
+                write!(f, "failed to read data from the caboose")
+            }
+            Self::BadCabooseChecksum => {
+                write!(f, "a data checksum in the caboose is invalid")
             }
         }
     }

@@ -117,6 +117,13 @@ pub enum MgsRequest {
         component: SpComponent,
         slot: u16,
     },
+
+    /// Reads a value from the caboose
+    ///
+    /// The resulting value is serialized in the trailer of the packet
+    ReadCaboose {
+        key: [u8; 4],
+    },
 }
 
 #[derive(

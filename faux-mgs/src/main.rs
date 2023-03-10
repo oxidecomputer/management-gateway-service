@@ -260,6 +260,13 @@ enum Command {
         value_path: PathBuf,
     },
 
+    /// Read a single key from the caboose
+    ReadCaboose {
+        /// 4-character ASCII string
+        #[arg(value_parser = parse_tlvc_key)]
+        key: [u8; 4],
+    },
+
     /// Instruct the SP to reset.
     Reset,
 }
@@ -278,6 +285,16 @@ impl Command {
             _ => 0,
         }
     }
+}
+
+fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
+    if !key.is_ascii() {
+        bail!("key must be an ASCII string");
+    } else if key.len() != 4 {
+        bail!("key must be 4 characters");
+    }
+
+    Ok(key.as_bytes().try_into().unwrap())
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -839,6 +856,16 @@ async fn run_command(
             })?;
             sp.set_ipcc_key_lookup_value(key, value).await?;
             Ok(vec!["done".to_string()])
+        }
+
+        Command::ReadCaboose { key } => {
+            let value = sp.get_caboose_value(key).await?;
+            let out = if value.is_ascii() {
+                String::from_utf8(value).unwrap()
+            } else {
+                format!("{value:?}")
+            };
+            Ok(vec![out])
         }
     }
 }
