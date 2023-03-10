@@ -45,6 +45,10 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// being in the range `MIN..=CURRENT`, we fail with a general deserialization
 /// error.)
 ///
+/// As a part of this plan, we have tests that cover the expected serialized
+/// form of all messages for versions `MIN..=CURRENT`. These should catch any
+/// accidental changes that would break backwards compatibility.
+///
 /// This is lifted from the versioning strategy taken by the transceivers
 /// protocol; see https://github.com/oxidecomputer/transceiver-control/pull/66
 /// for more detail and discussion.
