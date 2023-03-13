@@ -520,7 +520,7 @@ where
 
 // We could use a combination of Option/Result/tuples to represent the results
 // of `read_request_header()`, but it fundamentally has three possible result
-// states, reprsented here.
+// states, represented here.
 enum ReadHeaderResult<'a> {
     // We successfully parsed the header and it appears valid.
     Ok { header: Header, remaining_data: &'a [u8] },
