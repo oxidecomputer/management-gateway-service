@@ -35,7 +35,7 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 ///
 /// Our plan for versioning this protocol is simple: for as long as we can,
 /// leave `version::MIN` unchanged, and do not change, reorder, or remove
-/// existing variants. When we add new variants, increase `CURRENT. Both the SP
+/// existing variants. When we add new variants, increase `CURRENT`. Both the SP
 /// and MGS will attempt to deserialize any message with a version that is at
 /// least `MIN`. If the deserialization fails and the message version is higher
 /// than `CURRENT`, we note a version mismatch error (with the expectation that
