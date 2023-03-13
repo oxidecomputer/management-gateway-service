@@ -372,25 +372,31 @@ pub fn handle_message<H: SpHandler>(
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
 ) -> Option<usize> {
-    // Try to peel the header off first, allowing us to check the version and
-    // get the request ID (even if we fail to parse the rest of the request).
-    let (message_id, result) = read_request_header(data);
-
     // If we were able to peel off the header, chain the rest of the data
     // then chain the rest of the data through to the handler.
-    let (response, outgoing_trailing_data) = match result {
-        Ok(request_kind_data) => handle_message_impl(
-            sender,
-            port,
-            message_id,
-            request_kind_data,
-            handler,
-        )?,
-        Err(err) => (SpResponse::Error(err), None),
-    };
+    let (message_id, response, outgoing_trailing_data) =
+        match read_request_header(data) {
+            ReadHeaderResult::Ok { header, remaining_data } => {
+                let (response, outgoing_trailing_data) = handle_message_impl(
+                    sender,
+                    port,
+                    header,
+                    remaining_data,
+                    handler,
+                )?;
+                (header.message_id, response, outgoing_trailing_data)
+            }
+            ReadHeaderResult::HeaderValidationFailed { header, error } => {
+                (header.message_id, SpResponse::Error(error), None)
+            }
+            ReadHeaderResult::HeaderParsingFailed { error } => {
+                // We didn't even get a message_id; make one up.
+                (u32::MAX, SpResponse::Error(error), None)
+            }
+        };
 
     let response = Message {
-        header: Header { version: version::V2, message_id },
+        header: Header { version: version::CURRENT, message_id },
         kind: MessageKind::SpResponse(response),
     };
 
@@ -512,36 +518,46 @@ where
     total_tlv_len
 }
 
-/// Read the request header from the front of `data`, returning the message ID
-/// we should use in our response (pulled from the header if possible, or a
-/// sentinel if not) and either the remainder of the request data or an error.
-fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], SpError>) {
-    let (header, request_kind_data) = match hubpack::deserialize::<Header>(data)
-    {
-        Ok((header, request_kind_data)) => (header, request_kind_data),
+// We could use a combination of Option/Result/tuples to represent the results
+// of `read_request_header()`, but it fundamentally has three possible result
+// states, represented here.
+enum ReadHeaderResult<'a> {
+    // We successfully parsed the header and it appears valid.
+    Ok { header: Header, remaining_data: &'a [u8] },
+    // We successfully parsed the header, but it is not valid.
+    HeaderValidationFailed { header: Header, error: SpError },
+    // We failed to parse even a header.
+    HeaderParsingFailed { error: SpError },
+}
+
+/// Read the request header from the front of `data`, returning the message
+/// header and the remainder of the request data on success. On failure, returns
+/// an appropriate error message, and possibly a header (if the message was
+/// well-formed enough to have one!).
+fn read_request_header(data: &[u8]) -> ReadHeaderResult<'_> {
+    let (header, remaining_data) = match hubpack::deserialize::<Header>(data) {
+        Ok((header, remaining_data)) => (header, remaining_data),
         Err(_) => {
-            return (
-                // We don't know the request ID, but need to reply with
-                // something - fill in 0xffff_ffff.
-                u32::MAX,
-                Err(SpError::BadRequest(
+            return ReadHeaderResult::HeaderParsingFailed {
+                error: SpError::BadRequest(
                     BadRequestReason::DeserializationError,
-                )),
-            );
+                ),
+            };
         }
     };
 
     // Check the message version.
-    let result = if header.version == version::V2 {
-        Ok(request_kind_data)
+    if header.version >= version::MIN {
+        ReadHeaderResult::Ok { header, remaining_data }
     } else {
-        Err(SpError::BadRequest(BadRequestReason::WrongVersion {
-            sp: version::V2,
-            request: header.version,
-        }))
-    };
-
-    (header.message_id, result)
+        ReadHeaderResult::HeaderValidationFailed {
+            header,
+            error: SpError::BadRequest(BadRequestReason::WrongVersion {
+                sp: version::CURRENT,
+                request: header.version,
+            }),
+        }
+    }
 }
 
 /// Parses the remainder of a message (after the header, which is handled by
@@ -553,7 +569,7 @@ fn read_request_header(data: &[u8]) -> (u32, Result<&[u8], SpError>) {
 fn handle_message_impl<H: SpHandler>(
     sender: SocketAddrV6,
     port: SpPort,
-    message_id: u32,
+    header: Header,
     request_kind_data: &[u8],
     handler: &mut H,
 ) -> Option<(SpResponse, Option<OutgoingTrailingData<H>>)> {
@@ -563,7 +579,12 @@ fn handle_message_impl<H: SpHandler>(
         }
         Ok((MessageKind::MgsResponse(kind), leftover)) => {
             handle_mgs_response(
-                sender, port, message_id, handler, kind, leftover,
+                sender,
+                port,
+                header.message_id,
+                handler,
+                kind,
+                leftover,
             );
             None
         }
@@ -575,6 +596,20 @@ fn handle_message_impl<H: SpHandler>(
                 None,
             ))
         }
+        // We failed to deserialize, and the message version is higher than
+        // what we know. This almost certainly means they sent a new message we
+        // don't understand; send back a version mismatch error.
+        Err(_) if header.version > version::CURRENT => Some((
+            SpResponse::Error(SpError::BadRequest(
+                BadRequestReason::WrongVersion {
+                    sp: version::CURRENT,
+                    request: header.version,
+                },
+            )),
+            None,
+        )),
+        // We failed to deserialize even though the message version is in the
+        // range we understand; something has gone wrong!
         Err(_) => Some((
             SpResponse::Error(SpError::BadRequest(
                 BadRequestReason::DeserializationError,
@@ -1189,7 +1224,10 @@ mod tests {
     #[test]
     fn handle_valid_request() {
         let req = Message {
-            header: Header { version: version::V2, message_id: 0x01020304 },
+            header: Header {
+                version: version::CURRENT,
+                message_id: 0x01020304,
+            },
             kind: MessageKind::MgsRequest(MgsRequest::Discover),
         };
 
@@ -1199,7 +1237,7 @@ mod tests {
             resp,
             Message {
                 header: Header {
-                    version: version::V2,
+                    version: version::CURRENT,
                     message_id: req.header.message_id,
                 },
                 kind: MessageKind::SpResponse(SpResponse::Discover(
@@ -1210,9 +1248,9 @@ mod tests {
     }
 
     #[test]
-    fn bad_version() {
+    fn version_too_low() {
         let req = Message {
-            header: Header { version: 0x0badf00d, message_id: 0x01020304 },
+            header: Header { version: 1, message_id: 0x01020304 },
             kind: MessageKind::MgsRequest(MgsRequest::Discover),
         };
 
@@ -1221,11 +1259,14 @@ mod tests {
         assert_eq!(
             resp,
             Message {
-                header: Header { version: version::V2, message_id: 0x01020304 },
+                header: Header {
+                    version: version::CURRENT,
+                    message_id: 0x01020304,
+                },
                 kind: MessageKind::SpResponse(SpResponse::Error(
                     SpError::BadRequest(BadRequestReason::WrongVersion {
-                        sp: version::V2,
-                        request: 0x0badf00d
+                        sp: version::CURRENT,
+                        request: 1,
                     })
                 )),
             }
@@ -1236,7 +1277,10 @@ mod tests {
     fn bad_request_header() {
         // Valid request...
         let req = Message {
-            header: Header { version: version::V2, message_id: 0x01020304 },
+            header: Header {
+                version: version::CURRENT,
+                message_id: 0x01020304,
+            },
             kind: MessageKind::MgsRequest(MgsRequest::Discover),
         };
         let mut req_buf = vec![0; Message::MAX_SIZE];
@@ -1271,7 +1315,7 @@ mod tests {
             resp1,
             Message {
                 header: Header {
-                    version: version::V2,
+                    version: version::CURRENT,
                     // Header is incomplete, so we don't know the request ID.
                     message_id: 0xffff_ffff,
                 },
@@ -1292,7 +1336,7 @@ mod tests {
         }
 
         let req = FakeRequest {
-            version: version::V2,
+            version: version::CURRENT,
             message_id: 0x01020304,
             // Hubpack encodes the real `MessageKind` enum using an initial byte
             // to identify the variant; send a byte that is past the end of our
@@ -1305,7 +1349,10 @@ mod tests {
         assert_eq!(
             resp,
             Message {
-                header: Header { version: version::V2, message_id: 0x01020304 },
+                header: Header {
+                    version: version::CURRENT,
+                    message_id: 0x01020304
+                },
                 kind: MessageKind::SpResponse(SpResponse::Error(
                     SpError::BadRequest(BadRequestReason::DeserializationError)
                 ))

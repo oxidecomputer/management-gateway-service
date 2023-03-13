@@ -1642,7 +1642,7 @@ impl<T: InnerSocket> Inner<T> {
         self.message_id += 1;
         let request = Message {
             header: Header {
-                version: version::V2,
+                version: version::CURRENT,
                 message_id: self.message_id,
             },
             kind: MessageKind::MgsRequest(kind),
