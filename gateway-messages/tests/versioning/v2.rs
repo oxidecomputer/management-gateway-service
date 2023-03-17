@@ -388,6 +388,10 @@ fn mgs_request() {
     let request = MgsRequest::ReadCaboose { key: [1, 2, 3, 4] };
     let expected = &[31, 1, 2, 3, 4];
     assert_serialized(&mut out, expected, &request);
+
+    let request = MgsRequest::SerialConsoleKeepAlive;
+    let expected = &[32];
+    assert_serialized(&mut out, expected, &request);
 }
 
 #[test]
@@ -1011,5 +1015,9 @@ fn sp_response() {
 
     let response = SpResponse::CabooseValue;
     let expected = &[31];
+    assert_serialized(&mut out, expected, &response);
+
+    let response = SpResponse::SerialConsoleKeepAliveAck;
+    let expected = &[32];
     assert_serialized(&mut out, expected, &response);
 }
