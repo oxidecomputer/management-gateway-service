@@ -11,6 +11,7 @@ pub mod tlv;
 
 use core::fmt;
 use core::str;
+use core::time::Duration;
 use serde::Deserialize;
 use serde::Serialize;
 use static_assertions::const_assert;
@@ -22,6 +23,14 @@ pub use hubpack::{deserialize, serialize, SerializedSize};
 // direction.
 pub use mgs_to_sp::*;
 pub use sp_to_mgs::*;
+
+/// The SP should detach an attached serial console client if it has not heard
+/// from it in this long (based on the assumption that it has gone away without
+/// sending an explicit detach).
+///
+/// Clients should send data or keepalive packets more frequently than this
+/// timeout to avoid being detached.
+pub const SERIAL_CONSOLE_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Maximum size in bytes for a serialized message.
 pub const MAX_SERIALIZED_SIZE: usize = 1024;

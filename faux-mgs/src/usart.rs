@@ -7,6 +7,7 @@
 use anyhow::Context;
 use anyhow::Result;
 use gateway_messages::SpComponent;
+use gateway_messages::SERIAL_CONSOLE_IDLE_TIMEOUT;
 use gateway_sp_comms::AttachedSerialConsoleSend;
 use gateway_sp_comms::SingleSp;
 use std::fs::File;
@@ -19,6 +20,8 @@ use std::time::Duration;
 use termios::Termios;
 use tokio::io::AsyncReadExt;
 use tokio::sync::mpsc;
+use tokio::time;
+use tokio::time::MissedTickBehavior;
 
 use crate::picocom_map::RemapRules;
 
@@ -136,12 +139,31 @@ async fn relay_data_to_sp(
     mut console_tx: AttachedSerialConsoleSend,
     mut data_rx: mpsc::Receiver<SendTxData>,
 ) -> Result<()> {
-    while let Some(data) = data_rx.recv().await {
-        match data {
-            SendTxData::Buf(buf) => console_tx.write(buf).await?,
-            SendTxData::Break => console_tx.send_break().await?,
+    let mut keepalive = time::interval(SERIAL_CONSOLE_IDLE_TIMEOUT / 4);
+    keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
+
+    loop {
+        tokio::select! {
+            maybe_data = data_rx.recv() => {
+                match maybe_data {
+                    Some(SendTxData::Buf(buf)) => {
+                        console_tx.write(buf).await?;
+                        keepalive.reset();
+                    }
+                    Some(SendTxData::Break) => {
+                        console_tx.send_break().await?;
+                        keepalive.reset();
+                    }
+                    None => break,
+                }
+            }
+
+            _ = keepalive.tick() => {
+                console_tx.keepalive().await?;
+            }
         }
     }
+
     console_tx.detach().await?;
 
     Ok(())
