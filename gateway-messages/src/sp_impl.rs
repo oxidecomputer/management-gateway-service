@@ -214,6 +214,12 @@ pub trait SpHandler {
         port: SpPort,
     ) -> Result<(), SpError>;
 
+    fn serial_console_keepalive(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+    ) -> Result<(), SpError>;
+
     fn serial_console_break(
         &mut self,
         sender: SocketAddrV6,
@@ -749,6 +755,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SerialConsoleDetach => handler
             .serial_console_detach(sender, port)
             .map(|()| SpResponse::SerialConsoleDetachAck),
+        MgsRequest::SerialConsoleKeepAlive => handler
+            .serial_console_keepalive(sender, port)
+            .map(|()| SpResponse::SerialConsoleKeepAliveAck),
         MgsRequest::SerialConsoleBreak => handler
             .serial_console_break(sender, port)
             .map(|()| SpResponse::SerialConsoleBreakAck),
@@ -1036,6 +1045,14 @@ mod tests {
         }
 
         fn serial_console_detach(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn serial_console_keepalive(
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,

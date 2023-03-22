@@ -42,6 +42,8 @@ pub(crate) trait SpResponseExt {
 
     fn expect_serial_console_detach_ack(self) -> Result<()>;
 
+    fn expect_serial_console_keepalive_ack(self) -> Result<()>;
+
     fn expect_serial_console_break_ack(self) -> Result<()>;
 
     fn expect_sp_update_prepare_ack(self) -> Result<()>;
@@ -112,6 +114,9 @@ impl SpResponseExt for SpResponse {
             }
             Self::SerialConsoleDetachAck => {
                 response_kind_names::SERIAL_CONSOLE_DETACH_ACK
+            }
+            Self::SerialConsoleKeepAliveAck => {
+                response_kind_names::SERIAL_CONSOLE_KEEPALIVE_ACK
             }
             Self::SerialConsoleBreakAck => {
                 response_kind_names::SERIAL_CONSOLE_BREAK_ACK
@@ -248,7 +253,7 @@ impl SpResponseExt for SpResponse {
             Self::SerialConsoleAttachAck => Ok(()),
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
-                expected: response_kind_names::SP_STATE,
+                expected: response_kind_names::SERIAL_CONSOLE_ATTACH_ACK,
                 got: other.name(),
             }),
         }
@@ -261,7 +266,7 @@ impl SpResponseExt for SpResponse {
             }
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
-                expected: response_kind_names::SP_STATE,
+                expected: response_kind_names::SERIAL_CONSOLE_WRITE_ACK,
                 got: other.name(),
             }),
         }
@@ -272,7 +277,18 @@ impl SpResponseExt for SpResponse {
             Self::SerialConsoleDetachAck => Ok(()),
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
-                expected: response_kind_names::SP_STATE,
+                expected: response_kind_names::SERIAL_CONSOLE_DETACH_ACK,
+                got: other.name(),
+            }),
+        }
+    }
+
+    fn expect_serial_console_keepalive_ack(self) -> Result<()> {
+        match self {
+            Self::SerialConsoleKeepAliveAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::SERIAL_CONSOLE_KEEPALIVE_ACK,
                 got: other.name(),
             }),
         }
@@ -283,7 +299,7 @@ impl SpResponseExt for SpResponse {
             Self::SerialConsoleBreakAck => Ok(()),
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
-                expected: response_kind_names::SP_STATE,
+                expected: response_kind_names::SERIAL_CONSOLE_BREAK_ACK,
                 got: other.name(),
             }),
         }
@@ -516,6 +532,8 @@ mod response_kind_names {
         "serial_console_write_ack";
     pub(super) const SERIAL_CONSOLE_DETACH_ACK: &str =
         "serial_console_detach_ack";
+    pub(super) const SERIAL_CONSOLE_KEEPALIVE_ACK: &str =
+        "serial_console_keepalive_ack";
     pub(super) const SERIAL_CONSOLE_BREAK_ACK: &str =
         "serial_console_break_ack";
     pub(super) const SP_UPDATE_PREPARE_ACK: &str = "sp_update_prepare_ack";

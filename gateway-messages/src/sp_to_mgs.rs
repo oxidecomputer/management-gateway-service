@@ -104,6 +104,8 @@ pub enum SpResponse {
 
     /// The packet contains trailing caboose data
     CabooseValue,
+
+    SerialConsoleKeepAliveAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

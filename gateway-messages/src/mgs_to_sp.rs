@@ -124,6 +124,8 @@ pub enum MgsRequest {
     ReadCaboose {
         key: [u8; 4],
     },
+
+    SerialConsoleKeepAlive,
 }
 
 #[derive(

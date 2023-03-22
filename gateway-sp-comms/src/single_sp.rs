@@ -1154,6 +1154,23 @@ impl AttachedSerialConsoleSend {
         Ok(())
     }
 
+    /// Send a "keepalive" packet to the SP to let it know we are still
+    /// attached.
+    ///
+    /// Attached serial console clients should call this periodically if they
+    /// are not sending data to the SP via `write()` to avoid the SP timing out
+    /// the connection.
+    pub async fn keepalive(&self) -> Result<()> {
+        let (tx, rx) = oneshot::channel();
+
+        self.inner_tx
+            .send(InnerCommand::SerialConsoleKeepAlive(tx))
+            .await
+            .unwrap();
+
+        rx.await.unwrap()
+    }
+
     /// Detach this serial console connection.
     pub async fn detach(&self) -> Result<()> {
         let (tx, rx) = oneshot::channel();
@@ -1243,6 +1260,7 @@ enum InnerCommand {
         SpComponent,
         oneshot::Sender<Result<SerialConsoleAttachment>>,
     ),
+    SerialConsoleKeepAlive(oneshot::Sender<Result<()>>),
     // The associated value is the connection key; if `Some(_)`, only detach if
     // the currently-attached key number matches. If `None`, detach any current
     // connection. These correspond to "detach the current session" (performed
@@ -1536,7 +1554,10 @@ impl<T: InnerSocket> Inner<T> {
                     Ok(InnerCommand::SerialConsoleAttach(_, tx)) => {
                         tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
                     }
-                    Ok(InnerCommand::SerialConsoleDetach(_, tx)) => {
+                    Ok(
+                        InnerCommand::SerialConsoleKeepAlive(tx)
+                        | InnerCommand::SerialConsoleDetach(_, tx),
+                    ) => {
                         tx.send(Err(CommunicationError::NoSpDiscovered)).is_ok()
                     }
                     Err(TryRecvError::Empty) => break,
@@ -1597,6 +1618,15 @@ impl<T: InnerSocket> Inner<T> {
             InnerCommand::SerialConsoleAttach(component, response_tx) => {
                 let resp = self.attach_serial_console(component).await;
                 _ = response_tx.send(resp);
+            }
+            InnerCommand::SerialConsoleKeepAlive(response_tx) => {
+                let result = self
+                    .rpc_call(MgsRequest::SerialConsoleKeepAlive, None)
+                    .await
+                    .and_then(|(_peer, response, _trailing_data)| {
+                        response.expect_serial_console_keepalive_ack()
+                    });
+                _ = response_tx.send(result);
             }
             InnerCommand::SerialConsoleDetach(key, response_tx) => {
                 let resp = if key.is_none()
