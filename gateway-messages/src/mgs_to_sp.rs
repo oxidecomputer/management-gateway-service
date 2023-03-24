@@ -7,7 +7,6 @@
 use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
-use crate::ResetIntent;
 use crate::SpComponent;
 use crate::UpdateId;
 use hubpack::SerializedSize;
@@ -127,15 +126,6 @@ pub enum MgsRequest {
     },
 
     SerialConsoleKeepAlive,
-    ResetComponentPrepare {
-        component: SpComponent,
-    },
-    /// `ResetComponenthTrigger` may contain trailing raw data
-    ResetComponentTrigger {
-        component: SpComponent,
-        slot: Option<u16>,
-        intent: ResetIntent,
-    },
 }
 
 #[derive(

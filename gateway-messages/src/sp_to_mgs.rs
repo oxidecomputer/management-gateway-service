@@ -106,8 +106,6 @@ pub enum SpResponse {
     CabooseValue,
 
     SerialConsoleKeepAliveAck,
-    ResetComponentPrepareAck,
-    ResetComponentTriggerAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -473,7 +471,6 @@ pub enum SpError {
     ImageBoardUnknown,
     /// The new image has a `BORD` key that does not match the current image
     ImageBoardMismatch,
-    ResetComponentTriggerWithoutPrepare,
 }
 
 impl fmt::Display for SpError {
@@ -572,9 +569,6 @@ impl fmt::Display for SpError {
             }
             Self::ImageBoardMismatch => {
                 write!(f, "the image has a board that doesn't match the current image")
-            }
-            Self::ResetComponentTriggerWithoutPrepare => {
-                write!(f, "sys reset-component trigger requested without a preceding sys reset-component-prepare")
             }
         }
     }
