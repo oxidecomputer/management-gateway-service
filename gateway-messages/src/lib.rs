@@ -141,6 +141,35 @@ impl From<UpdateId> for uuid::Uuid {
     }
 }
 
+/// Affect boot image selection after reset.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+)]
+pub enum ResetIntent {
+    /// Perform a normal reset without altering boot image selection.
+    Normal,
+    /// The selected slot is made persistent.
+    Persistent,
+    /// The selected slot is selected on the next reset without regard
+    /// to the persistent selection.
+    Transient,
+    // TODO:
+    // Reset and transition from Prod-signed to Dev-signed images.
+    // There must be a valid firmware installation before the reset is performed.
+    // When changes to boot policy are one-way,
+    // to be performed and a signed per-device per-boot session challenge
+    // must accompany the request. Details TBD.
+    ExpensiveAndIrrevocableProdToDev = 86,
+}
+
 /// Identifier for a single component managed by an SP.
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,

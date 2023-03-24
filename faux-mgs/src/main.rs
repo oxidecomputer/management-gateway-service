@@ -16,6 +16,7 @@ use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::PowerState;
+use gateway_messages::ResetIntent;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
@@ -51,7 +52,7 @@ struct Args {
         long,
         default_value = "info",
         value_parser = level_from_str,
-        help = "Log level for MGS client",
+        help = "Log level for MGS client: {off,critical,error,warn,info,debug,trace}",
     )]
     log_level: Level,
 
@@ -269,6 +270,40 @@ enum Command {
 
     /// Instruct the SP to reset.
     Reset,
+
+    /// Reset a component.
+    ///
+    /// This command is implemented for the component "rot" but may be
+    /// expanded to other components in the future.
+    //
+    // TODO: RoT boot image selection.
+    // TODO: revoke RoT Prod keys.
+    ResetComponent {
+        /// "rot" and "stage0" are equivalent since they are different firmware images on the same
+        /// physical part.
+        component: String,
+        #[clap(
+             default_value = "normal",
+             help = "'normal'(default) perform a simple reset of the component.{n}\
+                     'persistent' changes the CFPA image selection to `slot`.{n}\
+                     'transient' overrides the CFPA selection to `slot` for the next reset only.{n}\
+                     Selecting a slot with a lower image epoch will be refused by the RoT.",
+                     // TODO: ExpensiveAndIrrevocableProdToDev with auth_data
+             value_parser = reset_intent_from_str,
+        )]
+        intent: ResetIntent,
+
+        // RoT ImageA=0, ImageB=1
+        #[clap(
+            default_value = None,
+            help = "Image slot selection for Persistent and Transient intents",
+        )]
+        slot: Option<u16>,
+        // TODO: Authorization for ExpensiveAndIrrevocableProdToDev
+        // auth: [u8; EAIPTD_MAX_SIZE],
+        // // Path to authentication blob
+        // auth: Option<PathBuf>,
+    },
 }
 
 impl Command {
@@ -346,6 +381,16 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
         "power-off" => Ok(IgnitionCommand::PowerOff),
         "power-reset" => Ok(IgnitionCommand::PowerReset),
         _ => Err(anyhow!("Invalid ignition command: {s}")),
+    }
+}
+
+fn reset_intent_from_str(s: &str) -> Result<ResetIntent> {
+    match s {
+        "normal" | "n" => Ok(ResetIntent::Normal),
+        "persistent" | "p" => Ok(ResetIntent::Persistent),
+        "transient" | "t" => Ok(ResetIntent::Transient),
+        // "expensive_and_irrevocable_prod_to_dev" => Ok(ResetIntent::ExpensiveAndIrrevocableProdToDev),
+        _ => Err(anyhow!("Invalid reset intent: {s}")),
     }
 }
 
@@ -844,6 +889,31 @@ async fn run_command(
             info!(log, "SP is prepared to reset");
             sp.reset_trigger().await?;
             info!(log, "SP reset complete");
+            Ok(vec!["reset complete".to_string()])
+        }
+        // TODO: Add slot, intent, and PathBuf to auth blob
+        Command::ResetComponent {
+            component,
+            intent: _intents,
+            slot: _slot,
+        } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| anyhow!("invalid component name: {component}"))?;
+            sp.reset_component_prepare(sp_component).await?;
+            info!(
+                log,
+                "SP is repared to reset component {}",
+                component.as_str()
+            );
+            let auth_data = Vec::new(); // TODO: allow actual authentication blobs.
+            sp.reset_component_trigger(
+                sp_component,
+                None,
+                ResetIntent::Normal,
+                &auth_data,
+            )
+            .await?;
+            info!(log, "SP reset component {} complete", component.as_str());
             Ok(vec!["reset complete".to_string()])
         }
         Command::SendHostNmi => {
