@@ -467,6 +467,10 @@ pub enum SpError {
     CabooseValueOverflow(u32),
     CabooseReadError,
     BadCabooseChecksum,
+    /// The new image does not have a caboose with the `BORD` key
+    ImageBoardUnknown,
+    /// The new image has a `BORD` key that does not match the current image
+    ImageBoardMismatch,
 }
 
 impl fmt::Display for SpError {
@@ -559,6 +563,12 @@ impl fmt::Display for SpError {
             }
             Self::BadCabooseChecksum => {
                 write!(f, "a data checksum in the caboose is invalid")
+            }
+            Self::ImageBoardUnknown => {
+                write!(f, "could not find the board in the image cabose")
+            }
+            Self::ImageBoardMismatch => {
+                write!(f, "the image has a board that doesn't match the current image")
             }
         }
     }
