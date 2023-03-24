@@ -917,6 +917,8 @@ fn sp_response() {
         (SpError::CabooseValueOverflow(0x01020304), &[22, 4, 3, 2, 1]),
         (SpError::CabooseReadError, &[23]),
         (SpError::BadCabooseChecksum, &[24]),
+        (SpError::ImageBoardUnknown, &[25]),
+        (SpError::ImageBoardMismatch, &[26]),
     ] {
         let response = SpResponse::Error(error);
         let mut expected = vec![17];
