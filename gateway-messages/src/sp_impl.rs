@@ -24,7 +24,6 @@ use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
-use crate::ResetIntent;
 use crate::SerializedSize;
 use crate::SpComponent;
 use crate::SpError;
@@ -359,25 +358,6 @@ pub trait SpHandler {
         &mut self,
         key: [u8; 4],
     ) -> Result<&'static [u8], SpError>;
-
-    fn reset_component_prepare(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-        component: SpComponent,
-    ) -> Result<(), SpError>;
-
-    // On success, this method will return unless the reset
-    // affects the SP_ITSELF.
-    fn reset_component_trigger(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-        component: SpComponent,
-        slot: Option<u16>,
-        intent: ResetIntent,
-        auth_data: &[u8],
-    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -676,8 +656,7 @@ fn handle_mgs_request<H: SpHandler>(
     let trailing_data = match &kind {
         MgsRequest::UpdateChunk(_)
         | MgsRequest::SerialConsoleWrite { .. }
-        | MgsRequest::SetIpccKeyLookupValue { .. }
-        | MgsRequest::ResetComponentTrigger { .. } => leftover,
+        | MgsRequest::SetIpccKeyLookupValue { .. } => leftover,
         _ => {
             if !leftover.is_empty() {
                 return (
@@ -873,29 +852,6 @@ fn handle_mgs_request<H: SpHandler>(
                     SpResponse::CabooseValue
                 }
             })
-        }
-        MgsRequest::ResetComponentPrepare { component } => handler
-            .reset_component_prepare(sender, port, component)
-            .map(|()| SpResponse::ResetComponentPrepareAck),
-        MgsRequest::ResetComponentTrigger { component, slot, intent } => {
-            // Until further implementations are done, only the RoT
-            // will be reset with this message. The SP forwards the reset
-            // message, and if successful, will get a timeout response.
-            // Layers above here will have to verify that the desired effects
-            // have been achieved. SP will see that timeout as success in this
-            // case, but it could also be a dropped message.
-            // In a case where the SP is reset, not some sub-component, there
-            // would be no response.
-            handler
-                .reset_component_trigger(
-                    sender,
-                    port,
-                    component,
-                    slot,
-                    intent,
-                    trailing_data,
-                )
-                .map(|()| SpResponse::ResetComponentTriggerAck)
         }
     };
 
@@ -1246,27 +1202,6 @@ mod tests {
             &mut self,
             _key: [u8; 4],
         ) -> Result<&'static [u8], SpError> {
-            unimplemented!()
-        }
-
-        fn reset_component_prepare(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-            _component: SpComponent,
-        ) -> Result<(), SpError> {
-            unimplemented!()
-        }
-
-        fn reset_component_trigger(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-            _component: SpComponent,
-            _slot: Option<u16>,
-            _intent: ResetIntent,
-            _auth_data: &[u8],
-        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }
