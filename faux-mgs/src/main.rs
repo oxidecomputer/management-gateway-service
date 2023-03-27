@@ -905,12 +905,10 @@ async fn run_command(
                 "SP is repared to reset component {}",
                 component.as_str()
             );
-            let auth_data = Vec::new(); // TODO: allow actual authentication blobs.
             sp.reset_component_trigger(
                 sp_component,
                 None,
                 ResetIntent::Normal,
-                &auth_data,
             )
             .await?;
             info!(log, "SP reset component {} complete", component.as_str());

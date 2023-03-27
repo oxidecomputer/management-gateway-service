@@ -376,7 +376,6 @@ pub trait SpHandler {
         component: SpComponent,
         slot: Option<u16>,
         intent: ResetIntent,
-        auth_data: &[u8],
     ) -> Result<(), SpError>;
 }
 
@@ -893,7 +892,6 @@ fn handle_mgs_request<H: SpHandler>(
                     component,
                     slot,
                     intent,
-                    trailing_data,
                 )
                 .map(|()| SpResponse::ResetComponentTriggerAck)
         }
@@ -1265,7 +1263,6 @@ mod tests {
             _component: SpComponent,
             _slot: Option<u16>,
             _intent: ResetIntent,
-            _auth_data: &[u8],
         ) -> Result<(), SpError> {
             unimplemented!()
         }

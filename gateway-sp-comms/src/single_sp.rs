@@ -804,7 +804,6 @@ impl SingleSp {
         component: SpComponent,
         slot: Option<u16>,
         intent: ResetIntent,
-        auth_data: &[u8],
     ) -> Result<()> {
         // If we are resetting the SP itself, then reset trigger should
         // retry until we get back an error indicating the
@@ -814,18 +813,11 @@ impl SingleSp {
         // timeout on a response because the RoT was reset or because the message
         // got dropped. TODO: have this code and/or SP check a boot nonce or other
         // information to verify that the RoT did reset.
-        let data = if !auth_data.is_empty() {
-            Some(Cursor::new(auth_data.to_vec()))
-        } else {
-            None
-        };
-        let response = rpc(
-            &self.cmds_tx,
+        let response = self.rpc(
             MgsRequest::ResetComponentTrigger { component, slot, intent },
-            data,
         )
         .await;
-        match response.result {
+        match response {
             Ok((_addr, response, _data)) => {
                 response.expect_sys_reset_component_trigger_ack()
             }
