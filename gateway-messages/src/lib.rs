@@ -167,7 +167,7 @@ pub enum ResetIntent {
     // When changes to boot policy are one-way,
     // to be performed and a signed per-device per-boot session challenge
     // must accompany the request. Details TBD.
-    ExpensiveAndIrrevocableProdToDev = 86,
+    // ExpensiveAndIrrevocableProdToDev = 86,
 }
 
 /// Identifier for a single component managed by an SP.
