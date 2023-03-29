@@ -44,6 +44,7 @@ use gateway_messages::SwitchDuration;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
+use serde::Serialize;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -102,12 +103,12 @@ pub struct HostPhase2Request {
     pub received: Instant,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpInventory {
     pub devices: Vec<SpDevice>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct SpDevice {
     pub component: SpComponent,
     pub device: String,

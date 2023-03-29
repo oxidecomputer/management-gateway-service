@@ -27,16 +27,20 @@ use gateway_messages::UpdateStatus;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
+use gateway_sp_comms::SpComponentDetails;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::MGS_PORT;
+use serde_json::json;
 use slog::info;
 use slog::o;
 use slog::warn;
 use slog::Drain;
 use slog::Level;
 use slog::Logger;
+use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
+use std::io;
 use std::net::SocketAddrV6;
 use std::path::Path;
 use std::path::PathBuf;
@@ -62,6 +66,11 @@ struct Args {
     /// Write logs to a file instead of stderr.
     #[clap(long)]
     logfile: Option<PathBuf>,
+
+    /// Emit parseable JSON on stdout instead of "human-readable" (often
+    /// `Debug`-formatted) data.
+    #[clap(long, value_names = ["pretty"], value_parser = json_pretty_from_str)]
+    json: Option<Option<JsonPretty>>,
 
     /// Port to bind to locally [default: 0 for client commands, 22222 for
     /// server commands]
@@ -97,6 +106,17 @@ fn level_from_str(s: &str) -> Result<Level> {
         Ok(level)
     } else {
         bail!(format!("Invalid log level: {}", s))
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct JsonPretty;
+
+fn json_pretty_from_str(s: &str) -> Result<JsonPretty> {
+    if s == "pretty" {
+        Ok(JsonPretty)
+    } else {
+        bail!("expected \"pretty\"")
     }
 }
 
@@ -541,6 +561,10 @@ async fn main() -> Result<()> {
             omap,
             uart_logfile,
         } => {
+            assert!(
+                args.json.is_none(),
+                "--json not supported for serial console"
+            );
             assert_eq!(
                 num_sps, 1,
                 "cannot specify multiple interfaces for usart-attach"
@@ -587,24 +611,53 @@ async fn main() -> Result<()> {
         .into_iter()
         .map(|sp| {
             let interface = sp.interface().to_string();
-            run_command(sp, args.command.clone(), log.clone())
-                .map(|result| (interface, result))
+            run_command(
+                sp,
+                args.command.clone(),
+                args.json.is_some(),
+                log.clone(),
+            )
+            .map(|result| (interface, result))
         })
         .collect::<FuturesOrdered<_>>();
 
+    let mut by_interface = BTreeMap::new();
     while let Some((interface, result)) = all_results.next().await {
-        let prefix = if num_sps > 1 {
+        let prefix = if args.json.is_none() && num_sps > 1 {
             format!("{interface:maxwidth$} ")
         } else {
             String::new()
         };
         match result {
-            Ok(lines) => {
+            Ok(Output::Json(value)) => {
+                by_interface.insert(interface, Ok(value));
+            }
+            Ok(Output::Lines(lines)) => {
                 for line in lines {
                     println!("{prefix}{line}");
                 }
             }
-            Err(err) => println!("{prefix}Error: {err}"),
+            Err(err) => {
+                if args.json.is_some() {
+                    by_interface.insert(interface, Err(format!("{err:#}")));
+                } else {
+                    println!("{prefix}Error: {err}");
+                }
+            }
+        }
+    }
+
+    match args.json {
+        Some(Some(JsonPretty)) => {
+            serde_json::to_writer_pretty(io::stdout().lock(), &by_interface)
+                .context("failed to write to stdout")?;
+        }
+        Some(None) => {
+            serde_json::to_writer(io::stdout().lock(), &by_interface)
+                .context("failed to write to stdout")?;
+        }
+        None => {
+            // nothing to do; already preinted in the loop above
         }
     }
 
@@ -614,8 +667,9 @@ async fn main() -> Result<()> {
 async fn run_command(
     sp: SingleSp,
     command: Command,
+    json: bool,
     log: Logger,
-) -> Result<Vec<String>> {
+) -> Result<Output> {
     match command {
         // Skip special commands handled by `main()` above.
         Command::UsartAttach { .. } | Command::ServeHostPhase2 { .. } => {
@@ -636,7 +690,16 @@ async fn run_command(
                             "addr" => %addr,
                             "port" => ?port,
                         );
-                        break Ok(vec![format!("addr={addr}, port={port:?}")]);
+                        if json {
+                            break Ok(Output::Json(json!({
+                                "addr": addr,
+                                "port": port,
+                            })));
+                        } else {
+                            break Ok(Output::Lines(vec![format!(
+                                "addr={addr}, port={port:?}"
+                            )]));
+                        }
                     }
                     None => match tokio::time::timeout(
                         DISCOVERY_TIMEOUT,
@@ -655,6 +718,9 @@ async fn run_command(
         Command::State => {
             let state = sp.state().await?;
             info!(log, "{state:?}");
+            if json {
+                return Ok(Output::Json(serde_json::to_value(state).unwrap()));
+            }
             let mut lines = Vec::new();
             lines.push(format!(
                 "hubris archive: {}",
@@ -687,44 +753,72 @@ async fn run_command(
 
             // TODO: pretty print RoT state?
             lines.push(format!("RoT state: {:?}", state.rot));
-            Ok(lines)
+            Ok(Output::Lines(lines))
         }
         Command::Ignition { target } => {
-            let mut lines = Vec::new();
+            let mut by_target = BTreeMap::new();
             if let Some(target) = target.0 {
                 let state = sp.ignition_state(target).await?;
-                lines.push(format!("target {target}: {state:?}"));
+                by_target.insert(usize::from(target), state);
             } else {
                 let states = sp.bulk_ignition_state().await?;
                 for (i, state) in states.into_iter().enumerate() {
-                    lines.push(format!("target {i}: {state:?}"));
+                    by_target.insert(i, state);
                 }
             }
-            Ok(lines)
+            if json {
+                Ok(Output::Json(serde_json::to_value(by_target).unwrap()))
+            } else {
+                let mut lines = Vec::new();
+                for (target, state) in by_target {
+                    lines.push(format!("target {target}: {state:?}"));
+                }
+                Ok(Output::Lines(lines))
+            }
         }
         Command::IgnitionCommand { target, command } => {
             sp.ignition_command(target, command).await?;
             info!(log, "ignition command {command:?} send to target {target}");
-            Ok(vec![format!("successfully send {command:?}")])
+            if json {
+                Ok(Output::Json(json!({ "ack": command })))
+            } else {
+                Ok(Output::Lines(vec![format!(
+                    "successfully sent {command:?}"
+                )]))
+            }
         }
         Command::IgnitionLinkEvents { target } => {
-            let mut lines = Vec::new();
+            let mut by_target = BTreeMap::new();
             if let Some(target) = target.0 {
-                let events = sp.ignition_link_events(target).await;
-                lines.push(format!("target {target}: {events:?}"));
+                let events = sp.ignition_link_events(target).await?;
+                by_target.insert(usize::from(target), events);
             } else {
                 let events = sp.bulk_ignition_link_events().await?;
                 for (i, events) in events.into_iter().enumerate() {
-                    lines.push(format!("target {i}: {events:?}"));
+                    by_target.insert(i, events);
                 }
             }
-            Ok(lines)
+            if json {
+                Ok(Output::Json(serde_json::to_value(by_target).unwrap()))
+            } else {
+                let mut lines = Vec::new();
+                for (target, events) in by_target {
+                    lines.push(format!("target {target}: {events:?}"));
+                }
+                Ok(Output::Lines(lines))
+            }
         }
         Command::ClearIgnitionLinkEvents { target, transceiver_select } => {
             sp.clear_ignition_link_events(target.0, transceiver_select.0)
                 .await?;
             info!(log, "ignition link events cleared");
-            Ok(vec!["ignition link events cleared".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "cleared" })))
+            } else {
+                Ok(Output::Lines(vec![
+                    "ignition link events cleared".to_string()
+                ]))
+            }
         }
         Command::ComponentActiveSlot { component, set, persist } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -734,11 +828,21 @@ async fn run_command(
             if let Some(slot) = set {
                 sp.set_component_active_slot(sp_component, slot, persist)
                     .await?;
-                Ok(vec![format!("set active slot for {component:?} to {slot}")])
+                if json {
+                    Ok(Output::Json(json!({ "ack": "set", "slot": slot })))
+                } else {
+                    Ok(Output::Lines(vec![format!(
+                        "set active slot for {component:?} to {slot}"
+                    )]))
+                }
             } else {
                 let slot = sp.component_active_slot(sp_component).await?;
                 info!(log, "active slot for {component:?}: {slot}");
-                Ok(vec![format!("{slot}")])
+                if json {
+                    Ok(Output::Json(json!({ "slot": slot })))
+                } else {
+                    Ok(Output::Lines(vec![format!("{slot}")]))
+                }
             }
         }
         Command::StartupOptions { options } => {
@@ -748,17 +852,36 @@ async fn run_command(
                         format!("invalid startup options bits: {options:#x}")
                     })?;
                 sp.set_startup_options(options).await?;
-                Ok(vec![format!(
-                    "successfully set startup options to {options:?}"
-                )])
+                if json {
+                    Ok(Output::Json(
+                        json!({ "ack": "set", "options": options }),
+                    ))
+                } else {
+                    Ok(Output::Lines(vec![format!(
+                        "successfully set startup options to {options:?}"
+                    )]))
+                }
             } else {
                 let options = sp.get_startup_options().await?;
-                Ok(vec![format!("startup options: {options:?}")])
+                if json {
+                    Ok(Output::Json(json!({ "options": options })))
+                } else {
+                    Ok(Output::Lines(vec![format!(
+                        "startup options: {options:?}"
+                    )]))
+                }
             }
         }
         Command::Inventory => {
-            let mut lines = Vec::new();
             let inventory = sp.inventory().await?;
+
+            if json {
+                return Ok(Output::Json(
+                    serde_json::to_value(inventory).unwrap(),
+                ));
+            }
+
+            let mut lines = Vec::new();
             lines.push(format!(
                 "{:<16} {:<12} {:<16} {:<}",
                 "COMPONENT", "STATUS", "DEVICE", "DESCRIPTION (CAPABILITIES)"
@@ -773,7 +896,7 @@ async fn run_command(
                     d.capabilities,
                 ));
             }
-            Ok(lines)
+            Ok(Output::Lines(lines))
         }
         Command::ComponentDetails { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -781,11 +904,14 @@ async fn run_command(
                     anyhow!("invalid component name: {}", component)
                 })?;
             let details = sp.component_details(sp_component).await?;
+            if json {
+                return Ok(Output::Json(component_details_to_json(details)));
+            }
             let mut lines = Vec::new();
             for entry in details.entries {
                 lines.push(format!("{entry:?}"));
             }
-            Ok(lines)
+            Ok(Output::Lines(lines))
         }
         Command::ComponentClearStatus { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -794,12 +920,22 @@ async fn run_command(
                 })?;
             sp.component_clear_status(sp_component).await?;
             info!(log, "status cleared for component {component}");
-            Ok(vec!["status cleared".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "cleared" })))
+            } else {
+                Ok(Output::Lines(vec!["status cleared".to_string()]))
+            }
         }
         Command::UsartDetach => {
             sp.serial_console_detach().await?;
             info!(log, "SP serial console detached");
-            Ok(vec!["SP serial console detached".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "detached" })))
+            } else {
+                Ok(Output::Lines(
+                    vec!["SP serial console detached".to_string()],
+                ))
+            }
         }
         Command::Update { component, slot, image, .. } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -819,7 +955,11 @@ async fn run_command(
                     )
                 },
             )?;
-            Ok(vec!["update complete".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "updated" })))
+            } else {
+                Ok(Output::Lines(vec!["update complete".to_string()]))
+            }
         }
         Command::UpdateStatus { component } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -830,6 +970,9 @@ async fn run_command(
                         "failed to get update status to component {component}"
                     )
                 })?;
+            if json {
+                return Ok(Output::Json(serde_json::to_value(status).unwrap()));
+            }
             let status = match status {
                 UpdateStatus::Preparing(sub_status) => {
                     let id = Uuid::from(sub_status.id);
@@ -872,7 +1015,7 @@ async fn run_command(
                 UpdateStatus::None => "no update status available".to_string(),
             };
             info!(log, "{status}");
-            Ok(vec![status])
+            Ok(Output::Lines(vec![status]))
         }
         Command::UpdateAbort { component, update_id } => {
             let sp_component = SpComponent::try_from(component.as_str())
@@ -880,7 +1023,11 @@ async fn run_command(
             sp.update_abort(sp_component, update_id).await.with_context(
                 || format!("aborting update to {} failed", component),
             )?;
-            Ok(vec![format!("update {update_id} aborted")])
+            if json {
+                Ok(Output::Json(json!({ "ack": "aborted" })))
+            } else {
+                Ok(Output::Lines(vec![format!("update {update_id} aborted")]))
+            }
         }
         Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
@@ -888,16 +1035,24 @@ async fn run_command(
                     format!("failed to set power state to {state:?}")
                 })?;
                 info!(log, "successfully set SP power state to {state:?}");
-                Ok(vec![format!(
-                    "successfully set SP power state to {state:?}"
-                )])
+                if json {
+                    Ok(Output::Json(json!({ "ack": "set", "state": state })))
+                } else {
+                    Ok(Output::Lines(vec![format!(
+                        "successfully set SP power state to {state:?}"
+                    )]))
+                }
             } else {
                 let state = sp
                     .power_state()
                     .await
                     .context("failed to get power state")?;
                 info!(log, "SP power state = {state:?}");
-                Ok(vec![format!("{state:?}")])
+                if json {
+                    Ok(Output::Json(json!({ "state": state })))
+                } else {
+                    Ok(Output::Lines(vec![format!("{state:?}")]))
+                }
             }
         }
         Command::Reset => {
@@ -905,7 +1060,11 @@ async fn run_command(
             info!(log, "SP is prepared to reset");
             sp.reset_component_trigger(SpComponent::SP_ITSELF).await?;
             info!(log, "SP reset complete");
-            Ok(vec!["reset complete".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "reset" })))
+            } else {
+                Ok(Output::Lines(vec!["reset complete".to_string()]))
+            }
         }
 
         Command::ResetComponent { component } => {
@@ -919,7 +1078,11 @@ async fn run_command(
             );
             sp.reset_component_trigger(sp_component).await?;
             info!(log, "SP reset component {} complete", component.as_str());
-            Ok(vec!["reset complete".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "reset" })))
+            } else {
+                Ok(Output::Lines(vec!["reset complete".to_string()]))
+            }
         }
 
         Command::SwitchDefaultImage { component, slot, duration } => {
@@ -931,18 +1094,30 @@ async fn run_command(
                 "Switch default image for {} completed",
                 component.as_str()
             );
-            Ok(vec!["switch_default_image".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "switch_default_image" })))
+            } else {
+                Ok(Output::Lines(vec!["switch_default_image".to_string()]))
+            }
         }
         Command::SendHostNmi => {
             sp.send_host_nmi().await?;
-            Ok(vec!["done".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "nmi" })))
+            } else {
+                Ok(Output::Lines(vec!["done".to_string()]))
+            }
         }
         Command::SetIpccKeyValue { key, value_path } => {
             let value = fs::read(&value_path).with_context(|| {
                 format!("failed to read {}", value_path.display())
             })?;
             sp.set_ipcc_key_lookup_value(key, value).await?;
-            Ok(vec!["done".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "ipcc" })))
+            } else {
+                Ok(Output::Lines(vec!["done".to_string()]))
+            }
         }
 
         Command::ReadCaboose { key } => {
@@ -950,9 +1125,13 @@ async fn run_command(
             let out = if value.is_ascii() {
                 String::from_utf8(value).unwrap()
             } else {
-                format!("{value:?}")
+                hex::encode(value)
             };
-            Ok(vec![out])
+            if json {
+                Ok(Output::Json(json!({ "value": out })))
+            } else {
+                Ok(Output::Lines(vec![out]))
+            }
         }
         Command::SystemLed { cmd } => {
             sp.component_action(
@@ -964,7 +1143,11 @@ async fn run_command(
                 }),
             )
             .await?;
-            Ok(vec!["done".to_string()])
+            if json {
+                Ok(Output::Json(json!({ "ack": "led" })))
+            } else {
+                Ok(Output::Lines(vec!["done".to_string()]))
+            }
         }
     }
 }
@@ -1107,4 +1290,50 @@ async fn populate_phase2_images(
     }
 
     Ok(())
+}
+
+enum Output {
+    Json(serde_json::Value),
+    Lines(Vec<String>),
+}
+
+fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
+    use gateway_messages::measurement::{MeasurementError, MeasurementKind};
+    use gateway_messages::monorail_port_status::{PortStatus, PortStatusError};
+
+    // SpComponentDetails and Measurement from gateway_messages intentionally do
+    // not derive `Serialize` to avoid accidental misuse in MGS / the SP, so we
+    // do a little work here to map them to something that does.
+    #[derive(serde::Serialize)]
+    #[serde(tag = "kind")]
+    enum ComponentDetails {
+        PortStatus(Result<PortStatus, PortStatusError>),
+        Measurement(Measurement),
+    }
+
+    #[derive(serde::Serialize)]
+    struct Measurement {
+        pub name: String,
+        pub kind: MeasurementKind,
+        pub value: Result<f32, MeasurementError>,
+    }
+
+    let entries = details
+        .entries
+        .into_iter()
+        .map(|d| match d {
+            gateway_messages::ComponentDetails::PortStatus(r) => {
+                ComponentDetails::PortStatus(r)
+            }
+            gateway_messages::ComponentDetails::Measurement(m) => {
+                ComponentDetails::Measurement(Measurement {
+                    name: m.name,
+                    kind: m.kind,
+                    value: m.value,
+                })
+            }
+        })
+        .collect::<Vec<_>>();
+
+    json!({ "entries": entries })
 }

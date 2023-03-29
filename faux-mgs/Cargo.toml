@@ -5,23 +5,25 @@ edition = "2021"
 license = "MPL-2.0"
 
 [dependencies]
-anyhow = "1.0"
-async-trait = "0.1"
-clap = { version = "4.0", features = ["derive"] }
-futures = "0.3"
-glob = "0.3.1"
-hex = "0.4"
-nix = "0.26.2"
-sha2 = "0.10"
-slog = { version = "2.7", features = ["max_level_trace", "release_max_level_trace"] }
-slog-async = "2.6"
-slog-term = "2.9"
-termios = "0.3"
-thiserror = "1.0"
-tokio = { version = "1.21", features = ["full"] }
-tokio-stream = { version = "0.1", features = ["fs"] }
-tokio-util = { version = "0.7", features = ["compat"] }
-uuid = { version = "1.1", features = ["v4"] }
+anyhow.workspace = true
+async-trait.workspace = true
+clap.workspace = true
+futures.workspace = true
+glob.workspace = true
+hex.workspace = true
+nix.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+slog.workspace = true
+slog-async.workspace = true
+slog-term.workspace = true
+termios.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tokio-stream.workspace = true
+tokio-util.workspace = true
+uuid = { workspace = true, features = ["std", "v4"] }
 
-gateway-messages = { path = "../gateway-messages", features = ["std"] }
-gateway-sp-comms = { path = "../gateway-sp-comms" }
+gateway-messages = { workspace = true, features = ["std"] }
+gateway-sp-comms.workspace = true

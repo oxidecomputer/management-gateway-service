@@ -160,9 +160,7 @@ impl From<UpdateId> for uuid::Uuid {
 }
 
 /// Identifier for a single component managed by an SP.
-#[derive(
-    Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,
-)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, SerializedSize)]
 pub struct SpComponent {
     /// The ID of the component.
     ///
@@ -173,6 +171,70 @@ pub struct SpComponent {
     /// An `SpComponent` can be created via its `TryFrom<&str>` implementation,
     /// which appends the appropriate padding.
     pub id: [u8; Self::MAX_ID_LENGTH],
+}
+
+impl Serialize for SpComponent {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: serde::Serializer,
+    {
+        // If we're serializing to a human-readable form (e.g., `faux-mgs --json
+        // output`), serialize ourself as a string....
+        if serializer.is_human_readable() {
+            if let Some(s) = self.as_str() {
+                return serializer.serialize_str(s);
+            }
+        }
+
+        // ... otherwise, serialize our id array directly, which matches what
+        // hubpack expects from serde's derived impl.
+        self.id.serialize(serializer)
+    }
+}
+
+impl<'de> Deserialize<'de> for SpComponent {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        use serde::de::Visitor;
+
+        // Inverse of our serialize method: if we're deserializing from a
+        // human-readable form, deserialize a string...
+        if deserializer.is_human_readable() {
+            struct StrVisitor;
+            impl Visitor<'_> for StrVisitor {
+                type Value = SpComponent;
+
+                fn expecting(
+                    &self,
+                    formatter: &mut fmt::Formatter,
+                ) -> fmt::Result {
+                    write!(
+                        formatter,
+                        "a string of at most {} bytes",
+                        SpComponent::MAX_ID_LENGTH
+                    )
+                }
+
+                fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                where
+                    E: serde::de::Error,
+                {
+                    SpComponent::try_from(v).map_err(|SpComponentIdTooLong| {
+                        E::invalid_length(v.len(), &"16")
+                    })
+                }
+            }
+
+            deserializer.deserialize_str(StrVisitor)
+        } else {
+            // ... otherwise, deserialize an array just like the derived serde
+            // impl would do.
+            let id = <[u8; Self::MAX_ID_LENGTH]>::deserialize(deserializer)?;
+            Ok(Self { id })
+        }
+    }
 }
 
 impl SpComponent {
@@ -381,5 +443,32 @@ mod tests {
         for (i, chunk) in remainder.chunks(256).enumerate() {
             assert_eq!(chunk, &data_vecs[i][..chunk.len()]);
         }
+    }
+
+    #[test]
+    fn test_human_readable_sp_component() {
+        let component = SpComponent::SP_ITSELF;
+        let expected_value = serde_json::Value::String("sp".to_string());
+
+        assert_eq!(serde_json::to_value(component).unwrap(), expected_value);
+        assert_eq!(
+            serde_json::from_value::<SpComponent>(expected_value).unwrap(),
+            component
+        );
+    }
+
+    #[test]
+    fn test_non_human_readable_sp_component() {
+        let component = SpComponent::SP_ITSELF;
+        let expected_value = component.id;
+
+        let mut out = [0; SpComponent::MAX_SIZE];
+        let n = hubpack::serialize(&mut out, &component).unwrap();
+        assert_eq!(&out[..n], expected_value);
+
+        assert_eq!(
+            hubpack::deserialize::<SpComponent>(&expected_value).unwrap(),
+            (component, &[] as &[u8])
+        );
     }
 }

@@ -172,7 +172,7 @@ mod tests {
         let (tag, decoded_value, rest) = decode(&buf[..n]).unwrap();
         assert_eq!(tag, TAG);
         assert_eq!(decoded_value, value);
-        assert_eq!(rest, &[]);
+        assert_eq!(rest, &[] as &[u8]);
 
         // Give decode the full buffer.
         let (tag, decoded_value, rest) = decode(&buf).unwrap();
@@ -237,7 +237,10 @@ mod tests {
 
         assert_eq!(
             n,
-            tag_values.iter().map(|(_tag, value)| tlv_len(value.len())).sum()
+            tag_values
+                .iter()
+                .map(|(_tag, value)| tlv_len(value.len()))
+                .sum::<usize>()
         );
 
         let decoded =
