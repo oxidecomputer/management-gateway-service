@@ -6,10 +6,14 @@
 
 use anyhow::Context;
 use anyhow::Result;
+use gateway_messages::BadRequestReason;
 use gateway_messages::SpComponent;
+use gateway_messages::SpError;
 use gateway_messages::SERIAL_CONSOLE_IDLE_TIMEOUT;
+use gateway_sp_comms::error::CommunicationError;
 use gateway_sp_comms::AttachedSerialConsoleSend;
 use gateway_sp_comms::SingleSp;
+use slog::warn;
 use std::fs::File;
 use std::io;
 use std::io::Write;
@@ -36,6 +40,7 @@ pub(crate) async fn run(
     imap: Option<String>,
     omap: Option<String>,
     uart_logfile: Option<PathBuf>,
+    log: slog::Logger,
 ) -> Result<()> {
     // Put terminal in raw mode, if requested, with a guard to restore it.
     let _guard =
@@ -78,7 +83,7 @@ pub(crate) async fn run(
     let (console_tx, mut console_rx) = console.split();
     let (send_tx, send_rx) = mpsc::channel(8);
     let tx_to_sp_handle = tokio::spawn(async move {
-        relay_data_to_sp(console_tx, send_rx).await.unwrap();
+        relay_data_to_sp(console_tx, send_rx, log).await.unwrap();
     });
 
     loop {
@@ -138,6 +143,7 @@ pub(crate) async fn run(
 async fn relay_data_to_sp(
     mut console_tx: AttachedSerialConsoleSend,
     mut data_rx: mpsc::Receiver<SendTxData>,
+    log: slog::Logger,
 ) -> Result<()> {
     let mut keepalive = time::interval(SERIAL_CONSOLE_IDLE_TIMEOUT / 4);
     keepalive.set_missed_tick_behavior(MissedTickBehavior::Delay);
@@ -159,7 +165,27 @@ async fn relay_data_to_sp(
             }
 
             _ = keepalive.tick() => {
-                console_tx.keepalive().await?;
+                match console_tx.keepalive().await {
+                    Ok(()) => (),
+                    // Temporary stopgap that allows us to continue talking to
+                    // SPs that don't yet have the keepalive update.
+                    Err(CommunicationError::SpError(SpError::BadRequest(
+                        BadRequestReason::DeserializationError,
+                    ))) => {
+                        warn!(log, concat!(
+                            "This SP does not support console keepalives! ",
+                            "Please update it at your earliest convenience.",
+                        ));
+                        // Change our keepalive timer to only tick once ever 4
+                        // hours (i.e., probably never, unless someone leaves
+                        // the console open.)
+                        keepalive = time::interval(
+                            Duration::from_secs(4 * 3600)
+                        );
+                        keepalive.reset();
+                    }
+                    Err(err) => return Err(err.into()),
+                }
             }
         }
     }
