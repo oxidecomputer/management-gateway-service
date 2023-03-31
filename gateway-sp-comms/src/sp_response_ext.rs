@@ -170,6 +170,9 @@ impl SpResponseExt for SpResponse {
             Self::SwitchDefaultImageAck => {
                 response_kind_names::SWITCH_DEFAULT_IMAGE_ACK
             }
+            Self::ComponentActionAck => {
+                response_kind_names::COMPONENT_ACTION_ACK
+            }
         }
     }
 
@@ -602,4 +605,5 @@ mod response_kind_names {
         "reset_component_trigger_ack";
     pub(super) const SWITCH_DEFAULT_IMAGE_ACK: &str =
         "switch_default_image_ack";
+    pub(super) const COMPONENT_ACTION_ACK: &str = "component_action";
 }

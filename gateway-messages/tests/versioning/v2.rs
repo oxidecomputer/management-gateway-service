@@ -59,12 +59,8 @@ use gateway_messages::UpdateInProgressStatus;
 use gateway_messages::UpdatePreparationProgress;
 use gateway_messages::UpdatePreparationStatus;
 use gateway_messages::UpdateStatus;
-use serde::Serialize;
 
-fn assert_serialized(out: &mut [u8], expected: &[u8], item: &impl Serialize) {
-    let n = gateway_messages::serialize(out, item).unwrap();
-    assert_eq!(expected, &out[..n]);
-}
+use super::assert_serialized;
 
 // This test covers the high-level `Message`, `Header`, and `MessageKind` types.
 // It does not cover all possible request/response variants that live inside
