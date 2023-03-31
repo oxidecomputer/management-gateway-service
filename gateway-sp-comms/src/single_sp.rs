@@ -765,6 +765,66 @@ impl SingleSp {
         })
     }
 
+    /// Instruct the SP that a reset_component_trigger will be coming with a
+    /// boot image selection policy setting.
+    ///
+    /// This is part of a two-phase reset process. MGS should set a
+    /// `reset_component_prepare()` followed by `reset_component_trigger()`. Internally,
+    /// `reset_component_trigger()` continues to send the reset trigger message until the
+    /// SP responds with an error that it wasn't expecting it, at which point we
+    /// assume a reset has happened. In critical situations (e.g., updates),
+    /// callers should verify through a separate channel that the operation they
+    /// needed the reset for has happened (e.g., checking the SP's version, in
+    /// the case of updates).
+    pub async fn reset_component_prepare(
+        &self,
+        component: SpComponent,
+    ) -> Result<()> {
+        debug!(
+            self.log,
+            "sending ResetComponentPrepare component:{component:?}"
+        );
+        let r = self
+            .rpc(MgsRequest::ResetComponentPrepare { component })
+            .await
+            .and_then(|(_peer, response, _data)| {
+                response
+                    .expect_sys_reset_component_prepare_ack()
+                    .map_err(Into::into)
+            });
+        debug!(self.log, "response from ResetComponentPrepare component:{component:?} is {r:?}");
+
+        r
+    }
+
+    /// Instruct the SP to reset a component.
+    ///
+    /// Only valid after a successful call to `reset_component_prepare()`.
+    pub async fn reset_component_trigger(
+        &self,
+        component: SpComponent,
+    ) -> Result<()> {
+        // If we are resetting the SP itself, then reset trigger should
+        // retry until we get back an error indicating the
+        // SP wasn't expecting a reset trigger (because it has reset!).
+        // If we are resetting the RoT, the SP will send an ack.
+        // When resetting the RoT, the SP SpRot client will either
+        // timeout on a response because the RoT was reset or because the message
+        // got dropped. TODO: have this code and/or SP check a boot nonce or other
+        // information to verify that the RoT did reset.
+        let response =
+            self.rpc(MgsRequest::ResetComponentTrigger { component }).await;
+        match response {
+            Ok((_addr, response, _data)) => {
+                response.expect_sys_reset_component_trigger_ack()
+            }
+            Err(CommunicationError::SpError(
+                SpError::ResetComponentTriggerWithoutPrepare,
+            )) if component == SpComponent::SP_ITSELF => Ok(()),
+            Err(other) => Err(other),
+        }
+    }
+
     /// Instruct the SP to reset a component.
     ///
     /// Only valid after a successful call to `reset_component_prepare()`.

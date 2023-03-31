@@ -272,6 +272,12 @@ enum Command {
     /// Instruct the SP to reset.
     Reset,
 
+    /// Reset a component.
+    ///
+    /// This command is implemented for the component "rot" but may be
+    /// expanded to other components in the future.
+    ResetComponent { component: String },
+
     /// Set the boot image selection preference for a component.
     SwitchDefaultImage {
         component: String,
@@ -881,6 +887,20 @@ async fn run_command(
             info!(log, "SP is prepared to reset");
             sp.reset_trigger().await?;
             info!(log, "SP reset complete");
+            Ok(vec!["reset complete".to_string()])
+        }
+
+        Command::ResetComponent { component } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| anyhow!("invalid component name: {component}"))?;
+            sp.reset_component_prepare(sp_component).await?;
+            info!(
+                log,
+                "SP is repared to reset component {}",
+                component.as_str()
+            );
+            sp.reset_component_trigger(sp_component).await?;
+            info!(log, "SP reset component {} complete", component.as_str());
             Ok(vec!["reset complete".to_string()])
         }
 

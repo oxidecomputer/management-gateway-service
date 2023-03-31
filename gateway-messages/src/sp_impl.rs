@@ -361,6 +361,22 @@ pub trait SpHandler {
         key: [u8; 4],
     ) -> Result<&'static [u8], SpError>;
 
+    fn reset_component_prepare(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+
+    // On success, this method will return unless the reset
+    // affects the SP_ITSELF.
+    fn reset_component_trigger(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+
     fn switch_default_image(
         &mut self,
         sender: SocketAddrV6,
@@ -667,7 +683,8 @@ fn handle_mgs_request<H: SpHandler>(
     let trailing_data = match &kind {
         MgsRequest::UpdateChunk(_)
         | MgsRequest::SerialConsoleWrite { .. }
-        | MgsRequest::SetIpccKeyLookupValue { .. } => leftover,
+        | MgsRequest::SetIpccKeyLookupValue { .. }
+        | MgsRequest::ResetComponentTrigger { .. } => leftover,
         _ => {
             if !leftover.is_empty() {
                 return (
@@ -863,6 +880,22 @@ fn handle_mgs_request<H: SpHandler>(
                     SpResponse::CabooseValue
                 }
             })
+        }
+        MgsRequest::ResetComponentPrepare { component } => handler
+            .reset_component_prepare(sender, port, component)
+            .map(|()| SpResponse::ResetComponentPrepareAck),
+        MgsRequest::ResetComponentTrigger { component } => {
+            // Until further implementations are done, only the RoT
+            // will be reset with this message. The SP forwards the reset
+            // message, and if successful, will get a timeout response.
+            // Layers above here will have to verify that the desired effects
+            // have been achieved. SP will see that timeout as success in this
+            // case, but it could also be a dropped message.
+            // In a case where the SP is reset, not some sub-component, there
+            // would be no response.
+            handler
+                .reset_component_trigger(sender, port, component)
+                .map(|()| SpResponse::ResetComponentTriggerAck)
         }
         MgsRequest::SwitchDefaultImage { component, slot, duration } => handler
             .switch_default_image(sender, port, component, slot, duration)
@@ -1216,6 +1249,24 @@ mod tests {
             &mut self,
             _key: [u8; 4],
         ) -> Result<&'static [u8], SpError> {
+            unimplemented!()
+        }
+
+        fn reset_component_prepare(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn reset_component_trigger(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
 
