@@ -492,6 +492,7 @@ async fn main() -> Result<()> {
                 imap,
                 omap,
                 uart_logfile,
+                log,
             )
             .await?;
 
