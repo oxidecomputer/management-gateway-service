@@ -25,6 +25,7 @@ use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
 use crate::SerializedSize;
+use crate::SlotId;
 use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
@@ -32,6 +33,7 @@ use crate::SpResponse;
 use crate::SpState;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
+use crate::SwitchDuration;
 use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
@@ -358,6 +360,15 @@ pub trait SpHandler {
         &mut self,
         key: [u8; 4],
     ) -> Result<&'static [u8], SpError>;
+
+    fn switch_default_image(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+        slot: SlotId,
+        duration: SwitchDuration,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -853,6 +864,9 @@ fn handle_mgs_request<H: SpHandler>(
                 }
             })
         }
+        MgsRequest::SwitchDefaultImage { component, slot, duration } => handler
+            .switch_default_image(sender, port, component, slot, duration)
+            .map(|()| SpResponse::SwitchDefaultImageAck),
     };
 
     let response = match result {
@@ -1202,6 +1216,17 @@ mod tests {
             &mut self,
             _key: [u8; 4],
         ) -> Result<&'static [u8], SpError> {
+            unimplemented!()
+        }
+
+        fn switch_default_image(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+            _slot: SlotId,
+            _duration: SwitchDuration,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }

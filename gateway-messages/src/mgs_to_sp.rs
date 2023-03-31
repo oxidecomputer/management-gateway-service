@@ -7,7 +7,9 @@
 use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
+use crate::SlotId;
 use crate::SpComponent;
+use crate::SwitchDuration;
 use crate::UpdateId;
 use hubpack::SerializedSize;
 use serde::Deserialize;
@@ -126,6 +128,12 @@ pub enum MgsRequest {
     },
 
     SerialConsoleKeepAlive,
+
+    SwitchDefaultImage {
+        component: SpComponent,
+        slot: SlotId,
+        duration: SwitchDuration,
+    },
 }
 
 #[derive(

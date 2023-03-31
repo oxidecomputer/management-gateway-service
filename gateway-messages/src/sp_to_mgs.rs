@@ -106,6 +106,7 @@ pub enum SpResponse {
     CabooseValue,
 
     SerialConsoleKeepAliveAck,
+    SwitchDefaultImageAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -471,6 +472,10 @@ pub enum SpError {
     ImageBoardUnknown,
     /// The new image has a `BORD` key that does not match the current image
     ImageBoardMismatch,
+    /// There will be policy violations for some requests:
+    ///   - No image in SlotId (what suitability checks are needed?)
+    ///   - Lower epoch than current in SlotId
+    SwitchDefaultImageError(u32),
 }
 
 impl fmt::Display for SpError {
@@ -569,6 +574,9 @@ impl fmt::Display for SpError {
             }
             Self::ImageBoardMismatch => {
                 write!(f, "the image has a board that doesn't match the current image")
+            }
+            Self::SwitchDefaultImageError(code) => {
+                write!(f, "switch default image failed with code {code}")
             }
         }
     }

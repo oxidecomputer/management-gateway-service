@@ -123,6 +123,24 @@ pub enum BadRequestReason {
     DeserializationError,
 }
 
+/// Image slot name for SwitchDefaultImage
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SlotId {
+    A,
+    B,
+}
+
+/// Duration for SwitchDefaultImage
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SwitchDuration {
+    Once,
+    Forever,
+}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]

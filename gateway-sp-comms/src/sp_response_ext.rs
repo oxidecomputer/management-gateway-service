@@ -83,6 +83,8 @@ pub(crate) trait SpResponseExt {
     fn expect_set_ipcc_key_lookup_value_ack(self) -> Result<()>;
 
     fn expect_caboose_value(self) -> Result<()>;
+
+    fn expect_switch_default_image_ack(self) -> Result<()>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -157,6 +159,9 @@ impl SpResponseExt for SpResponse {
                 response_kind_names::SET_IPCC_KEY_LOOKUP_VALUE_ACK
             }
             Self::CabooseValue => response_kind_names::CABOOSE_VALUE,
+            Self::SwitchDefaultImageAck => {
+                response_kind_names::SWITCH_DEFAULT_IMAGE_ACK
+            }
         }
     }
 
@@ -513,6 +518,17 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_switch_default_image_ack(self) -> Result<()> {
+        match self {
+            Self::SwitchDefaultImageAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::SWITCH_DEFAULT_IMAGE_ACK,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -561,4 +577,6 @@ mod response_kind_names {
     pub(super) const SET_IPCC_KEY_LOOKUP_VALUE_ACK: &str =
         "set_ipcc_key_lookup_value_ack";
     pub(super) const CABOOSE_VALUE: &str = "caboose_value";
+    pub(super) const SWITCH_DEFAULT_IMAGE_ACK: &str =
+        "switch_default_image_ack";
 }
