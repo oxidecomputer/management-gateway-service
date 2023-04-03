@@ -307,7 +307,9 @@ enum Command {
 
 #[derive(Subcommand, Debug, Clone)]
 enum LedCommand {
+    /// Turns the LED on
     On,
+    /// Turns the LED off
     Off,
 }
 
