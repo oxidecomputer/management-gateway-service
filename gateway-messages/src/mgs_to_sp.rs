@@ -222,7 +222,7 @@ pub enum ComponentAction {
     Led(LedComponentAction),
 }
 
-/// Actions for LED components, i.e. components with `IS_AN_LED` set
+/// Actions for LED components, i.e. components with `IS_LED` set
 #[derive(
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
