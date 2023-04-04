@@ -229,6 +229,7 @@ pub enum ComponentAction {
 pub enum LedComponentAction {
     TurnOn,
     TurnOff,
+    Blink,
 }
 
 #[derive(

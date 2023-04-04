@@ -311,6 +311,8 @@ enum LedCommand {
     On,
     /// Turns the LED off
     Off,
+    /// Enables blinking
+    Blink,
 }
 
 impl Command {
@@ -958,6 +960,7 @@ async fn run_command(
                 ComponentAction::Led(match cmd {
                     LedCommand::On => LedComponentAction::TurnOn,
                     LedCommand::Off => LedComponentAction::TurnOff,
+                    LedCommand::Blink => LedComponentAction::Blink,
                 }),
             )
             .await?;

@@ -31,14 +31,21 @@ fn mgs_request() {
         component: SpComponent::SYSTEM_LED,
         action: ComponentAction::Led(LedComponentAction::TurnOn),
     };
-    let expected = b"\x21system-led\0\0\0\0\0\0\0\0";
+    let expected = b"\x24system-led\0\0\0\0\0\0\0\0";
     assert_serialized(&mut out, expected, &request);
 
     let request = MgsRequest::ComponentAction {
         component: SpComponent::SYSTEM_LED,
         action: ComponentAction::Led(LedComponentAction::TurnOff),
     };
-    let expected = b"\x21system-led\0\0\0\0\0\0\0\x01";
+    let expected = b"\x24system-led\0\0\0\0\0\0\0\x01";
+    assert_serialized(&mut out, expected, &request);
+
+    let request = MgsRequest::ComponentAction {
+        component: SpComponent::SYSTEM_LED,
+        action: ComponentAction::Led(LedComponentAction::Blink),
+    };
+    let expected = b"\x24system-led\0\0\0\0\0\0\0\x02";
     assert_serialized(&mut out, expected, &request);
 }
 
@@ -46,6 +53,6 @@ fn mgs_request() {
 fn sp_response() {
     let mut out = [0; SpResponse::MAX_SIZE];
     let response = SpResponse::ComponentActionAck;
-    let expected = &[33];
+    let expected = &[36];
     assert_serialized(&mut out, expected, &response);
 }
