@@ -780,21 +780,13 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<()> {
-        debug!(
-            self.log,
-            "sending ResetComponentPrepare component:{component:?}"
-        );
-        let r = self
-            .rpc(MgsRequest::ResetComponentPrepare { component })
+        self.rpc(MgsRequest::ResetComponentPrepare { component })
             .await
             .and_then(|(_peer, response, _data)| {
                 response
                     .expect_sys_reset_component_prepare_ack()
                     .map_err(Into::into)
-            });
-        debug!(self.log, "response from ResetComponentPrepare component:{component:?} is {r:?}");
-
-        r
+            })
     }
 
     /// Instruct the SP to reset a component.
@@ -834,15 +826,11 @@ impl SingleSp {
         slot: SlotId,
         duration: SwitchDuration,
     ) -> Result<()> {
-        let response = self
-            .rpc(MgsRequest::SwitchDefaultImage { component, slot, duration })
-            .await;
-        match response {
-            Ok((_addr, response, _data)) => {
+        self.rpc(MgsRequest::SwitchDefaultImage { component, slot, duration })
+            .await
+            .and_then(|(_addr, response, _data)| {
                 response.expect_switch_default_image_ack()
-            }
-            Err(other) => Err(other),
-        }
+            })
     }
 }
 
