@@ -16,8 +16,10 @@ use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::PowerState;
+use gateway_messages::SlotId;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
+use gateway_messages::SwitchDuration;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
@@ -51,7 +53,7 @@ struct Args {
         long,
         default_value = "info",
         value_parser = level_from_str,
-        help = "Log level for MGS client",
+        help = "Log level for MGS client: {off,critical,error,warn,info,debug,trace}",
     )]
     log_level: Level,
 
@@ -269,6 +271,30 @@ enum Command {
 
     /// Instruct the SP to reset.
     Reset,
+
+    /// Reset a component.
+    ///
+    /// This command is implemented for the component "rot" but may be
+    /// expanded to other components in the future.
+    ResetComponent { component: String },
+
+    /// Set the boot image selection preference for a component.
+    SwitchDefaultImage {
+        component: String,
+
+        #[clap(
+            help = "Image slot identifier",
+            value_parser = slot_from_str,
+        )]
+        slot: SlotId,
+
+        #[clap(
+            help = "Duration 'Once' for image selection on the next reset only or 'Forever' for{n}\
+                  every reset and power-cycle.",
+            value_parser = duration_from_str,
+        )]
+        duration: SwitchDuration,
+    },
 }
 
 impl Command {
@@ -346,6 +372,22 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
         "power-off" => Ok(IgnitionCommand::PowerOff),
         "power-reset" => Ok(IgnitionCommand::PowerReset),
         _ => Err(anyhow!("Invalid ignition command: {s}")),
+    }
+}
+
+fn slot_from_str(s: &str) -> Result<SlotId> {
+    match s {
+        "A" | "a" | "0" => Ok(SlotId::A),
+        "B" | "b" | "1" => Ok(SlotId::B),
+        _ => Err(anyhow!("Invalid slot: {s}. Use A, a, 0, B, b, or 1.")),
+    }
+}
+
+fn duration_from_str(s: &str) -> Result<SwitchDuration> {
+    match s {
+        "once" => Ok(SwitchDuration::Once),
+        "forever" => Ok(SwitchDuration::Forever),
+        _ => Err(anyhow!("Invalid duration: {s}. Use 'once' or 'forever'.")),
     }
 }
 
@@ -841,11 +883,37 @@ async fn run_command(
             }
         }
         Command::Reset => {
-            sp.reset_prepare().await?;
+            sp.reset_component_prepare(SpComponent::SP_ITSELF).await?;
             info!(log, "SP is prepared to reset");
-            sp.reset_trigger().await?;
+            sp.reset_component_trigger(SpComponent::SP_ITSELF).await?;
             info!(log, "SP reset complete");
             Ok(vec!["reset complete".to_string()])
+        }
+
+        Command::ResetComponent { component } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| anyhow!("invalid component name: {component}"))?;
+            sp.reset_component_prepare(sp_component).await?;
+            info!(
+                log,
+                "SP is repared to reset component {}",
+                component.as_str()
+            );
+            sp.reset_component_trigger(sp_component).await?;
+            info!(log, "SP reset component {} complete", component.as_str());
+            Ok(vec!["reset complete".to_string()])
+        }
+
+        Command::SwitchDefaultImage { component, slot, duration } => {
+            let sp_component = SpComponent::try_from(component.as_str())
+                .map_err(|_| anyhow!("invalid component name: {component}"))?;
+            sp.switch_default_image(sp_component, slot, duration).await?;
+            info!(
+                log,
+                "Switch default image for {} completed",
+                component.as_str()
+            );
+            Ok(vec!["switch_default_image".to_string()])
         }
         Command::SendHostNmi => {
             sp.send_host_nmi().await?;

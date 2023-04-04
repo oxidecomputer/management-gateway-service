@@ -7,7 +7,9 @@
 use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
+use crate::SlotId;
 use crate::SpComponent;
+use crate::SwitchDuration;
 use crate::UpdateId;
 use hubpack::SerializedSize;
 use serde::Deserialize;
@@ -126,6 +128,22 @@ pub enum MgsRequest {
     },
 
     SerialConsoleKeepAlive,
+
+    /// Reset a specific component
+    /// SP_ITSELF and ROT are supported
+    ResetComponentPrepare {
+        component: SpComponent,
+    },
+    ResetComponentTrigger {
+        component: SpComponent,
+    },
+
+    /// Change boot image selection on reset or power-on.
+    SwitchDefaultImage {
+        component: SpComponent,
+        slot: SlotId,
+        duration: SwitchDuration,
+    },
 }
 
 #[derive(

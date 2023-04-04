@@ -25,6 +25,7 @@ use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
 use crate::SerializedSize;
+use crate::SlotId;
 use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
@@ -32,11 +33,11 @@ use crate::SpResponse;
 use crate::SpState;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
+use crate::SwitchDuration;
 use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
-use core::convert::Infallible;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
 
@@ -226,19 +227,6 @@ pub trait SpHandler {
         port: SpPort,
     ) -> Result<(), SpError>;
 
-    fn reset_prepare(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<(), SpError>;
-
-    // On success, this method cannot return (it should perform a reset).
-    fn reset_trigger(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<Infallible, SpError>;
-
     /// Number of devices returned in the inventory of this SP.
     fn num_devices(&mut self, sender: SocketAddrV6, port: SpPort) -> u32;
 
@@ -358,6 +346,31 @@ pub trait SpHandler {
         &mut self,
         key: [u8; 4],
     ) -> Result<&'static [u8], SpError>;
+
+    fn reset_component_prepare(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+
+    // On success, this method will return unless the reset
+    // affects the SP_ITSELF.
+    fn reset_component_trigger(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+
+    fn switch_default_image(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        component: SpComponent,
+        slot: SlotId,
+        duration: SwitchDuration,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -768,18 +781,11 @@ fn handle_mgs_request<H: SpHandler>(
             .set_power_state(sender, port, power_state)
             .map(|()| SpResponse::SetPowerStateAck),
         MgsRequest::ResetPrepare => handler
-            .reset_prepare(sender, port)
+            .reset_component_prepare(sender, port, SpComponent::SP_ITSELF)
             .map(|()| SpResponse::ResetPrepareAck),
-        MgsRequest::ResetTrigger => {
-            handler.reset_trigger(sender, port).map(|infallible| {
-                // A bit of type system magic here; `reset_trigger`'s
-                // success type (`Infallible`) cannot be instantiated. We can
-                // provide an empty match to teach the type system that an
-                // `Infallible` (which can't exist) can be converted to a
-                // `SpResponse` (or any other type!).
-                match infallible {}
-            })
-        }
+        MgsRequest::ResetTrigger => handler
+            .reset_component_trigger(sender, port, SpComponent::SP_ITSELF)
+            .map(|()| SpResponse::ResetComponentTriggerAck),
         MgsRequest::Inventory { device_index } => {
             let total_devices = handler.num_devices(sender, port);
             // If a caller asks for an index past our end, clamp it.
@@ -853,6 +859,25 @@ fn handle_mgs_request<H: SpHandler>(
                 }
             })
         }
+        MgsRequest::ResetComponentPrepare { component } => handler
+            .reset_component_prepare(sender, port, component)
+            .map(|()| SpResponse::ResetComponentPrepareAck),
+        MgsRequest::ResetComponentTrigger { component } => {
+            // Until further implementations are done, only the RoT
+            // will be reset with this message. The SP forwards the reset
+            // message, and if successful, will get a timeout response.
+            // Layers above here will have to verify that the desired effects
+            // have been achieved. SP will see that timeout as success in this
+            // case, but it could also be a dropped message.
+            // In a case where the SP is reset, not some sub-component, there
+            // would be no response.
+            handler
+                .reset_component_trigger(sender, port, component)
+                .map(|()| SpResponse::ResetComponentTriggerAck)
+        }
+        MgsRequest::SwitchDefaultImage { component, slot, duration } => handler
+            .switch_default_image(sender, port, component, slot, duration)
+            .map(|()| SpResponse::SwitchDefaultImageAck),
     };
 
     let response = match result {
@@ -1068,22 +1093,6 @@ mod tests {
             unimplemented!()
         }
 
-        fn reset_prepare(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<(), SpError> {
-            unimplemented!()
-        }
-
-        fn reset_trigger(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<Infallible, SpError> {
-            unimplemented!()
-        }
-
         fn num_devices(&mut self, _sender: SocketAddrV6, _port: SpPort) -> u32 {
             unimplemented!()
         }
@@ -1202,6 +1211,35 @@ mod tests {
             &mut self,
             _key: [u8; 4],
         ) -> Result<&'static [u8], SpError> {
+            unimplemented!()
+        }
+
+        fn reset_component_prepare(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn reset_component_trigger(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn switch_default_image(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _component: SpComponent,
+            _slot: SlotId,
+            _duration: SwitchDuration,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }

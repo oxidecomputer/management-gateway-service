@@ -106,6 +106,9 @@ pub enum SpResponse {
     CabooseValue,
 
     SerialConsoleKeepAliveAck,
+    ResetComponentPrepareAck,
+    ResetComponentTriggerAck,
+    SwitchDefaultImageAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -471,6 +474,15 @@ pub enum SpError {
     ImageBoardUnknown,
     /// The new image has a `BORD` key that does not match the current image
     ImageBoardMismatch,
+    /// Received a `ResetComponentTrigger` request without first receiving a
+    /// `ResetComponentPrepare` request. This can be used to detect a successful
+    /// reset on the SP_ITSELF. Not used for the ROT where the SP observes
+    /// the RoT reset and can report success.
+    ResetComponentTriggerWithoutPrepare,
+    /// There will be policy violations for some requests:
+    ///   - No image in SlotId (what suitability checks are needed?)
+    ///   - Lower epoch than current in SlotId
+    SwitchDefaultImageError(u32),
 }
 
 impl fmt::Display for SpError {
@@ -569,6 +581,12 @@ impl fmt::Display for SpError {
             }
             Self::ImageBoardMismatch => {
                 write!(f, "the image has a board that doesn't match the current image")
+            }
+            Self::ResetComponentTriggerWithoutPrepare => {
+                write!(f, "reset component trigger requested without a preceding reset component prepare")
+            }
+            Self::SwitchDefaultImageError(code) => {
+                write!(f, "switch default image failed with code {code}")
             }
         }
     }
