@@ -638,44 +638,6 @@ impl SingleSp {
         )
     }
 
-    /// Instruct the SP that a reset trigger will be coming.
-    ///
-    /// This is part of a two-phase reset process. MGS should set a
-    /// `reset_prepare()` followed by `reset_trigger()`. Internally,
-    /// `reset_trigger()` continues to send the reset trigger message until the
-    /// SP responds with an error that it wasn't expecting it, at which point we
-    /// assume a reset has happened. In critical situations (e.g., updates),
-    /// callers should verify through a separate channel that the operation they
-    /// needed the reset for has happened (e.g., checking the SP's version, in
-    /// the case of updates).
-    pub async fn reset_prepare(&self) -> Result<()> {
-        self.rpc(MgsRequest::ResetPrepare).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_sys_reset_prepare_ack().map_err(Into::into)
-            },
-        )
-    }
-
-    /// Instruct the SP to reset.
-    ///
-    /// Only valid after a successful call to `reset_prepare()`.
-    pub async fn reset_trigger(&self) -> Result<()> {
-        // Reset trigger should retry until we get back an error indicating the
-        // SP wasn't expecting a reset trigger (because it has reset!).
-        match self.rpc(MgsRequest::ResetTrigger).await {
-            Ok((_peer, response, _data)) => {
-                Err(CommunicationError::BadResponseType {
-                    expected: "system-reset",
-                    got: response.name(),
-                })
-            }
-            Err(CommunicationError::SpError(
-                SpError::ResetTriggerWithoutPrepare,
-            )) => Ok(()),
-            Err(other) => Err(other),
-        }
-    }
-
     /// "Attach" to the serial console, setting up a tokio channel for all
     /// incoming serial console packets from the SP.
     pub async fn serial_console_attach(
@@ -808,7 +770,16 @@ impl SingleSp {
             self.rpc(MgsRequest::ResetComponentTrigger { component }).await;
         match response {
             Ok((_addr, response, _data)) => {
-                response.expect_sys_reset_component_trigger_ack()
+                if component == SpComponent::SP_ITSELF {
+                    // Reset trigger should retry until we get back an error indicating the
+                    // SP wasn't expecting a reset trigger (because it has reset!).
+                    Err(CommunicationError::BadResponseType {
+                        expected: "system-reset",
+                        got: response.name(),
+                    })
+                } else {
+                    response.expect_sys_reset_component_trigger_ack()
+                }
             }
             Err(CommunicationError::SpError(
                 SpError::ResetComponentTriggerWithoutPrepare,

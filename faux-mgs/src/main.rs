@@ -883,9 +883,9 @@ async fn run_command(
             }
         }
         Command::Reset => {
-            sp.reset_prepare().await?;
+            sp.reset_component_prepare(SpComponent::SP_ITSELF).await?;
             info!(log, "SP is prepared to reset");
-            sp.reset_trigger().await?;
+            sp.reset_component_trigger(SpComponent::SP_ITSELF).await?;
             info!(log, "SP reset complete");
             Ok(vec!["reset complete".to_string()])
         }

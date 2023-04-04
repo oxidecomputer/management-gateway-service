@@ -60,8 +60,6 @@ pub(crate) trait SpResponseExt {
 
     fn expect_set_power_state_ack(self) -> Result<()>;
 
-    fn expect_sys_reset_prepare_ack(self) -> Result<()>;
-
     fn expect_inventory(self) -> Result<TlvPage>;
 
     fn expect_startup_options(self) -> Result<StartupOptions>;
@@ -392,17 +390,6 @@ impl SpResponseExt for SpResponse {
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
                 expected: response_kind_names::SET_POWER_STATE_ACK,
-                got: other.name(),
-            }),
-        }
-    }
-
-    fn expect_sys_reset_prepare_ack(self) -> Result<()> {
-        match self {
-            Self::ResetPrepareAck => Ok(()),
-            Self::Error(err) => Err(CommunicationError::SpError(err)),
-            other => Err(CommunicationError::BadResponseType {
-                expected: response_kind_names::RESET_PREPARE_ACK,
                 got: other.name(),
             }),
         }

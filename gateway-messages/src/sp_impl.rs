@@ -227,12 +227,6 @@ pub trait SpHandler {
         port: SpPort,
     ) -> Result<(), SpError>;
 
-    fn reset_prepare(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<(), SpError>;
-
     /// Number of devices returned in the inventory of this SP.
     fn num_devices(&mut self, sender: SocketAddrV6, port: SpPort) -> u32;
 
@@ -1092,14 +1086,6 @@ mod tests {
         }
 
         fn serial_console_break(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<(), SpError> {
-            unimplemented!()
-        }
-
-        fn reset_prepare(
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
