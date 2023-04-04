@@ -42,6 +42,7 @@ use gateway_messages::RotSlot;
 use gateway_messages::RotState;
 use gateway_messages::RotUpdateDetails;
 use gateway_messages::SerializedSize;
+use gateway_messages::SlotId;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
 use gateway_messages::SpPort;
@@ -50,6 +51,7 @@ use gateway_messages::SpResponse;
 use gateway_messages::SpState;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::StartupOptions;
+use gateway_messages::SwitchDuration;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateChunk;
 use gateway_messages::UpdateId;
@@ -391,6 +393,25 @@ fn mgs_request() {
 
     let request = MgsRequest::SerialConsoleKeepAlive;
     let expected = &[32];
+    assert_serialized(&mut out, expected, &request);
+
+    let request =
+        MgsRequest::ResetComponentPrepare { component: SpComponent::SP_ITSELF };
+    let expected = &[33, 115, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert_serialized(&mut out, expected, &request);
+
+    let request =
+        MgsRequest::ResetComponentTrigger { component: SpComponent::SP_ITSELF };
+    let expected = &[34, 115, 112, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
+    assert_serialized(&mut out, expected, &request);
+
+    let request = MgsRequest::SwitchDefaultImage {
+        component: SpComponent::ROT,
+        slot: SlotId::A,
+        duration: SwitchDuration::Forever,
+    };
+    let expected =
+        &[35, 114, 111, 116, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1];
     assert_serialized(&mut out, expected, &request);
 }
 
@@ -919,6 +940,8 @@ fn sp_response() {
         (SpError::BadCabooseChecksum, &[24]),
         (SpError::ImageBoardUnknown, &[25]),
         (SpError::ImageBoardMismatch, &[26]),
+        (SpError::ResetComponentTriggerWithoutPrepare, &[27]),
+        (SpError::SwitchDefaultImageError(0x04030201), &[28, 1, 2, 3, 4]),
     ] {
         let response = SpResponse::Error(error);
         let mut expected = vec![17];
@@ -1021,5 +1044,17 @@ fn sp_response() {
 
     let response = SpResponse::SerialConsoleKeepAliveAck;
     let expected = &[32];
+    assert_serialized(&mut out, expected, &response);
+
+    let response = SpResponse::ResetComponentPrepareAck;
+    let expected = &[33];
+    assert_serialized(&mut out, expected, &response);
+
+    let response = SpResponse::ResetComponentTriggerAck;
+    let expected = &[34];
+    assert_serialized(&mut out, expected, &response);
+
+    let response = SpResponse::SwitchDefaultImageAck;
+    let expected = &[35];
     assert_serialized(&mut out, expected, &response);
 }
