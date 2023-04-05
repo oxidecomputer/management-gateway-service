@@ -862,7 +862,7 @@ async fn run_command(
             sp.update_abort(sp_component, update_id).await.with_context(
                 || format!("aborting update to {} failed", component),
             )?;
-            Ok(vec!["update {update_id} aborted".to_string()])
+            Ok(vec![format!("update {update_id} aborted")])
         }
         Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
