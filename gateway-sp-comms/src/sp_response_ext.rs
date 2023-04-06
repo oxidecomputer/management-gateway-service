@@ -87,6 +87,8 @@ pub(crate) trait SpResponseExt {
     fn expect_sys_reset_component_trigger_ack(self) -> Result<()>;
 
     fn expect_switch_default_image_ack(self) -> Result<()>;
+
+    fn expect_component_action_ack(self) -> Result<()>;
 }
 
 impl SpResponseExt for SpResponse {
@@ -169,6 +171,9 @@ impl SpResponseExt for SpResponse {
             }
             Self::SwitchDefaultImageAck => {
                 response_kind_names::SWITCH_DEFAULT_IMAGE_ACK
+            }
+            Self::ComponentActionAck => {
+                response_kind_names::COMPONENT_ACTION_ACK
             }
         }
     }
@@ -548,6 +553,17 @@ impl SpResponseExt for SpResponse {
             }),
         }
     }
+
+    fn expect_component_action_ack(self) -> Result<()> {
+        match self {
+            Self::ComponentActionAck => Ok(()),
+            Self::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: response_kind_names::COMPONENT_ACTION_ACK,
+                got: other.name(),
+            }),
+        }
+    }
 }
 
 mod response_kind_names {
@@ -602,4 +618,5 @@ mod response_kind_names {
         "reset_component_trigger_ack";
     pub(super) const SWITCH_DEFAULT_IMAGE_ACK: &str =
         "switch_default_image_ack";
+    pub(super) const COMPONENT_ACTION_ACK: &str = "component_action";
 }

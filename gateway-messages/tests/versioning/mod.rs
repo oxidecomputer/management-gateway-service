@@ -4,4 +4,16 @@
 
 // Copyright 2023 Oxide Computer Company
 
+use serde::Serialize;
+
 mod v2;
+mod v3;
+
+pub fn assert_serialized(
+    out: &mut [u8],
+    expected: &[u8],
+    item: &impl Serialize,
+) {
+    let n = gateway_messages::serialize(out, item).unwrap();
+    assert_eq!(expected, &out[..n]);
+}

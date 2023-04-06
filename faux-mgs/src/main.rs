@@ -14,7 +14,9 @@ use futures::stream::FuturesOrdered;
 use futures::FutureExt;
 use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
+use gateway_messages::ComponentAction;
 use gateway_messages::IgnitionCommand;
+use gateway_messages::LedComponentAction;
 use gateway_messages::PowerState;
 use gateway_messages::SlotId;
 use gateway_messages::SpComponent;
@@ -295,6 +297,22 @@ enum Command {
         )]
         duration: SwitchDuration,
     },
+
+    /// Controls the system LED
+    SystemLed {
+        #[clap(subcommand)]
+        cmd: LedCommand,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum LedCommand {
+    /// Turns the LED on
+    On,
+    /// Turns the LED off
+    Off,
+    /// Enables blinking
+    Blink,
 }
 
 impl Command {
@@ -935,6 +953,18 @@ async fn run_command(
                 format!("{value:?}")
             };
             Ok(vec![out])
+        }
+        Command::SystemLed { cmd } => {
+            sp.component_action(
+                SpComponent::SYSTEM_LED,
+                ComponentAction::Led(match cmd {
+                    LedCommand::On => LedComponentAction::TurnOn,
+                    LedCommand::Off => LedComponentAction::TurnOff,
+                    LedCommand::Blink => LedComponentAction::Blink,
+                }),
+            )
+            .await?;
+            Ok(vec!["done".to_string()])
         }
     }
 }

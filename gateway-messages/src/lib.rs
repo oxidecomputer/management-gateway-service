@@ -63,7 +63,7 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 2;
+    pub const CURRENT: u32 = 3;
 }
 
 #[derive(
@@ -203,6 +203,9 @@ impl SpComponent {
     /// Prefix for devices that are identified generically by index (e.g.,
     /// `dev-17`).
     pub const GENERIC_DEVICE_PREFIX: &'static str = "dev-";
+
+    /// System attention LED (of which there is one per system)
+    pub const SYSTEM_LED: Self = Self { id: *b"system-led\0\0\0\0\0\0" };
 
     /// Interpret the component name as a human-readable string.
     ///

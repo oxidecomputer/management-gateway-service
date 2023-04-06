@@ -109,6 +109,7 @@ pub enum SpResponse {
     ResetComponentPrepareAck,
     ResetComponentTriggerAck,
     SwitchDefaultImageAck,
+    ComponentActionAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -298,6 +299,7 @@ bitflags! {
         const UPDATEABLE = 1 << 0;
         const HAS_MEASUREMENT_CHANNELS = 1 << 1;
         const HAS_SERIAL_CONSOLE = 1 << 2;
+        const IS_LED = 1 << 3;
         // MGS has a placeholder API for powering off an individual component;
         // do we want to keep that? If so, add a bit for "can be powered on and
         // off".

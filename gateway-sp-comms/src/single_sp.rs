@@ -20,6 +20,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
+use gateway_messages::ComponentAction;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
@@ -801,6 +802,18 @@ impl SingleSp {
             .await
             .and_then(|(_addr, response, _data)| {
                 response.expect_switch_default_image_ack()
+            })
+    }
+
+    pub async fn component_action(
+        &self,
+        component: SpComponent,
+        action: ComponentAction,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ComponentAction { component, action })
+            .await
+            .and_then(|(_peer, response, _data)| {
+                response.expect_component_action_ack()
             })
     }
 }

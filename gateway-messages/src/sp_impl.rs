@@ -9,6 +9,7 @@ use crate::ignition::LinkEvents;
 use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
+use crate::ComponentAction;
 use crate::ComponentDetails;
 use crate::ComponentUpdatePrepare;
 use crate::DeviceCapabilities;
@@ -295,6 +296,13 @@ pub trait SpHandler {
         component: SpComponent,
         slot: u16,
         persist: bool,
+    ) -> Result<(), SpError>;
+
+    fn component_action(
+        &mut self,
+        sender: SocketAddrV6,
+        component: SpComponent,
+        action: ComponentAction,
     ) -> Result<(), SpError>;
 
     fn get_startup_options(
@@ -878,6 +886,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SwitchDefaultImage { component, slot, duration } => handler
             .switch_default_image(sender, port, component, slot, duration)
             .map(|()| SpResponse::SwitchDefaultImageAck),
+        MgsRequest::ComponentAction { component, action } => handler
+            .component_action(sender, component, action)
+            .map(|()| SpResponse::ComponentActionAck),
     };
 
     let response = match result {
@@ -1185,6 +1196,15 @@ mod tests {
             _component: SpComponent,
             _slot: u16,
             _persist: bool,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn component_action(
+            &mut self,
+            _sender: SocketAddrV6,
+            _component: SpComponent,
+            _action: ComponentAction,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
