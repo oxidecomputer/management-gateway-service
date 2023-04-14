@@ -499,6 +499,7 @@ pub enum SpError {
     Update(UpdateError),
     Dump(DumperError),
 }
+
 impl fmt::Display for SpError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {

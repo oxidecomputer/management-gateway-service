@@ -13,8 +13,7 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
-# TODO point back to crates.io after a new release
-hubpack = { git = "https://github.com/cbiffle/hubpack" }
+hubpack = { version = "0.1", default-features = false }
 
 # TODO: Replace with real nix after https://github.com/nix-rust/nix/pull/1973 is
 # published to crates.io
