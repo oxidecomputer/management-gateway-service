@@ -893,6 +893,19 @@ impl std::error::Error for IpccKeyLookupValueError {}
 )]
 pub enum RotError {
     MessageError { code: u32 },
+
+    // --------------------------------------
+    // *** That new hotness below here ***
+    // --------------------------------------
+    //
+    // New nested variants, one for each hubris API are below We will likely
+    // create a new Error variant so we can deprecate some of redundant
+    // variants above.
+    Sprot(SprotProtocolError),
+    Spi(SpiError),
+    Sprockets(SprocketsError),
+    Update(UpdateError),
+    Dump(DumperError),
 }
 
 impl fmt::Display for RotError {
@@ -901,6 +914,11 @@ impl fmt::Display for RotError {
             Self::MessageError { code } => {
                 write!(f, "SP/RoT messaging error: {code}")
             }
+            Self::Sprot(e) => write!(f, "sprot: {}", e),
+            Self::Spi(e) => write!(f, "spi: {}", e),
+            Self::Sprockets(e) => write!(f, "sprockets: {}", e),
+            Self::Update(e) => write!(f, "update: {}", e),
+            Self::Dump(e) => write!(f, "dump: {}", e),
         }
     }
 }
