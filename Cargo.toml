@@ -39,7 +39,7 @@ sha2 = "0.10"
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_trace"] }
 slog-async = "2.6"
 slog-term = "2.9"
-smoltcp = { version = "0.8", default-features = false, features = ["proto-ipv6"] }
+smoltcp = { version = "0.9", default-features = false, features = ["proto-ipv6"] }
 socket2 = "0.5.1"
 static_assertions = "1.1.0"
 string_cache = "0.8.4"
