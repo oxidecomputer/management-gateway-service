@@ -652,7 +652,7 @@ pub enum DumperError {
     FailedToResume,
     FailedToResumeAfterFailure,
     RegisterReadFailed,
-    ServerRestarted,
+    TaskRestarted,
 
     // When the type in hubris has been updated, but MGS does not yet know
     // this type. The meaning of the error code here should be found in the
@@ -676,7 +676,7 @@ impl fmt::Display for DumperError {
                 write!(f, "failed to resume after failure")
             }
             Self::RegisterReadFailed => write!(f, "failed to register read"),
-            Self::ServerRestarted => write!(f, "hubris task restarted"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
         }
     }
@@ -712,7 +712,7 @@ pub enum UpdateError {
     ImageBoardMismatch,
     ImageBoardUnknown,
 
-    ServerRestarted,
+    TaskRestarted,
 
     NotImplemented,
 
@@ -752,7 +752,7 @@ impl fmt::Display for UpdateError {
             Self::InvalidHeaderBlock => write!(f, "invalid header block"),
             Self::ImageBoardMismatch => write!(f, "image does not match board"),
             Self::ImageBoardUnknown => write!(f, "image missing board details"),
-            Self::ServerRestarted => write!(f, "hubris task restarted"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::NotImplemented => write!(f, "not implemented"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
         }
@@ -768,7 +768,7 @@ pub enum SpiError {
     BadTransferSize,
 
     /// Server restarted
-    ServerRestarted,
+    TaskRestarted,
 
     /// Release without successful Lock
     NothingToRelease,
@@ -789,7 +789,7 @@ impl fmt::Display for SpiError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::BadTransferSize => write!(f, "bad transfer size"),
-            Self::ServerRestarted => write!(f, "hubris task restarted"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::NothingToRelease => write!(f, "nothing to release"),
             Self::BadDevice => write!(f, "bad device"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
@@ -829,7 +829,7 @@ pub enum SprotProtocolError {
     BadUpdateStatus,
 
     // Used for mapping From<idol_runtime::ServerDeath>
-    ServerRestarted,
+    TaskRestarted,
 
     // When the type in hubris has been updated, but MGS does not yet know
     // this type. The meaning of the error code here should be found in the
@@ -857,7 +857,7 @@ impl fmt::Display for SprotProtocolError {
                 write!(f, "RoT response did not match the SP request")
             }
             Self::BadUpdateStatus => write!(f, "failed to load update status"),
-            Self::ServerRestarted => write!(f, "hubris task restarted"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
         }
     }
