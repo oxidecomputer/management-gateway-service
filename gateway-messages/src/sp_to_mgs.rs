@@ -485,6 +485,19 @@ pub enum SpError {
     ///   - No image in SlotId (what suitability checks are needed?)
     ///   - Lower epoch than current in SlotId
     SwitchDefaultImageError(u32),
+
+    // --------------------------------------
+    // *** That new hotness below here ***
+    // --------------------------------------
+    //
+    // New nested variants, one for each hubris API are below We will likely
+    // create a new Error variant so we can deprecate some of redundant
+    // variants above.
+    Sprot(SprotProtocolError),
+    Spi(SpiError),
+    Sprockets(SprocketsError),
+    Update(UpdateError),
+    Dump(DumperError),
 }
 
 impl fmt::Display for SpError {
@@ -590,6 +603,262 @@ impl fmt::Display for SpError {
             Self::SwitchDefaultImageError(code) => {
                 write!(f, "switch default image failed with code {code}")
             }
+            Self::Sprot(e) => write!(f, "sprot: {}", e),
+            Self::Spi(e) => write!(f, "spi: {}", e),
+            Self::Sprockets(e) => write!(f, "sprockets: {}", e),
+            Self::Update(e) => write!(f, "update: {}", e),
+            Self::Dump(e) => write!(f, "dump: {}", e),
+        }
+    }
+}
+
+// This is necessarily sparse for now. It's likely we'll clean up the sprockets
+// errors. These are ones that are capable of being reported by Sprot now.
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub enum SprocketsError {
+    BadEncoding,
+    UnsupportedVersion,
+
+    // When the type in hubris has been updated, but MGS does not yet know
+    // this type. The meaning of the error code here should be found in the
+    // `From<HubrisType> for MgsType` implementation in the hubris code.
+    Unknown(u32),
+}
+
+impl fmt::Display for SprocketsError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadEncoding => write!(f, "deserialization error"),
+            Self::UnsupportedVersion => write!(f, "unsupported version"),
+            Self::Unknown(code) => write!(f, "unknown error (code {})", code),
+        }
+    }
+}
+
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub enum DumperError {
+    SetupFailed,
+    UnalignedAddress,
+    StartReadFailed,
+    ReadFailed,
+    BadDumpAreaHeader,
+    WriteFailed,
+    HeaderReadFailed,
+    FailedToHalt,
+    FailedToResume,
+    FailedToResumeAfterFailure,
+    RegisterReadFailed,
+    TaskRestarted,
+
+    // When the type in hubris has been updated, but MGS does not yet know
+    // this type. The meaning of the error code here should be found in the
+    // `From<HubrisType> for MgsType` implementation in the hubris code.
+    Unknown(u32),
+}
+
+impl fmt::Display for DumperError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::SetupFailed => write!(f, "setup failed"),
+            Self::UnalignedAddress => write!(f, "unaligned address"),
+            Self::StartReadFailed => write!(f, "failed to start read"),
+            Self::ReadFailed => write!(f, "read failed"),
+            Self::BadDumpAreaHeader => write!(f, "bad dump area header"),
+            Self::WriteFailed => write!(f, "write failed"),
+            Self::HeaderReadFailed => write!(f, "failed to read header"),
+            Self::FailedToHalt => write!(f, "failed to halt"),
+            Self::FailedToResume => write!(f, "failed to resume"),
+            Self::FailedToResumeAfterFailure => {
+                write!(f, "failed to resume after failure")
+            }
+            Self::RegisterReadFailed => write!(f, "failed to register read"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
+            Self::Unknown(code) => write!(f, "unknown error (code {})", code),
+        }
+    }
+}
+
+#[derive(
+    Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub enum UpdateError {
+    BadLength,
+    UpdateInProgress,
+    OutOfBounds,
+    EccDoubleErr,
+    EccSingleErr,
+    SecureErr,   // If we get this something has gone very wrong
+    ReadProtErr, // If we get this something has gone very wrong
+    WriteEraseErr,
+    InconsistencyErr,
+    StrobeErr,
+    ProgSeqErr,
+    WriteProtErr,
+    BadImageType,
+    UpdateAlreadyFinished,
+    UpdateNotStarted,
+    RunningImage,
+    FlashError,
+    FlashIllegalRead,
+    FlashReadFail,
+    MissingHeaderBlock,
+    InvalidHeaderBlock,
+
+    // Caboose checks
+    ImageBoardMismatch,
+    ImageBoardUnknown,
+
+    TaskRestarted,
+
+    NotImplemented,
+
+    // When the type in hubris has been updated, but MGS does not yet know
+    // this type. The meaning of the error code here should be found in the
+    // `From<HubrisType> for MgsType` implementation in the hubris code.
+    Unknown(u32),
+}
+
+impl fmt::Display for UpdateError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadLength => write!(f, "block sized incorrectly"),
+            Self::UpdateInProgress => write!(f, "update in progress"),
+            Self::OutOfBounds => write!(f, "out of bounds"),
+            Self::EccDoubleErr => write!(f, "ECC double error"),
+            Self::EccSingleErr => write!(f, "ECC single error"),
+            Self::SecureErr => {
+                write!(f, "secure mode error (failed to update CFPA)")
+            }
+            Self::ReadProtErr => write!(f, "read protection error"),
+            Self::WriteEraseErr => write!(f, "write erase error"),
+            Self::InconsistencyErr => write!(f, "inconsistency error"),
+            Self::StrobeErr => write!(f, "strobe error"),
+            Self::ProgSeqErr => write!(f, "programming sequence error"),
+            Self::WriteProtErr => write!(f, "write protection error"),
+            Self::BadImageType => write!(f, "bad image type"),
+            Self::UpdateAlreadyFinished => write!(f, "update already finished"),
+            Self::UpdateNotStarted => write!(f, "update not started"),
+            Self::RunningImage => {
+                write!(f, "attempted to update running image")
+            }
+            Self::FlashError => write!(f, "flash error"),
+            Self::FlashIllegalRead => write!(f, "illegal flash read"),
+            Self::FlashReadFail => write!(f, "failed to read flash"),
+            Self::MissingHeaderBlock => write!(f, "missing header block"),
+            Self::InvalidHeaderBlock => write!(f, "invalid header block"),
+            Self::ImageBoardMismatch => write!(f, "image does not match board"),
+            Self::ImageBoardUnknown => write!(f, "image missing board details"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
+            Self::NotImplemented => write!(f, "not implemented"),
+            Self::Unknown(code) => write!(f, "unknown error (code {})", code),
+        }
+    }
+}
+
+/// SPI specific errors for the SPI link used between the SP and RoT
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SpiError {
+    /// Transfer size is 0 or exceeds maximum
+    BadTransferSize,
+
+    /// Server restarted
+    TaskRestarted,
+
+    /// Release without successful Lock
+    NothingToRelease,
+
+    /// Attempt to operate device N when there is no device N, or an attempt to
+    /// operate on _any other_ device when you've locked the controller to one.
+    ///
+    /// This is almost certainly a programming error on the client side.
+    BadDevice,
+
+    // When the type in hubris has been updated, but MGS does not yet know
+    // this type. The meaning of the error code here should be found in the
+    // `From<HubrisType> for MgsType` implementation in the hubris code.
+    Unknown(u32),
+}
+
+impl fmt::Display for SpiError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::BadTransferSize => write!(f, "bad transfer size"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
+            Self::NothingToRelease => write!(f, "nothing to release"),
+            Self::BadDevice => write!(f, "bad device"),
+            Self::Unknown(code) => write!(f, "unknown error (code {})", code),
+        }
+    }
+}
+
+/// Sprot protocol specific errors
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SprotProtocolError {
+    /// CRC check failed.
+    InvalidCrc,
+    /// FIFO overflow/underflow
+    FlowError,
+    /// Unsupported protocol version
+    UnsupportedProtocol,
+    /// Unknown message
+    BadMessageType,
+    /// Transfer size is outside of maximum and minimum lenghts for message type.
+    BadMessageLength,
+    // We cannot assert chip select
+    CannotAssertCSn,
+    // The request timed out
+    Timeout,
+    // Hubpack error
+    Deserialization,
+    // The RoT has not de-asserted ROT_IRQ
+    RotIrqRemainsAsserted,
+    // An unexpected response was received.
+    // This should basically be impossible. We only include it so we can
+    // return this error when unpacking a RspBody in idol calls.
+    UnexpectedResponse,
+
+    // Failed to load update status
+    BadUpdateStatus,
+
+    // Used for mapping From<idol_runtime::ServerDeath>
+    TaskRestarted,
+
+    // When the type in hubris has been updated, but MGS does not yet know
+    // this type. The meaning of the error code here should be found in the
+    // `From<HubrisType> for MgsType` implementation in the hubris code.
+    Unknown(u32),
+}
+
+impl fmt::Display for SprotProtocolError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidCrc => write!(f, "CRC check failed"),
+            Self::FlowError => write!(f, "spi rx error"),
+            Self::UnsupportedProtocol => {
+                write!(f, "unsupported protocol version")
+            }
+            Self::BadMessageType => write!(f, "unknown message"),
+            Self::BadMessageLength => write!(f, "invalid message length"),
+            Self::CannotAssertCSn => write!(f, "failed to assert chip select"),
+            Self::Timeout => write!(f, "timeout"),
+            Self::Deserialization => write!(f, "failed to deserialize message"),
+            Self::RotIrqRemainsAsserted => {
+                write!(f, "RoT has failed to deassert ROT_IRQ")
+            }
+            Self::UnexpectedResponse => {
+                write!(f, "RoT response did not match the SP request")
+            }
+            Self::BadUpdateStatus => write!(f, "failed to load update status"),
+            Self::TaskRestarted => write!(f, "hubris task restarted"),
+            Self::Unknown(code) => write!(f, "unknown error (code {})", code),
         }
     }
 }
@@ -624,6 +893,19 @@ impl std::error::Error for IpccKeyLookupValueError {}
 )]
 pub enum RotError {
     MessageError { code: u32 },
+
+    // --------------------------------------
+    // *** That new hotness below here ***
+    // --------------------------------------
+    //
+    // New nested variants, one for each hubris API are below We will likely
+    // create a new Error variant so we can deprecate some of redundant
+    // variants above.
+    Sprot(SprotProtocolError),
+    Spi(SpiError),
+    Sprockets(SprocketsError),
+    Update(UpdateError),
+    Dump(DumperError),
 }
 
 impl fmt::Display for RotError {
@@ -632,6 +914,11 @@ impl fmt::Display for RotError {
             Self::MessageError { code } => {
                 write!(f, "SP/RoT messaging error: {code}")
             }
+            Self::Sprot(e) => write!(f, "sprot: {}", e),
+            Self::Spi(e) => write!(f, "spi: {}", e),
+            Self::Sprockets(e) => write!(f, "sprockets: {}", e),
+            Self::Update(e) => write!(f, "update: {}", e),
+            Self::Dump(e) => write!(f, "dump: {}", e),
         }
     }
 }
