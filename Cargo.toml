@@ -13,8 +13,6 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
-hubpack = { version = "0.1", default-features = false }
-
 # TODO: Replace with real nix after https://github.com/nix-rust/nix/pull/1973 is
 # published to crates.io
 nix = { git = "https://github.com/jgallagher/nix", branch = "r0.26-illumos" }
