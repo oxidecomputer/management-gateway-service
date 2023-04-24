@@ -497,7 +497,6 @@ pub enum SpError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
-    Dump(DumperError),
 }
 
 impl fmt::Display for SpError {
@@ -607,7 +606,6 @@ impl fmt::Display for SpError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
-            Self::Dump(e) => write!(f, "dump: {}", e),
         }
     }
 }
@@ -632,51 +630,6 @@ impl fmt::Display for SprocketsError {
         match self {
             Self::BadEncoding => write!(f, "deserialization error"),
             Self::UnsupportedVersion => write!(f, "unsupported version"),
-            Self::Unknown(code) => write!(f, "unknown error (code {})", code),
-        }
-    }
-}
-
-#[derive(
-    Copy, Clone, Debug, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
-)]
-pub enum DumperError {
-    SetupFailed,
-    UnalignedAddress,
-    StartReadFailed,
-    ReadFailed,
-    BadDumpAreaHeader,
-    WriteFailed,
-    HeaderReadFailed,
-    FailedToHalt,
-    FailedToResume,
-    FailedToResumeAfterFailure,
-    RegisterReadFailed,
-    TaskRestarted,
-
-    // When the type in hubris has been updated, but MGS does not yet know
-    // this type. The meaning of the error code here should be found in the
-    // `From<HubrisType> for MgsType` implementation in the hubris code.
-    Unknown(u32),
-}
-
-impl fmt::Display for DumperError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::SetupFailed => write!(f, "setup failed"),
-            Self::UnalignedAddress => write!(f, "unaligned address"),
-            Self::StartReadFailed => write!(f, "failed to start read"),
-            Self::ReadFailed => write!(f, "read failed"),
-            Self::BadDumpAreaHeader => write!(f, "bad dump area header"),
-            Self::WriteFailed => write!(f, "write failed"),
-            Self::HeaderReadFailed => write!(f, "failed to read header"),
-            Self::FailedToHalt => write!(f, "failed to halt"),
-            Self::FailedToResume => write!(f, "failed to resume"),
-            Self::FailedToResumeAfterFailure => {
-                write!(f, "failed to resume after failure")
-            }
-            Self::RegisterReadFailed => write!(f, "failed to register read"),
-            Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
         }
     }
@@ -905,7 +858,6 @@ pub enum RotError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
-    Dump(DumperError),
 }
 
 impl fmt::Display for RotError {
@@ -918,7 +870,6 @@ impl fmt::Display for RotError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
-            Self::Dump(e) => write!(f, "dump: {}", e),
         }
     }
 }

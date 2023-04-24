@@ -12,7 +12,6 @@
 //! can be removed as we will stop supporting v4.
 
 use super::assert_serialized;
-use gateway_messages::DumperError;
 use gateway_messages::MgsRequest;
 use gateway_messages::RotError;
 use gateway_messages::SerializedSize;
@@ -165,44 +164,6 @@ fn update_error() {
         // Test RotError variants
         let response = RotError::Update(error);
         let mut expected = vec![4];
-        expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
-    }
-}
-
-// Test DumperError
-#[test]
-fn dumper_error() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
-    for (error, serialized) in [
-        (DumperError::SetupFailed, &[0_u8] as &[_]),
-        (DumperError::UnalignedAddress, &[1]),
-        (DumperError::StartReadFailed, &[2]),
-        (DumperError::ReadFailed, &[3]),
-        (DumperError::BadDumpAreaHeader, &[4]),
-        (DumperError::WriteFailed, &[5]),
-        (DumperError::HeaderReadFailed, &[6]),
-        (DumperError::FailedToHalt, &[7]),
-        (DumperError::FailedToResume, &[8]),
-        (DumperError::FailedToResumeAfterFailure, &[9]),
-        (DumperError::RegisterReadFailed, &[10]),
-        (DumperError::TaskRestarted, &[11]),
-        (
-            DumperError::Unknown(0xABCDEFAB),
-            // little endian
-            &[12, 0xAB, 0xEF, 0xCD, 0xAB],
-        ),
-    ] {
-        // Test SpError variants encoded in an SpResponse
-        let response = SpResponse::Error(SpError::Dump(error));
-        let mut expected = vec![17, 33];
-        expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
-
-        // Test RotError variants
-        let response = RotError::Dump(error);
-        let mut expected = vec![5];
         expected.extend_from_slice(serialized);
         assert_serialized(&mut out, &expected, &response);
     }
