@@ -26,7 +26,7 @@ usdt.workspace = true
 uuid.workspace = true
 zip.workspace = true
 
-gateway-messages.workspace = true
+gateway-messages = { workspace = true, features = ["std"] }
 
 # This is required for the build.rs script to check for an appropriate compiler
 # version so that `usdt` can be built on stable rust.

@@ -98,6 +98,7 @@ type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 pub struct HostPhase2Request {
     pub hash: [u8; 32],
     pub offset: u64,
+    pub data_sent: u64,
     pub received: Instant,
 }
 
