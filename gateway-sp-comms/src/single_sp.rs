@@ -32,7 +32,6 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::PowerState;
-use gateway_messages::SlotId;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
 use gateway_messages::SpPort;
@@ -40,7 +39,6 @@ use gateway_messages::SpRequest;
 use gateway_messages::SpResponse;
 use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
-use gateway_messages::SwitchDuration;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
@@ -788,22 +786,6 @@ impl SingleSp {
             )) if component == SpComponent::SP_ITSELF => Ok(()),
             Err(other) => Err(other),
         }
-    }
-
-    /// Instruct the SP to reset a component.
-    ///
-    /// Only valid after a successful call to `reset_component_prepare()`.
-    pub async fn switch_default_image(
-        &self,
-        component: SpComponent,
-        slot: SlotId,
-        duration: SwitchDuration,
-    ) -> Result<()> {
-        self.rpc(MgsRequest::SwitchDefaultImage { component, slot, duration })
-            .await
-            .and_then(|(_addr, response, _data)| {
-                response.expect_switch_default_image_ack()
-            })
     }
 
     pub async fn component_action(

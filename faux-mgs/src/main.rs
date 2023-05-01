@@ -18,10 +18,8 @@ use gateway_messages::ComponentAction;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::PowerState;
-use gateway_messages::SlotId;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
-use gateway_messages::SwitchDuration;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
@@ -300,24 +298,6 @@ enum Command {
     /// expanded to other components in the future.
     ResetComponent { component: String },
 
-    /// Set the boot image selection preference for a component.
-    SwitchDefaultImage {
-        component: String,
-
-        #[clap(
-            help = "Image slot identifier",
-            value_parser = slot_from_str,
-        )]
-        slot: SlotId,
-
-        #[clap(
-            help = "Duration 'Once' for image selection on the next reset only or 'Forever' for{n}\
-                  every reset and power-cycle.",
-            value_parser = duration_from_str,
-        )]
-        duration: SwitchDuration,
-    },
-
     /// Controls the system LED
     SystemLed {
         #[clap(subcommand)]
@@ -410,22 +390,6 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
         "power-off" => Ok(IgnitionCommand::PowerOff),
         "power-reset" => Ok(IgnitionCommand::PowerReset),
         _ => Err(anyhow!("Invalid ignition command: {s}")),
-    }
-}
-
-fn slot_from_str(s: &str) -> Result<SlotId> {
-    match s {
-        "A" | "a" | "0" => Ok(SlotId::A),
-        "B" | "b" | "1" => Ok(SlotId::B),
-        _ => Err(anyhow!("Invalid slot: {s}. Use A, a, 0, B, b, or 1.")),
-    }
-}
-
-fn duration_from_str(s: &str) -> Result<SwitchDuration> {
-    match s {
-        "once" => Ok(SwitchDuration::Once),
-        "forever" => Ok(SwitchDuration::Forever),
-        _ => Err(anyhow!("Invalid duration: {s}. Use 'once' or 'forever'.")),
     }
 }
 
@@ -1082,22 +1046,6 @@ async fn run_command(
                 Ok(Output::Json(json!({ "ack": "reset" })))
             } else {
                 Ok(Output::Lines(vec!["reset complete".to_string()]))
-            }
-        }
-
-        Command::SwitchDefaultImage { component, slot, duration } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| anyhow!("invalid component name: {component}"))?;
-            sp.switch_default_image(sp_component, slot, duration).await?;
-            info!(
-                log,
-                "Switch default image for {} completed",
-                component.as_str()
-            );
-            if json {
-                Ok(Output::Json(json!({ "ack": "switch_default_image" })))
-            } else {
-                Ok(Output::Lines(vec!["switch_default_image".to_string()]))
             }
         }
         Command::SendHostNmi => {

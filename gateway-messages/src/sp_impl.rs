@@ -370,15 +370,6 @@ pub trait SpHandler {
         port: SpPort,
         component: SpComponent,
     ) -> Result<(), SpError>;
-
-    fn switch_default_image(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-        component: SpComponent,
-        slot: SlotId,
-        duration: SwitchDuration,
-    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -883,9 +874,21 @@ fn handle_mgs_request<H: SpHandler>(
                 .reset_component_trigger(sender, port, component)
                 .map(|()| SpResponse::ResetComponentTriggerAck)
         }
-        MgsRequest::SwitchDefaultImage { component, slot, duration } => handler
-            .switch_default_image(sender, port, component, slot, duration)
-            .map(|()| SpResponse::SwitchDefaultImageAck),
+        MgsRequest::SwitchDefaultImage { component, slot, duration } => {
+            let slot = match slot {
+                SlotId::A => 0,
+                SlotId::B => 1,
+            };
+            let persist = match duration {
+                SwitchDuration::Once => false,
+                SwitchDuration::Forever => true,
+            };
+            handler
+                .component_set_active_slot(
+                    sender, port, component, slot, persist,
+                )
+                .map(|()| SpResponse::SwitchDefaultImageAck)
+        }
         MgsRequest::ComponentAction { component, action } => handler
             .component_action(sender, component, action)
             .map(|()| SpResponse::ComponentActionAck),
@@ -1248,17 +1251,6 @@ mod tests {
             _sender: SocketAddrV6,
             _port: SpPort,
             _component: SpComponent,
-        ) -> Result<(), SpError> {
-            unimplemented!()
-        }
-
-        fn switch_default_image(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-            _component: SpComponent,
-            _slot: SlotId,
-            _duration: SwitchDuration,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
