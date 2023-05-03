@@ -605,7 +605,7 @@ async fn main() -> Result<()> {
                 if args.json.is_some() {
                     by_interface.insert(interface, Err(format!("{err:#}")));
                 } else {
-                    println!("{prefix}Error: {err}");
+                    println!("{prefix}Error: {err:#}");
                 }
             }
         }

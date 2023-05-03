@@ -85,12 +85,12 @@ pub enum UpdateError {
     ImageEmpty,
     #[error("update image is too large")]
     ImageTooLarge,
-    #[error("failed to parse SP update as a zip file: {0}")]
-    SpUpdateNotZip(zip::result::ZipError),
-    #[error("failed to find `{path}` within SP update: {err}")]
-    SpUpdateFileNotFound { path: String, err: zip::result::ZipError },
-    #[error("failed to decompress `{path}` within SP update: {err}")]
-    SpUpdateDecompressionFailed { path: String, err: io::Error },
+    #[error("hubris archive error: {0}")]
+    HubtoolsError(#[from] hubtools::Error),
+    #[error("error reading caboose in hubris archive: {0}")]
+    CabooseError(#[from] hubtools::CabooseError),
+    #[error("board mismatch: SP is {sp} but archive is for {archive}")]
+    BoardMismatch { sp: String, archive: String },
     #[error("error reading aux flash image: {0:?}")]
     TlvcError(tlvc::TlvcReadError),
     #[error("corrupt aux flash image: {0}")]

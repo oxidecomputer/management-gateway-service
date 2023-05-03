@@ -591,7 +591,7 @@ impl fmt::Display for SpError {
                 write!(f, "a data checksum in the caboose is invalid")
             }
             Self::ImageBoardUnknown => {
-                write!(f, "could not find the board in the image cabose")
+                write!(f, "could not find the board in the image caboose")
             }
             Self::ImageBoardMismatch => {
                 write!(f, "the image has a board that doesn't match the current image")

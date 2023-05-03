@@ -8,7 +8,6 @@ use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
 use crate::error::UpdateError;
-use crate::hubris_archive::HubrisArchive;
 use crate::sp_response_ext::SpResponseExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
@@ -17,9 +16,12 @@ use gateway_messages::SpUpdatePrepare;
 use gateway_messages::UpdateChunk;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
+use hubtools::Error as HubtoolsError;
+use hubtools::RawHubrisArchive;
 use slog::debug;
 use slog::error;
 use slog::info;
+use slog::warn;
 use slog::Logger;
 use std::convert::TryInto;
 use std::io::Cursor;
@@ -38,16 +40,53 @@ pub(super) async fn start_sp_update(
     image: Vec<u8>,
     log: &Logger,
 ) -> Result<(), UpdateError> {
-    let mut archive = HubrisArchive::new(image)?;
+    let archive = RawHubrisArchive::from_vec(image)?;
 
-    let sp_image = archive.final_bin()?;
+    let sp_image = archive.image.to_binary()?;
     let sp_image_size =
         sp_image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
 
-    let aux_image = match archive.aux_image() {
+    // Sanity check on `hubtools`: Prior to using hubtools, we would manually
+    // extract `img/final.bin` from the archive (which is a zip file); we're now
+    // using `archive.image.to_binary()` which _should_ be the same thing. Check
+    // here and log a warning if it is not. We should never see this, but if we
+    // do it's likely something is about to go wrong, and it'd be nice to have a
+    // breadcrumb.
+    if let Ok(final_bin) = archive.extract_file("img/final.bin") {
+        if sp_image != final_bin {
+            warn!(
+                log,
+                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+            );
+        }
+    }
+
+    // Extract the board from the image's caboose and check that this matches
+    // our target's board (e.g., to avoid trying to update a sidecar SP with a
+    // gimlet SP image). The SP will also perform this check, but it can't do it
+    // until we've streamed the entire update into its flash, so doing it now
+    // can avoid an unnecessary erase/write cycle.
+    let caboose = archive.read_caboose()?;
+    let archive_board = caboose.board()?;
+    let sp_board =
+        super::rpc(cmds_tx, MgsRequest::ReadCaboose { key: *b"BORD" }, None)
+            .await
+            .result
+            .and_then(|(_peer, response, data)| {
+                response.expect_caboose_value()?;
+                Ok(data)
+            })?;
+    if archive_board != sp_board {
+        return Err(UpdateError::BoardMismatch {
+            sp: String::from_utf8_lossy(&sp_board).to_string(),
+            archive: String::from_utf8_lossy(archive_board).to_string(),
+        });
+    }
+
+    let aux_image = match archive.auxiliary_image() {
         Ok(aux_image) => Some(aux_image),
-        Err(UpdateError::SpUpdateFileNotFound { .. }) => None,
-        Err(err) => return Err(err),
+        Err(HubtoolsError::MissingFile(..)) => None,
+        Err(err) => return Err(err.into()),
     };
 
     let (aux_flash_size, aux_flash_chck) = match &aux_image {
