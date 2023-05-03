@@ -98,6 +98,7 @@ type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 pub struct HostPhase2Request {
     pub hash: [u8; 32],
     pub offset: u64,
+    pub data_sent: u64,
     pub received: Instant,
 }
 
@@ -762,17 +763,18 @@ impl SingleSp {
         // retry until we get back an error indicating the
         // SP wasn't expecting a reset trigger (because it has reset!).
         // If we are resetting the RoT, the SP will send an ack.
-        // When resetting the RoT, the SP SpRot client will either
-        // timeout on a response because the RoT was reset or because the message
-        // got dropped. TODO: have this code and/or SP check a boot nonce or other
+        // When resetting the RoT, the SP SpRot client will either timeout on a
+        // response because the RoT was reset or because the message got
+        // dropped. TODO: have this code and/or SP check a boot nonce or other
         // information to verify that the RoT did reset.
         let response =
             self.rpc(MgsRequest::ResetComponentTrigger { component }).await;
         match response {
             Ok((_addr, response, _data)) => {
                 if component == SpComponent::SP_ITSELF {
-                    // Reset trigger should retry until we get back an error indicating the
-                    // SP wasn't expecting a reset trigger (because it has reset!).
+                    // Reset trigger should retry until we get back an error
+                    // indicating the SP wasn't expecting a reset trigger
+                    // (because it has reset!).
                     Err(CommunicationError::BadResponseType {
                         expected: "system-reset",
                         got: response.name(),

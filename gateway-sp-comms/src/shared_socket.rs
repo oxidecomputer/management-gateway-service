@@ -590,39 +590,40 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                     );
                 }
 
-                // Notify our handler of this request so it can report progress
-                // to its clients.
-                self.forward_to_single_sp(
-                    peer,
-                    SingleSpMessage::HostPhase2Request(HostPhase2Request {
-                        hash,
-                        offset,
-                        received: Instant::now(),
-                    }),
-                )
-                .await?;
-
                 // Spawn the handler for reading and sending host phase2 data
                 // onto a background task to avoid blocking additional `recv`s
                 // on it. We do not attempt to retry or handle errors in this
                 // task; if something goes wrong, the SP will re-request the
                 // same block of data.
-                tokio::spawn(send_host_phase2_data(
-                    SendOnlyUdpSocket::from(Arc::clone(&self.socket)),
-                    Arc::clone(&self.host_phase2_provider),
-                    peer,
-                    message.header.message_id,
-                    hash,
-                    offset,
-                    self.log.clone(),
-                ));
+                tokio::spawn(
+                    SendHostPhase2ResponseTask {
+                        scope_id_cache: Arc::clone(&self.scope_id_cache),
+                        single_sp_handlers: Arc::clone(
+                            &self.single_sp_handlers,
+                        ),
+                        socket: SendOnlyUdpSocket::from(Arc::clone(
+                            &self.socket,
+                        )),
+                        host_phase2_provider: Arc::clone(
+                            &self.host_phase2_provider,
+                        ),
+                        peer,
+                        message_id: message.header.message_id,
+                        hash,
+                        offset,
+                        log: self.log.clone(),
+                    }
+                    .run(),
+                );
                 Ok(())
             }
             &MessageKind::SpRequest(SpRequest::SerialConsole {
                 component,
                 offset,
             }) => {
-                self.forward_to_single_sp(
+                forward_to_single_sp(
+                    &self.scope_id_cache,
+                    &self.single_sp_handlers,
                     peer,
                     SingleSpMessage::SerialConsole {
                         component,
@@ -633,7 +634,9 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                 .await
             }
             MessageKind::SpResponse(response) => {
-                self.forward_to_single_sp(
+                forward_to_single_sp(
+                    &self.scope_id_cache,
+                    &self.single_sp_handlers,
                     peer,
                     SingleSpMessage::SpResponse {
                         peer,
@@ -646,113 +649,161 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
             }
         }
     }
+}
 
-    async fn forward_to_single_sp(
-        &self,
-        peer: SocketAddrV6,
-        message: SingleSpMessage,
-    ) -> Result<(), RecvError> {
-        let interface =
-            self.scope_id_cache.index_to_name(peer.scope_id()).await.map_err(
-                |err| RecvError::InterfaceForScopeId { addr: peer, err },
-            )?;
+async fn forward_to_single_sp(
+    scope_id_cache: &ScopeIdCache,
+    single_sp_handlers: &Mutex<FxHashMap<Name, mpsc::Sender<SingleSpMessage>>>,
+    peer: SocketAddrV6,
+    message: SingleSpMessage,
+) -> Result<(), RecvError> {
+    let interface = scope_id_cache
+        .index_to_name(peer.scope_id())
+        .await
+        .map_err(|err| RecvError::InterfaceForScopeId { addr: peer, err })?;
 
-        let mut single_sp_handlers = self.single_sp_handlers.lock().await;
-        let slot = single_sp_handlers.entry(interface.clone());
+    let mut single_sp_handlers = single_sp_handlers.lock().await;
+    let slot = single_sp_handlers.entry(interface.clone());
 
-        let entry = match slot {
-            hash_map::Entry::Occupied(entry) => entry,
-            hash_map::Entry::Vacant(_) => {
-                // This error is _extremely_ unlikely, because we checked
-                // immediately after receiving that we have a handler for the
-                // scope ID identified by `peer`. It's not impossible, though,
-                // if we lose a race and the interface in question is destroyed
-                // between our check above and our check now.
-                return Err(RecvError::NoHandler {
-                    interface: interface.to_string(),
-                });
-            }
-        };
+    let entry = match slot {
+        hash_map::Entry::Occupied(entry) => entry,
+        hash_map::Entry::Vacant(_) => {
+            // This error is _extremely_ unlikely, because we checked
+            // immediately after receiving that we have a handler for the
+            // scope ID identified by `peer`. It's not impossible, though,
+            // if we lose a race and the interface in question is destroyed
+            // between our check above and our check now.
+            return Err(RecvError::NoHandler {
+                interface: interface.to_string(),
+            });
+        }
+    };
 
-        // We are running in the active `recv()` task, and we don't want to
-        // allow a sluggish `SingleSp` handler to block us. We use a bounded
-        // channel and `try_send`: if there's no room in the channel, we'll log
-        // an error and discard the packet.
-        match entry.get().try_send(message) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
-                Err(RecvError::HandlerBusy { interface: interface.to_string() })
-            }
-            Err(TrySendError::Closed(_)) => {
-                // The handler is gone; remove it from our map _and_ fail.
-                entry.remove();
-                Err(RecvError::NoHandler { interface: interface.to_string() })
-            }
+    // We are running in the active `recv()` task, and we don't want to
+    // allow a sluggish `SingleSp` handler to block us. We use a bounded
+    // channel and `try_send`: if there's no room in the channel, we'll log
+    // an error and discard the packet.
+    match entry.get().try_send(message) {
+        Ok(()) => Ok(()),
+        Err(TrySendError::Full(_)) => {
+            Err(RecvError::HandlerBusy { interface: interface.to_string() })
+        }
+        Err(TrySendError::Closed(_)) => {
+            // The handler is gone; remove it from our map _and_ fail.
+            entry.remove();
+            Err(RecvError::NoHandler { interface: interface.to_string() })
         }
     }
 }
 
-async fn send_host_phase2_data<T: HostPhase2Provider>(
+// Struct holding all the arguments needed to respond to an SP's request for
+// host phase 2 data and report the request/response back to the relevant single
+// SP handler.
+struct SendHostPhase2ResponseTask<T> {
+    scope_id_cache: Arc<ScopeIdCache>,
+    single_sp_handlers:
+        Arc<Mutex<FxHashMap<Name, mpsc::Sender<SingleSpMessage>>>>,
     socket: SendOnlyUdpSocket,
     host_phase2_provider: Arc<T>,
-    addr: SocketAddrV6,
+    peer: SocketAddrV6,
     message_id: u32,
     hash: [u8; 32],
     offset: u64,
     log: Logger,
-) {
-    // We will optimistically attempt to serialize a successful response
-    // directly into an outgoing buffer. If our phase2 data provider cannot
-    // give us the data, we'll bail out and reserialize an error response.
-    let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+}
 
-    // Optimistically serialize a success response, so we can fetch host
-    // phase 2 data into the remainder of the buffer.
-    let mut message = Message {
-        header: Header { version: version::CURRENT, message_id },
-        kind: MessageKind::MgsResponse(MgsResponse::HostPhase2Data {
-            hash,
-            offset,
-        }),
-    };
+impl<T: HostPhase2Provider> SendHostPhase2ResponseTask<T> {
+    async fn run(self) {
+        let hash = self.hash;
+        let offset = self.offset;
 
-    let mut n =
-        gateway_messages::serialize(&mut outgoing_buf, &message).unwrap();
+        // We will optimistically attempt to serialize a successful response
+        // directly into an outgoing buffer. If our phase2 data provider cannot
+        // give us the data, we'll bail out and reserialize an error response.
+        let mut outgoing_buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
 
-    match host_phase2_provider
-        .read_data(hash, offset, &mut outgoing_buf[n..])
-        .await
-    {
-        Ok(m) => {
-            n += m;
+        // Optimistically serialize a success response, so we can fetch host
+        // phase 2 data into the remainder of the buffer.
+        let mut message = Message {
+            header: Header {
+                version: version::CURRENT,
+                message_id: self.message_id,
+            },
+            kind: MessageKind::MgsResponse(MgsResponse::HostPhase2Data {
+                hash,
+                offset,
+            }),
+        };
+
+        let mut n =
+            gateway_messages::serialize(&mut outgoing_buf, &message).unwrap();
+        let mut data_sent = None;
+
+        match self
+            .host_phase2_provider
+            .read_data(hash, offset, &mut outgoing_buf[n..])
+            .await
+        {
+            Ok(m) => {
+                data_sent = Some(m as u64);
+                n += m;
+            }
+            Err(err) => {
+                warn!(
+                    self.log, "cannot fulfill SP request for host phase 2 data";
+                    "err" => %err,
+                );
+                let error_kind = match err {
+                    HostPhase2Error::NoImage { .. }
+                    | HostPhase2Error::Other { .. } => {
+                        MgsError::HostPhase2Unavailable { hash }
+                    }
+                    HostPhase2Error::BadOffset { .. } => {
+                        MgsError::HostPhase2ImageBadOffset { hash, offset }
+                    }
+                };
+                message.kind =
+                    MessageKind::MgsResponse(MgsResponse::Error(error_kind));
+
+                n = gateway_messages::serialize(&mut outgoing_buf, &message)
+                    .unwrap();
+            }
         }
-        Err(err) => {
-            warn!(
-                log, "cannot fulfill SP request for host phase 2 data";
-                "err" => %err,
-            );
-            let error_kind = match err {
-                HostPhase2Error::NoImage { .. }
-                | HostPhase2Error::Other { .. } => {
-                    MgsError::HostPhase2Unavailable { hash }
-                }
-                HostPhase2Error::BadOffset { .. } => {
-                    MgsError::HostPhase2ImageBadOffset { hash, offset }
-                }
-            };
-            message.kind =
-                MessageKind::MgsResponse(MgsResponse::Error(error_kind));
 
-            n = gateway_messages::serialize(&mut outgoing_buf, &message)
-                .unwrap();
+        let serialized_message = &outgoing_buf[..n];
+        match self.socket.send_to(serialized_message, self.peer).await {
+            Ok(_) => {
+                if let Some(data_sent) = data_sent {
+                    // Notify our handler of this request so it can report
+                    // progress to its clients.
+                    if let Err(err) = forward_to_single_sp(
+                        &self.scope_id_cache,
+                        &self.single_sp_handlers,
+                        self.peer,
+                        SingleSpMessage::HostPhase2Request(HostPhase2Request {
+                            hash,
+                            offset,
+                            data_sent,
+                            received: Instant::now(),
+                        }),
+                    )
+                    .await
+                    {
+                        warn!(
+                            self.log,
+                            "failed to notify handler of host phase2 request";
+                            "err" => %err,
+                        );
+                    }
+                }
+            }
+            Err(err) => {
+                warn!(
+                    self.log,
+                    "failed to respond to SP host phase 2 data request";
+                    "err" => %err,
+                );
+            }
         }
-    }
-
-    let serialized_message = &outgoing_buf[..n];
-    if let Err(err) = socket.send_to(serialized_message, addr).await {
-        warn!(
-            log, "failed to respond to SP host phase 2 data request";
-            "err" => %err,
-        );
     }
 }
