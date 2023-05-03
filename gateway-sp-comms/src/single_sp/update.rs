@@ -259,6 +259,59 @@ fn read_auxi_check_from_tlvc(data: &[u8]) -> Result<[u8; 32], UpdateError> {
     })
 }
 
+/// Start an update to the RoT.
+pub(super) async fn start_rot_update(
+    cmds_tx: &mpsc::Sender<InnerCommand>,
+    update_id: Uuid,
+    slot: u16,
+    image: Vec<u8>,
+    log: &Logger,
+) -> Result<(), UpdateError> {
+    let archive = RawHubrisArchive::from_vec(image)?;
+    let rot_image = archive.image.to_binary()?;
+
+    // Sanity check on `hubtools`: Prior to using hubtools, we would manually
+    // extract `img/final.bin` from the archive (which is a zip file); we're now
+    // using `archive.image.to_binary()` which _should_ be the same thing. Check
+    // here and log a warning if it is not. We should never see this, but if we
+    // do it's likely something is about to go wrong, and it'd be nice to have a
+    // breadcrumb.
+    if let Ok(final_bin) = archive.extract_file("img/final.bin") {
+        if rot_image != final_bin {
+            warn!(
+                log,
+                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+            );
+        }
+    }
+
+    // Preflight check 1: Does the image name of this archive match the target
+    // slot?
+    match archive.image_name() {
+        Ok(image_name) => match (image_name.as_str(), slot) {
+            ("a", 0) | ("b", 1) => (), // OK!
+            _ => return Err(UpdateError::RotSlotMismatch { slot, image_name }),
+        },
+        // At the time of this writing `image-name` is a recent addition to
+        // hubris archives, so skip this check if we don't have one.
+        Err(HubtoolsError::MissingFile(..)) => (),
+        Err(err) => return Err(err.into()),
+    }
+
+    // TODO: Add a caboose BORD preflight check just like the SP has, once the
+    // RoT has a caboose and we have RPC calls to read its values.
+
+    start_component_update(
+        cmds_tx,
+        SpComponent::ROT,
+        update_id,
+        slot,
+        rot_image,
+        log,
+    )
+    .await
+}
+
 /// Start an update to a component of the SP.
 ///
 /// If the SP acks that the update can begin, spawns a task to deliver the
