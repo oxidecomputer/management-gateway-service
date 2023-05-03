@@ -85,16 +85,18 @@ pub enum UpdateError {
     ImageEmpty,
     #[error("update image is too large")]
     ImageTooLarge,
-    #[error("hubris archive error: {0}")]
+    #[error("hubris archive error")]
     HubtoolsError(#[from] hubtools::Error),
-    #[error("error reading caboose in hubris archive: {0}")]
+    #[error("error reading caboose in hubris archive")]
     CabooseError(#[from] hubtools::CabooseError),
     #[error("board mismatch: SP is {sp} but archive is for {archive}")]
     BoardMismatch { sp: String, archive: String },
+    #[error("RoT slot mismatch: target slot {slot} cannot be written with {image_name:?} image")]
+    RotSlotMismatch { slot: u16, image_name: String },
     #[error("error reading aux flash image: {0:?}")]
     TlvcError(tlvc::TlvcReadError),
     #[error("corrupt aux flash image: {0}")]
     CorruptTlvc(String),
-    #[error("failed to send update message to SP: {0}")]
+    #[error("failed to send update message to SP")]
     Communication(#[from] CommunicationError),
 }

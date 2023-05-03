@@ -70,6 +70,7 @@ use uuid::Uuid;
 mod update;
 
 use self::update::start_component_update;
+use self::update::start_rot_update;
 use self::update::start_sp_update;
 use self::update::update_status;
 
@@ -587,6 +588,9 @@ impl SingleSp {
                 ));
             }
             start_sp_update(&self.cmds_tx, update_id, image, self.log()).await
+        } else if component == SpComponent::ROT {
+            start_rot_update(&self.cmds_tx, update_id, slot, image, self.log())
+                .await
         } else {
             start_component_update(
                 &self.cmds_tx,
