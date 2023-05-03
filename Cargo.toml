@@ -18,6 +18,7 @@ resolver = "2"
 nix = { git = "https://github.com/jgallagher/nix", branch = "r0.26-illumos" }
 
 tlvc = {git = "https://github.com/oxidecomputer/tlvc.git"}
+hubtools = {git = "https://github.com/oxidecomputer/hubtools.git"}
 
 anyhow = "1.0"
 async-trait = "0.1"

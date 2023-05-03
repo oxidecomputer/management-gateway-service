@@ -12,7 +12,6 @@
 //! task of an SP.
 
 mod host_phase2;
-mod hubris_archive;
 mod scope_id_cache;
 mod shared_socket;
 mod single_sp;
