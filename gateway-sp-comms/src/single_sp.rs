@@ -154,6 +154,12 @@ impl SingleSp {
     ///    determined by the previous step). If this bind fails (e.g., because
     ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
     ///    a "UDP bind failed" error from all methods forever.
+    ///
+    /// Note that `max_attempts_per_rpc` may be overridden for certain kinds of
+    /// requests. Today, the only request that overrides this value is resetting
+    /// an SP, which (particularly for sidecars) can take much longer than any
+    /// other request. `SingleSp` will internally use a higher max attempt count
+    /// for these messages (but will still respect `per_attempt_timeout`).
     pub async fn new(
         shared_socket: &SharedSocket,
         config: SwitchPortConfig,
@@ -1711,6 +1717,15 @@ impl<T: InnerSocket> Inner<T> {
         kind: MgsRequest,
         our_trailing_data: Option<&mut Cursor<Vec<u8>>>,
     ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
+        // We allow our client to specify the max RPC attempts and the
+        // per-attempt timeout; however, it's very easy to set a timeout that is
+        // too low for the "reset the SP" request, especially if the SP being
+        // reset is a sidecar (which means it won't be able to respond until it
+        // brings the management network back online). We will override the max
+        // attempt count for only that message to ensure we give SPs ample time
+        // to reset.
+        const SP_RESET_TIME_ALLOWED: Duration = Duration::from_secs(30);
+
         // Build and serialize our request once.
         self.message_id += 1;
         let request = Message {
@@ -1745,7 +1760,24 @@ impl<T: InnerSocket> Inner<T> {
         };
         let outgoing_buf = &outgoing_buf[..n];
 
-        for attempt in 1..=self.max_attempts_per_rpc {
+        // See comment on `SP_RESET_TIME_ALLOWED` above; bump up the retry count
+        // if we're trying to trigger an SP reset.
+        let calc_reset_attempts = || {
+            let time_desired = SP_RESET_TIME_ALLOWED.as_millis();
+            let per_attempt = self.per_attempt_timeout.as_millis().max(1);
+            ((time_desired + per_attempt - 1) / per_attempt) as usize
+        };
+        let max_attempts = match &request.kind {
+            MessageKind::MgsRequest(MgsRequest::ResetComponentTrigger {
+                component,
+            }) if *component == SpComponent::SP_ITSELF => calc_reset_attempts(),
+            MessageKind::MgsRequest(MgsRequest::ResetTrigger) => {
+                calc_reset_attempts()
+            }
+            _ => self.max_attempts_per_rpc,
+        };
+
+        for attempt in 1..=max_attempts {
             trace!(
                 self.log(), "sending request to SP";
                 "request" => ?request,
