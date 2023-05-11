@@ -355,7 +355,13 @@ pub trait SpHandler {
         component: SpComponent,
         slot: u16,
         key: [u8; 4],
-    ) -> Result<&'static [u8], SpError>;
+    ) -> Result<CabooseValue, SpError>;
+
+    fn copy_caboose_value_into(
+        &self,
+        value: CabooseValue,
+        out: &mut [u8],
+    ) -> Result<(), SpError>;
 
     fn reset_component_prepare(
         &mut self,
@@ -428,12 +434,12 @@ pub fn handle_message<H: SpHandler>(
     };
 
     // Append any outgoing trailing data.
-    n += match outgoing_trailing_data {
+    match outgoing_trailing_data {
         Some(OutgoingTrailingData::DeviceInventory {
             device_index,
             total_devices,
         }) => {
-            encode_tlv_structs(
+            n += encode_tlv_structs(
                 &mut out[n..],
                 (device_index..total_devices).map(|i| {
                     let dev = handler.device_description(BoundsChecked(i));
@@ -466,16 +472,20 @@ pub fn handle_message<H: SpHandler>(
             component,
             offset,
             total,
-        }) => encode_tlv_structs(
-            &mut out[n..],
-            (offset..total).map(|i| {
-                let details =
-                    handler.component_details(component, BoundsChecked(i));
-                (details.tag(), move |buf: &mut [u8]| details.serialize(buf))
-            }),
-        ),
+        }) => {
+            n += encode_tlv_structs(
+                &mut out[n..],
+                (offset..total).map(|i| {
+                    let details =
+                        handler.component_details(component, BoundsChecked(i));
+                    (details.tag(), move |buf: &mut [u8]| {
+                        details.serialize(buf)
+                    })
+                }),
+            )
+        }
         Some(OutgoingTrailingData::BulkIgnitionState(iter)) => {
-            encode_tlv_structs(
+            n += encode_tlv_structs(
                 &mut out[n..],
                 iter.map(|state| {
                     (IgnitionState::TAG, move |buf: &mut [u8]| {
@@ -485,7 +495,7 @@ pub fn handle_message<H: SpHandler>(
             )
         }
         Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter)) => {
-            encode_tlv_structs(
+            n += encode_tlv_structs(
                 &mut out[n..],
                 iter.map(|state| {
                     (LinkEvents::TAG, move |buf: &mut [u8]| {
@@ -495,11 +505,31 @@ pub fn handle_message<H: SpHandler>(
             )
         }
         Some(OutgoingTrailingData::CabooseData(data)) => {
-            out[n..n + data.len()].copy_from_slice(data);
-            data.len()
+            // Because we didn't know the encoded length of the packet until
+            // now, we have to call back into the handler and copy caboose data
+            // into the trailing region.
+            //
+            // Unfortunately, unlike every other possible form of trailing data,
+            // this is faillible!  We check for errors here and re-serialize the
+            // whole chunk of packet data if there's a failure.
+            let len = data.len();
+            if let Err(e) =
+                handler.copy_caboose_value_into(data, &mut out[n..][..len])
+            {
+                let response = Message {
+                    header: Header { version: version::CURRENT, message_id },
+                    kind: MessageKind::SpResponse(SpResponse::Error(e)),
+                };
+
+                // We know `response` is well-formed and fits into `out`, so we
+                // can unwrap serialization.
+                n = hubpack::serialize(&mut out[..], &response).unwrap();
+            } else {
+                n += len;
+            }
         }
 
-        None => 0,
+        None => (),
     };
 
     Some(n)
@@ -917,12 +947,35 @@ fn handle_mgs_request<H: SpHandler>(
     (response, outgoing_trailing_data)
 }
 
+/// A value found in the caboose
+///
+/// If we were reading from the local caboose, this is a simple slice into
+/// static memory (which the task is allowed to access).
+///
+/// However, if we were reading from the _remote_ caboose, we instead store the
+/// location of the value, so that we can read it again when packing it into the
+/// output.
+#[derive(Clone)]
+pub enum CabooseValue {
+    Local(&'static [u8]),
+    Rot { slot: u16, pos: core::ops::Range<u32> },
+}
+
+impl CabooseValue {
+    fn len(&self) -> usize {
+        match self {
+            CabooseValue::Local(s) => s.len(),
+            CabooseValue::Rot { pos, .. } => (pos.end - pos.start) as usize,
+        }
+    }
+}
+
 enum OutgoingTrailingData<H: SpHandler> {
     DeviceInventory { device_index: u32, total_devices: u32 },
     ComponentDetails { component: SpComponent, offset: u32, total: u32 },
     BulkIgnitionState(H::BulkIgnitionStateIter),
     BulkIgnitionLinkEvents(H::BulkIgnitionLinkEventsIter),
-    CabooseData(&'static [u8]),
+    CabooseData(CabooseValue),
 }
 
 #[cfg(test)]
@@ -1268,7 +1321,15 @@ mod tests {
             _component: SpComponent,
             _slot: u16,
             _key: [u8; 4],
-        ) -> Result<&'static [u8], SpError> {
+        ) -> Result<CabooseValue, SpError> {
+            unimplemented!()
+        }
+
+        fn copy_caboose_value_into(
+            &self,
+            _value: CabooseValue,
+            _out: &mut [u8],
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }
