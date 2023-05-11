@@ -149,6 +149,14 @@ pub enum MgsRequest {
         component: SpComponent,
         action: ComponentAction,
     },
+
+    /// Reads a value from the caboose of the selected component
+    ///
+    /// The resulting value is serialized in the trailer of the packet
+    ReadComponentCaboose {
+        component: SpComponent,
+        key: [u8; 4],
+    },
 }
 
 #[derive(

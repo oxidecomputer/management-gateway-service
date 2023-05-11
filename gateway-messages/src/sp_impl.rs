@@ -350,8 +350,9 @@ pub trait SpHandler {
         value: &[u8],
     ) -> Result<(), SpError>;
 
-    fn get_caboose_value(
+    fn get_component_caboose_value(
         &mut self,
+        component: SpComponent,
         key: [u8; 4],
     ) -> Result<&'static [u8], SpError>;
 
@@ -845,19 +846,6 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SetIpccKeyLookupValue { key } => handler
             .set_ipcc_key_lookup_value(sender, port, key, trailing_data)
             .map(|()| SpResponse::SetIpccKeyLookupValueAck),
-        MgsRequest::ReadCaboose { key } => {
-            handler.get_caboose_value(key).map(|data| {
-                if data.len() > crate::MIN_TRAILING_DATA_LEN {
-                    SpResponse::Error(SpError::CabooseValueOverflow(
-                        data.len() as u32
-                    ))
-                } else {
-                    outgoing_trailing_data =
-                        Some(OutgoingTrailingData::CabooseData(data));
-                    SpResponse::CabooseValue
-                }
-            })
-        }
         MgsRequest::ResetComponentPrepare { component } => handler
             .reset_component_prepare(sender, port, component)
             .map(|()| SpResponse::ResetComponentPrepareAck),
@@ -892,6 +880,29 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentAction { component, action } => handler
             .component_action(sender, component, action)
             .map(|()| SpResponse::ComponentActionAck),
+        MgsRequest::ReadCaboose { key }
+        | MgsRequest::ReadComponentCaboose { key, .. } => {
+            let component = if let MgsRequest::ReadComponentCaboose {
+                component,
+                ..
+            } = kind
+            {
+                component
+            } else {
+                SpComponent::SP_ITSELF
+            };
+            handler.get_component_caboose_value(component, key).map(|data| {
+                if data.len() > crate::MIN_TRAILING_DATA_LEN {
+                    SpResponse::Error(SpError::CabooseValueOverflow(
+                        data.len() as u32
+                    ))
+                } else {
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::CabooseData(data));
+                    SpResponse::CabooseValue
+                }
+            })
+        }
     };
 
     let response = match result {
@@ -1230,13 +1241,6 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_caboose_value(
-            &mut self,
-            _key: [u8; 4],
-        ) -> Result<&'static [u8], SpError> {
-            unimplemented!()
-        }
-
         fn reset_component_prepare(
             &mut self,
             _sender: SocketAddrV6,
@@ -1252,6 +1256,14 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn get_component_caboose_value(
+            &mut self,
+            _component: SpComponent,
+            _key: [u8; 4],
+        ) -> Result<&'static [u8], SpError> {
             unimplemented!()
         }
     }
