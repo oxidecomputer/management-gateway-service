@@ -22,11 +22,13 @@ fn mgs_request() {
 
     let request = MgsRequest::ReadComponentCaboose {
         component: SpComponent::SP_ITSELF,
+        slot: 1,
         key: [1, 2, 3, 4],
     };
     let expected = &[
         37, // ReadComponentCaboose
         b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // SP_ITSELF
+        1, 0, // slot
         1, 2, 3, 4,
     ];
     assert_serialized(&mut out, expected, &request);

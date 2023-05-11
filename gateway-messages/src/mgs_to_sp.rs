@@ -155,6 +155,7 @@ pub enum MgsRequest {
     /// The resulting value is serialized in the trailer of the packet
     ReadComponentCaboose {
         component: SpComponent,
+        slot: u16,
         key: [u8; 4],
     },
 }

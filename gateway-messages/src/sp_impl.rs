@@ -353,6 +353,7 @@ pub trait SpHandler {
     fn get_component_caboose_value(
         &mut self,
         component: SpComponent,
+        slot: u16,
         key: [u8; 4],
     ) -> Result<&'static [u8], SpError>;
 
@@ -882,26 +883,29 @@ fn handle_mgs_request<H: SpHandler>(
             .map(|()| SpResponse::ComponentActionAck),
         MgsRequest::ReadCaboose { key }
         | MgsRequest::ReadComponentCaboose { key, .. } => {
-            let component = if let MgsRequest::ReadComponentCaboose {
+            let (component, slot) = if let MgsRequest::ReadComponentCaboose {
                 component,
+                slot,
                 ..
             } = kind
             {
-                component
+                (component, slot)
             } else {
-                SpComponent::SP_ITSELF
+                (SpComponent::SP_ITSELF, 0)
             };
-            handler.get_component_caboose_value(component, key).map(|data| {
-                if data.len() > crate::MIN_TRAILING_DATA_LEN {
-                    SpResponse::Error(SpError::CabooseValueOverflow(
-                        data.len() as u32
-                    ))
-                } else {
-                    outgoing_trailing_data =
-                        Some(OutgoingTrailingData::CabooseData(data));
-                    SpResponse::CabooseValue
-                }
-            })
+            handler.get_component_caboose_value(component, slot, key).map(
+                |data| {
+                    if data.len() > crate::MIN_TRAILING_DATA_LEN {
+                        SpResponse::Error(SpError::CabooseValueOverflow(
+                            data.len() as u32,
+                        ))
+                    } else {
+                        outgoing_trailing_data =
+                            Some(OutgoingTrailingData::CabooseData(data));
+                        SpResponse::CabooseValue
+                    }
+                },
+            )
         }
     };
 
@@ -1262,6 +1266,7 @@ mod tests {
         fn get_component_caboose_value(
             &mut self,
             _component: SpComponent,
+            _slot: u16,
             _key: [u8; 4],
         ) -> Result<&'static [u8], SpError> {
             unimplemented!()
