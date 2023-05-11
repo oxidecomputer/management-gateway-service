@@ -952,7 +952,9 @@ impl CabooseValue {
     fn len(&self) -> usize {
         match self {
             CabooseValue::Local(s) => s.len(),
-            CabooseValue::Rot { pos, .. } => (pos.end - pos.start) as usize,
+            CabooseValue::Rot { pos, .. } | CabooseValue::Bank2 { pos, .. } => {
+                (pos.end - pos.start) as usize
+            }
         }
     }
 }

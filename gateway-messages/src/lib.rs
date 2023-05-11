@@ -364,7 +364,13 @@ impl TryFrom<&str> for SpComponent {
 /// the output.
 #[derive(Clone)]
 pub enum CabooseValue {
+    /// Local flash bank on the SP
     Local(&'static [u8]),
+
+    /// Alternate flash bank on the SP
+    Bank2 { pos: core::ops::Range<u32> },
+
+    /// Root of trust
     Rot { slot: u16, pos: core::ops::Range<u32> },
 }
 
