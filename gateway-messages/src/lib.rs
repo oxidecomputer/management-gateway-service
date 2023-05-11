@@ -354,6 +354,20 @@ impl TryFrom<&str> for SpComponent {
     }
 }
 
+/// A value found in the caboose
+///
+/// If we are reading from the local caboose, this is a simple slice into
+/// static memory (which the task is allowed to access).
+///
+/// However, if we were reading from the caboose of the RoT, we instead store
+/// the location of the value, so that we can read it again when packing it into
+/// the output.
+#[derive(Clone)]
+pub enum CabooseValue {
+    Local(&'static [u8]),
+    Rot { slot: u16, pos: core::ops::Range<u32> },
+}
+
 /// Minimum guaranteed space for trailing data in a single packet.
 ///
 /// Depending on the [`Message`] payload, there may be more space for trailing

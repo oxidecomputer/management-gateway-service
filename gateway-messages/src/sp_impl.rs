@@ -9,6 +9,7 @@ use crate::ignition::LinkEvents;
 use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
+use crate::CabooseValue;
 use crate::ComponentAction;
 use crate::ComponentDetails;
 use crate::ComponentUpdatePrepare;
@@ -945,20 +946,6 @@ fn handle_mgs_request<H: SpHandler>(
     };
 
     (response, outgoing_trailing_data)
-}
-
-/// A value found in the caboose
-///
-/// If we were reading from the local caboose, this is a simple slice into
-/// static memory (which the task is allowed to access).
-///
-/// However, if we were reading from the _remote_ caboose, we instead store the
-/// location of the value, so that we can read it again when packing it into the
-/// output.
-#[derive(Clone)]
-pub enum CabooseValue {
-    Local(&'static [u8]),
-    Rot { slot: u16, pos: core::ops::Range<u32> },
 }
 
 impl CabooseValue {
