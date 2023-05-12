@@ -375,7 +375,7 @@ fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
 
 fn parse_sp_component(component: &str) -> Result<SpComponent> {
     SpComponent::try_from(component)
-        .map_err(|_| anyhow!("invalid component name: {}", component))
+        .map_err(|_| anyhow!("invalid component name: {component}"))
 }
 
 #[derive(Debug, Clone, Copy)]
