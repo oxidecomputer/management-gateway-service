@@ -237,6 +237,16 @@ impl<'de> Deserialize<'de> for SpComponent {
     }
 }
 
+impl std::fmt::Display for SpComponent {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if let Some(s) = self.as_str() {
+            write!(f, "{s}")
+        } else {
+            write!(f, "{self:?}")
+        }
+    }
+}
+
 impl SpComponent {
     /// Maximum number of bytes for a component ID.
     pub const MAX_ID_LENGTH: usize = 16;

@@ -811,6 +811,25 @@ impl SingleSp {
                 response.expect_component_action_ack()
             })
     }
+
+    pub async fn read_component_caboose(
+        &self,
+        component: SpComponent,
+        slot: u16,
+        key: [u8; 4],
+    ) -> Result<Vec<u8>> {
+        let result = rpc(
+            &self.cmds_tx,
+            MgsRequest::ReadComponentCaboose { component, slot, key },
+            None,
+        )
+        .await;
+
+        result.result.map(|(_peer, response, data)| {
+            response.expect_caboose_value().unwrap();
+            data
+        })
+    }
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)

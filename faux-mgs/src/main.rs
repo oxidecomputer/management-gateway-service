@@ -174,7 +174,8 @@ enum Command {
 
     /// Get or set the active slot of a component (e.g., `host-boot-flash`).
     ComponentActiveSlot {
-        component: String,
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
         #[clap(short, long, value_name = "SLOT", help = "set the active slot")]
         set: Option<u16>,
         #[clap(
@@ -193,10 +194,16 @@ enum Command {
     Inventory,
 
     /// Ask SP for details of a component.
-    ComponentDetails { component: String },
+    ComponentDetails {
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
+    },
 
     /// Ask SP to clear the state (e.g., reset counters) on a component.
-    ComponentClearStatus { component: String },
+    ComponentClearStatus {
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
+    },
 
     /// Attach to the SP's USART.
     UsartAttach {
@@ -246,19 +253,24 @@ enum Command {
         #[clap(long)]
         allow_multiple_update: bool,
 
-        component: String,
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
         slot: u16,
         image: PathBuf,
     },
 
     /// Get the status of an update to the specified component.
-    UpdateStatus { component: String },
+    UpdateStatus {
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
+    },
 
     /// Abort an in-progress update.
     UpdateAbort {
         /// Component with an update-in-progress to be aborted. Omit to abort
         /// updates to the SP itself.
-        component: String,
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
         /// ID of the update to abort.
         update_id: Uuid,
     },
@@ -289,6 +301,23 @@ enum Command {
         key: [u8; 4],
     },
 
+    /// Read a single key from the caboose
+    ReadComponentCaboose {
+        /// Component from which to read; must be `sp` or `rot`
+        #[clap(short, long, value_parser = parse_sp_component)]
+        component: SpComponent,
+
+        /// Target slot from which to read the caboose.
+        ///
+        /// The SP accepts `active` or `inactive`; the RoT accepts `A` or `B`
+        #[clap(short, long)]
+        slot: Option<String>,
+
+        /// 4-character ASCII string
+        #[arg(value_parser = parse_tlvc_key)]
+        key: [u8; 4],
+    },
+
     /// Instruct the SP to reset.
     Reset,
 
@@ -296,7 +325,10 @@ enum Command {
     ///
     /// This command is implemented for the component "rot" but may be
     /// expanded to other components in the future.
-    ResetComponent { component: String },
+    ResetComponent {
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
+    },
 
     /// Controls the system LED
     SystemLed {
@@ -339,6 +371,11 @@ fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
     }
 
     Ok(key.as_bytes().try_into().unwrap())
+}
+
+fn parse_sp_component(component: &str) -> Result<SpComponent> {
+    SpComponent::try_from(component)
+        .map_err(|_| anyhow!("invalid component name: {}", component))
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -785,13 +822,8 @@ async fn run_command(
             }
         }
         Command::ComponentActiveSlot { component, set, persist } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| {
-                    anyhow!("invalid component name: {}", component)
-                })?;
             if let Some(slot) = set {
-                sp.set_component_active_slot(sp_component, slot, persist)
-                    .await?;
+                sp.set_component_active_slot(component, slot, persist).await?;
                 if json {
                     Ok(Output::Json(json!({ "ack": "set", "slot": slot })))
                 } else {
@@ -800,7 +832,7 @@ async fn run_command(
                     )]))
                 }
             } else {
-                let slot = sp.component_active_slot(sp_component).await?;
+                let slot = sp.component_active_slot(component).await?;
                 info!(log, "active slot for {component:?}: {slot}");
                 if json {
                     Ok(Output::Json(json!({ "slot": slot })))
@@ -863,11 +895,7 @@ async fn run_command(
             Ok(Output::Lines(lines))
         }
         Command::ComponentDetails { component } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| {
-                    anyhow!("invalid component name: {}", component)
-                })?;
-            let details = sp.component_details(sp_component).await?;
+            let details = sp.component_details(component).await?;
             if json {
                 return Ok(Output::Json(component_details_to_json(details)));
             }
@@ -878,11 +906,7 @@ async fn run_command(
             Ok(Output::Lines(lines))
         }
         Command::ComponentClearStatus { component } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| {
-                    anyhow!("invalid component name: {}", component)
-                })?;
-            sp.component_clear_status(sp_component).await?;
+            sp.component_clear_status(component).await?;
             info!(log, "status cleared for component {component}");
             if json {
                 Ok(Output::Json(json!({ "ack": "cleared" })))
@@ -902,14 +926,10 @@ async fn run_command(
             }
         }
         Command::Update { component, slot, image, .. } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| {
-                    anyhow!("invalid component name: {}", component)
-                })?;
             let data = fs::read(&image).with_context(|| {
                 format!("failed to read {}", image.display())
             })?;
-            update(&log, &sp, sp_component, slot, data).await.with_context(
+            update(&log, &sp, component, slot, data).await.with_context(
                 || {
                     format!(
                         "updating {} slot {} to {} failed",
@@ -926,10 +946,8 @@ async fn run_command(
             }
         }
         Command::UpdateStatus { component } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| anyhow!("invalid component name: {component}"))?;
             let status =
-                sp.update_status(sp_component).await.with_context(|| {
+                sp.update_status(component).await.with_context(|| {
                     format!(
                         "failed to get update status to component {component}"
                     )
@@ -982,11 +1000,9 @@ async fn run_command(
             Ok(Output::Lines(vec![status]))
         }
         Command::UpdateAbort { component, update_id } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| anyhow!("invalid component name: {component}"))?;
-            sp.update_abort(sp_component, update_id).await.with_context(
-                || format!("aborting update to {} failed", component),
-            )?;
+            sp.update_abort(component, update_id).await.with_context(|| {
+                format!("aborting update to {} failed", component)
+            })?;
             if json {
                 Ok(Output::Json(json!({ "ack": "aborted" })))
             } else {
@@ -1032,16 +1048,10 @@ async fn run_command(
         }
 
         Command::ResetComponent { component } => {
-            let sp_component = SpComponent::try_from(component.as_str())
-                .map_err(|_| anyhow!("invalid component name: {component}"))?;
-            sp.reset_component_prepare(sp_component).await?;
-            info!(
-                log,
-                "SP is repared to reset component {}",
-                component.as_str()
-            );
-            sp.reset_component_trigger(sp_component).await?;
-            info!(log, "SP reset component {} complete", component.as_str());
+            sp.reset_component_prepare(component).await?;
+            info!(log, "SP is repared to reset component {component}",);
+            sp.reset_component_trigger(component).await?;
+            info!(log, "SP reset component {component} complete");
             if json {
                 Ok(Output::Json(json!({ "ack": "reset" })))
             } else {
@@ -1095,6 +1105,44 @@ async fn run_command(
                 Ok(Output::Json(json!({ "ack": "led" })))
             } else {
                 Ok(Output::Lines(vec!["done".to_string()]))
+            }
+        }
+        Command::ReadComponentCaboose { component, slot, key } => {
+            let slot = match (component, slot.as_deref()) {
+                (SpComponent::SP_ITSELF, Some("active") | None) => 0,
+                (SpComponent::SP_ITSELF, Some("inactive")) => 1,
+                (SpComponent::SP_ITSELF, v) => {
+                    bail!(
+                        "invalid slot '{}' for SP; \
+                         must be 'active' or 'inactive'",
+                        v.unwrap(),
+                    )
+                }
+                (SpComponent::ROT, Some("A" | "a")) => 0,
+                (SpComponent::ROT, Some("B" | "b")) => 1,
+                (SpComponent::ROT, None) => {
+                    bail!("must provide slot ('A' or 'B') for RoT")
+                }
+                (SpComponent::ROT, v) => {
+                    bail!(
+                        "invalid slot '{}' for ROT, must be 'A' or 'B'",
+                        v.unwrap()
+                    );
+                }
+                (c, _) => {
+                    bail!("invalid component {c} for caboose")
+                }
+            };
+            let value = sp.read_component_caboose(component, slot, key).await?;
+            let out = if value.is_ascii() {
+                String::from_utf8(value).unwrap()
+            } else {
+                hex::encode(value)
+            };
+            if json {
+                Ok(Output::Json(json!({ "value": out })))
+            } else {
+                Ok(Output::Lines(vec![out]))
             }
         }
     }
