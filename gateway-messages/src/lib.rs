@@ -378,9 +378,15 @@ pub enum CabooseValue {
     Local(&'static [u8]),
 
     /// Alternate flash bank on the SP
+    ///
+    /// The value's position is given relative to the caboose, i.e. 0 is the
+    /// first byte of the caboose.
     Bank2 { pos: core::ops::Range<u32> },
 
     /// Root of trust
+    ///
+    /// The value's position is given relative to the caboose, i.e. 0 is the
+    /// first byte of the caboose.
     Rot { slot: u16, pos: core::ops::Range<u32> },
 }
 
