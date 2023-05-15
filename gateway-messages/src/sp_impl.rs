@@ -358,6 +358,10 @@ pub trait SpHandler {
         key: [u8; 4],
     ) -> Result<CabooseValue, SpError>;
 
+    /// Copies a value from the caboose into the given buffer
+    ///
+    /// This is guaranteed to be called with an `out` buffer that matches the
+    /// length of `value`.
     fn copy_caboose_value_into(
         &self,
         value: CabooseValue,
@@ -514,19 +518,21 @@ pub fn handle_message<H: SpHandler>(
             // this is faillible!  We check for errors here and re-serialize the
             // whole chunk of packet data if there's a failure.
             let len = data.len();
-            if let Err(e) =
-                handler.copy_caboose_value_into(data, &mut out[n..][..len])
-            {
-                let response = Message {
-                    header: Header { version: version::CURRENT, message_id },
-                    kind: MessageKind::SpResponse(SpResponse::Error(e)),
-                };
+            match handler.copy_caboose_value_into(data, &mut out[n..][..len]) {
+                Ok(()) => n += len,
+                Err(e) => {
+                    let response = Message {
+                        header: Header {
+                            version: version::CURRENT,
+                            message_id,
+                        },
+                        kind: MessageKind::SpResponse(SpResponse::Error(e)),
+                    };
 
-                // We know `response` is well-formed and fits into `out`, so we
-                // can unwrap serialization.
-                n = hubpack::serialize(&mut out[..], &response).unwrap();
-            } else {
-                n += len;
+                    // We know `response` is well-formed and fits into `out`, so we
+                    // can unwrap serialization.
+                    n = hubpack::serialize(&mut out[..], &response).unwrap();
+                }
             }
         }
 
