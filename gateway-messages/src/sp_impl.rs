@@ -9,7 +9,6 @@ use crate::ignition::LinkEvents;
 use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
-use crate::CabooseValue;
 use crate::ComponentAction;
 use crate::ComponentDetails;
 use crate::ComponentUpdatePrepare;
@@ -356,17 +355,8 @@ pub trait SpHandler {
         component: SpComponent,
         slot: u16,
         key: [u8; 4],
-    ) -> Result<CabooseValue, SpError>;
-
-    /// Copies a value from the caboose into the given buffer
-    ///
-    /// This is guaranteed to be called with an `out` buffer that matches the
-    /// length of `value`.
-    fn copy_caboose_value_into(
-        &self,
-        value: CabooseValue,
-        out: &mut [u8],
-    ) -> Result<(), SpError>;
+        buf: &mut [u8],
+    ) -> Result<usize, SpError>;
 
     fn reset_component_prepare(
         &mut self,
@@ -414,6 +404,7 @@ pub fn handle_message<H: SpHandler>(
                     header,
                     remaining_data,
                     handler,
+                    &mut out[Message::MAX_SIZE..],
                 )?;
                 (header.message_id, response, outgoing_trailing_data)
             }
@@ -439,12 +430,12 @@ pub fn handle_message<H: SpHandler>(
     };
 
     // Append any outgoing trailing data.
-    match outgoing_trailing_data {
+    n += match outgoing_trailing_data {
         Some(OutgoingTrailingData::DeviceInventory {
             device_index,
             total_devices,
         }) => {
-            n += encode_tlv_structs(
+            encode_tlv_structs(
                 &mut out[n..],
                 (device_index..total_devices).map(|i| {
                     let dev = handler.device_description(BoundsChecked(i));
@@ -477,20 +468,16 @@ pub fn handle_message<H: SpHandler>(
             component,
             offset,
             total,
-        }) => {
-            n += encode_tlv_structs(
-                &mut out[n..],
-                (offset..total).map(|i| {
-                    let details =
-                        handler.component_details(component, BoundsChecked(i));
-                    (details.tag(), move |buf: &mut [u8]| {
-                        details.serialize(buf)
-                    })
-                }),
-            )
-        }
+        }) => encode_tlv_structs(
+            &mut out[n..],
+            (offset..total).map(|i| {
+                let details =
+                    handler.component_details(component, BoundsChecked(i));
+                (details.tag(), move |buf: &mut [u8]| details.serialize(buf))
+            }),
+        ),
         Some(OutgoingTrailingData::BulkIgnitionState(iter)) => {
-            n += encode_tlv_structs(
+            encode_tlv_structs(
                 &mut out[n..],
                 iter.map(|state| {
                     (IgnitionState::TAG, move |buf: &mut [u8]| {
@@ -500,7 +487,7 @@ pub fn handle_message<H: SpHandler>(
             )
         }
         Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter)) => {
-            n += encode_tlv_structs(
+            encode_tlv_structs(
                 &mut out[n..],
                 iter.map(|state| {
                     (LinkEvents::TAG, move |buf: &mut [u8]| {
@@ -509,34 +496,12 @@ pub fn handle_message<H: SpHandler>(
                 }),
             )
         }
-        Some(OutgoingTrailingData::CabooseData(data)) => {
-            // Because we didn't know the encoded length of the packet until
-            // now, we have to call back into the handler and copy caboose data
-            // into the trailing region.
-            //
-            // Unfortunately, unlike every other possible form of trailing data,
-            // this is faillible!  We check for errors here and re-serialize the
-            // whole chunk of packet data if there's a failure.
-            let len = data.len();
-            match handler.copy_caboose_value_into(data, &mut out[n..][..len]) {
-                Ok(()) => n += len,
-                Err(e) => {
-                    let response = Message {
-                        header: Header {
-                            version: version::CURRENT,
-                            message_id,
-                        },
-                        kind: MessageKind::SpResponse(SpResponse::Error(e)),
-                    };
-
-                    // We know `response` is well-formed and fits into `out`, so we
-                    // can unwrap serialization.
-                    n = hubpack::serialize(&mut out[..], &response).unwrap();
-                }
-            }
+        Some(OutgoingTrailingData::ShiftFromTail(len)) => {
+            out.copy_within(Message::MAX_SIZE..Message::MAX_SIZE + len, n);
+            len
         }
 
-        None => (),
+        None => 0,
     };
 
     Some(n)
@@ -629,10 +594,18 @@ fn handle_message_impl<H: SpHandler>(
     header: Header,
     request_kind_data: &[u8],
     handler: &mut H,
+    trailing_tx_buf: &mut [u8],
 ) -> Option<(SpResponse, Option<OutgoingTrailingData<H>>)> {
     match hubpack::deserialize::<MessageKind>(request_kind_data) {
         Ok((MessageKind::MgsRequest(kind), leftover)) => {
-            Some(handle_mgs_request(sender, port, handler, kind, leftover))
+            Some(handle_mgs_request(
+                sender,
+                port,
+                handler,
+                kind,
+                leftover,
+                trailing_tx_buf,
+            ))
         }
         Ok((MessageKind::MgsResponse(kind), leftover)) => {
             handle_mgs_response(
@@ -701,6 +674,7 @@ fn handle_mgs_request<H: SpHandler>(
     handler: &mut H,
     kind: MgsRequest,
     leftover: &[u8],
+    trailing_tx_buf: &mut [u8],
 ) -> (SpResponse, Option<OutgoingTrailingData<H>>) {
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
@@ -930,19 +904,17 @@ fn handle_mgs_request<H: SpHandler>(
             } else {
                 (SpComponent::SP_ITSELF, 0)
             };
-            handler.get_component_caboose_value(component, slot, key).map(
-                |data| {
-                    if data.len() > crate::MIN_TRAILING_DATA_LEN {
-                        SpResponse::Error(SpError::CabooseValueOverflow(
-                            data.len() as u32,
-                        ))
-                    } else {
-                        outgoing_trailing_data =
-                            Some(OutgoingTrailingData::CabooseData(data));
-                        SpResponse::CabooseValue
-                    }
-                },
-            )
+            let r = handler.get_component_caboose_value(
+                component,
+                slot,
+                key,
+                trailing_tx_buf,
+            );
+            if let Ok(n) = r {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(n));
+            }
+            r.map(|_| SpResponse::CabooseValue)
         }
     };
 
@@ -955,11 +927,24 @@ fn handle_mgs_request<H: SpHandler>(
 }
 
 enum OutgoingTrailingData<H: SpHandler> {
-    DeviceInventory { device_index: u32, total_devices: u32 },
-    ComponentDetails { component: SpComponent, offset: u32, total: u32 },
+    DeviceInventory {
+        device_index: u32,
+        total_devices: u32,
+    },
+    ComponentDetails {
+        component: SpComponent,
+        offset: u32,
+        total: u32,
+    },
     BulkIgnitionState(H::BulkIgnitionStateIter),
     BulkIgnitionLinkEvents(H::BulkIgnitionLinkEventsIter),
-    CabooseData(CabooseValue),
+
+    /// Shift some number of bytes from `tx_buf[Message::MAX_SIZE..]`
+    ///
+    /// This is useful if you want to read bytes into the transmit buffer as
+    /// part of message handling, instead of afterwards (e.g. because the read
+    /// is fallible but small)
+    ShiftFromTail(usize),
 }
 
 #[cfg(test)]
@@ -1305,15 +1290,8 @@ mod tests {
             _component: SpComponent,
             _slot: u16,
             _key: [u8; 4],
-        ) -> Result<CabooseValue, SpError> {
-            unimplemented!()
-        }
-
-        fn copy_caboose_value_into(
-            &self,
-            _value: CabooseValue,
-            _out: &mut [u8],
-        ) -> Result<(), SpError> {
+            _buf: &mut [u8],
+        ) -> Result<usize, SpError> {
             unimplemented!()
         }
     }

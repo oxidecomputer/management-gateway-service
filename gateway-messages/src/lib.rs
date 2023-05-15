@@ -364,43 +364,6 @@ impl TryFrom<&str> for SpComponent {
     }
 }
 
-/// A value found in the caboose
-///
-/// If we are reading from the local caboose, this is a simple slice into
-/// static memory (which the task is allowed to access).
-///
-/// However, if we were reading from the caboose of the RoT, we instead store
-/// the location of the value, so that we can read it again when packing it into
-/// the output.
-#[derive(Clone)]
-pub enum CabooseValue {
-    /// Local flash bank on the SP
-    Local(&'static [u8]),
-
-    /// Alternate flash bank on the SP
-    ///
-    /// The value's position is given relative to the caboose, i.e. 0 is the
-    /// first byte of the caboose.
-    Bank2 { pos: core::ops::Range<u32> },
-
-    /// Root of trust
-    ///
-    /// The value's position is given relative to the caboose, i.e. 0 is the
-    /// first byte of the caboose.
-    Rot { slot: u16, pos: core::ops::Range<u32> },
-}
-
-impl CabooseValue {
-    fn len(&self) -> usize {
-        match self {
-            CabooseValue::Local(s) => s.len(),
-            CabooseValue::Rot { pos, .. } | CabooseValue::Bank2 { pos, .. } => {
-                (pos.end - pos.start) as usize
-            }
-        }
-    }
-}
-
 /// Minimum guaranteed space for trailing data in a single packet.
 ///
 /// Depending on the [`Message`] payload, there may be more space for trailing
