@@ -237,8 +237,8 @@ impl<'de> Deserialize<'de> for SpComponent {
     }
 }
 
-impl std::fmt::Display for SpComponent {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl core::fmt::Display for SpComponent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         if let Some(s) = self.as_str() {
             write!(f, "{s}")
         } else {
