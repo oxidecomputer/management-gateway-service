@@ -1109,8 +1109,8 @@ async fn run_command(
         }
         Command::ReadComponentCaboose { component, slot, key } => {
             let slot = match (component, slot.as_deref()) {
-                (SpComponent::SP_ITSELF, Some("active") | None) => 0,
-                (SpComponent::SP_ITSELF, Some("inactive")) => 1,
+                (SpComponent::SP_ITSELF, Some("active" | "0") | None) => 0,
+                (SpComponent::SP_ITSELF, Some("inactive" | "1")) => 1,
                 (SpComponent::SP_ITSELF, v) => {
                     bail!(
                         "invalid slot '{}' for SP; \
@@ -1118,8 +1118,8 @@ async fn run_command(
                         v.unwrap(),
                     )
                 }
-                (SpComponent::ROT, Some("A" | "a")) => 0,
-                (SpComponent::ROT, Some("B" | "b")) => 1,
+                (SpComponent::ROT, Some("A" | "a" | "0")) => 0,
+                (SpComponent::ROT, Some("B" | "b" | "1")) => 1,
                 (SpComponent::ROT, None) => {
                     bail!("must provide slot ('A' or 'B') for RoT")
                 }
