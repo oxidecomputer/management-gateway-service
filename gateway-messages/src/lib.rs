@@ -390,6 +390,17 @@ pub enum CabooseValue {
     Rot { slot: u16, pos: core::ops::Range<u32> },
 }
 
+impl CabooseValue {
+    fn len(&self) -> usize {
+        match self {
+            CabooseValue::Local(s) => s.len(),
+            CabooseValue::Rot { pos, .. } | CabooseValue::Bank2 { pos, .. } => {
+                (pos.end - pos.start) as usize
+            }
+        }
+    }
+}
+
 /// Minimum guaranteed space for trailing data in a single packet.
 ///
 /// Depending on the [`Message`] payload, there may be more space for trailing

@@ -948,17 +948,6 @@ fn handle_mgs_request<H: SpHandler>(
     (response, outgoing_trailing_data)
 }
 
-impl CabooseValue {
-    fn len(&self) -> usize {
-        match self {
-            CabooseValue::Local(s) => s.len(),
-            CabooseValue::Rot { pos, .. } | CabooseValue::Bank2 { pos, .. } => {
-                (pos.end - pos.start) as usize
-            }
-        }
-    }
-}
-
 enum OutgoingTrailingData<H: SpHandler> {
     DeviceInventory { device_index: u32, total_devices: u32 },
     ComponentDetails { component: SpComponent, offset: u32, total: u32 },
