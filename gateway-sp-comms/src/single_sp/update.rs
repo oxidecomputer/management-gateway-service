@@ -68,6 +68,9 @@ pub(super) async fn start_sp_update(
     // can avoid an unnecessary erase/write cycle.
     let caboose = archive.read_caboose()?;
     let archive_board = caboose.board()?;
+
+    // In the future, we could use `ReadComponentCaboose` here instead, but
+    // `ReadCaboose` is older (and thus more widely compatible with SP images).
     let sp_board =
         super::rpc(cmds_tx, MgsRequest::ReadCaboose { key: *b"BORD" }, None)
             .await
