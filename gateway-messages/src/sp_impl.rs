@@ -350,10 +350,13 @@ pub trait SpHandler {
         value: &[u8],
     ) -> Result<(), SpError>;
 
-    fn get_caboose_value(
+    fn get_component_caboose_value(
         &mut self,
+        component: SpComponent,
+        slot: u16,
         key: [u8; 4],
-    ) -> Result<&'static [u8], SpError>;
+        buf: &mut [u8],
+    ) -> Result<usize, SpError>;
 
     fn reset_component_prepare(
         &mut self,
@@ -401,6 +404,7 @@ pub fn handle_message<H: SpHandler>(
                     header,
                     remaining_data,
                     handler,
+                    &mut out[Message::MAX_SIZE..],
                 )?;
                 (header.message_id, response, outgoing_trailing_data)
             }
@@ -492,9 +496,9 @@ pub fn handle_message<H: SpHandler>(
                 }),
             )
         }
-        Some(OutgoingTrailingData::CabooseData(data)) => {
-            out[n..n + data.len()].copy_from_slice(data);
-            data.len()
+        Some(OutgoingTrailingData::ShiftFromTail(len)) => {
+            out.copy_within(Message::MAX_SIZE..Message::MAX_SIZE + len, n);
+            len
         }
 
         None => 0,
@@ -590,10 +594,18 @@ fn handle_message_impl<H: SpHandler>(
     header: Header,
     request_kind_data: &[u8],
     handler: &mut H,
+    trailing_tx_buf: &mut [u8],
 ) -> Option<(SpResponse, Option<OutgoingTrailingData<H>>)> {
     match hubpack::deserialize::<MessageKind>(request_kind_data) {
         Ok((MessageKind::MgsRequest(kind), leftover)) => {
-            Some(handle_mgs_request(sender, port, handler, kind, leftover))
+            Some(handle_mgs_request(
+                sender,
+                port,
+                handler,
+                kind,
+                leftover,
+                trailing_tx_buf,
+            ))
         }
         Ok((MessageKind::MgsResponse(kind), leftover)) => {
             handle_mgs_response(
@@ -662,6 +674,7 @@ fn handle_mgs_request<H: SpHandler>(
     handler: &mut H,
     kind: MgsRequest,
     leftover: &[u8],
+    trailing_tx_buf: &mut [u8],
 ) -> (SpResponse, Option<OutgoingTrailingData<H>>) {
     // Do we expect any trailing raw data? Only for specific kinds of messages;
     // if we get any for other messages, bail out.
@@ -845,19 +858,6 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::SetIpccKeyLookupValue { key } => handler
             .set_ipcc_key_lookup_value(sender, port, key, trailing_data)
             .map(|()| SpResponse::SetIpccKeyLookupValueAck),
-        MgsRequest::ReadCaboose { key } => {
-            handler.get_caboose_value(key).map(|data| {
-                if data.len() > crate::MIN_TRAILING_DATA_LEN {
-                    SpResponse::Error(SpError::CabooseValueOverflow(
-                        data.len() as u32
-                    ))
-                } else {
-                    outgoing_trailing_data =
-                        Some(OutgoingTrailingData::CabooseData(data));
-                    SpResponse::CabooseValue
-                }
-            })
-        }
         MgsRequest::ResetComponentPrepare { component } => handler
             .reset_component_prepare(sender, port, component)
             .map(|()| SpResponse::ResetComponentPrepareAck),
@@ -892,6 +892,30 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentAction { component, action } => handler
             .component_action(sender, component, action)
             .map(|()| SpResponse::ComponentActionAck),
+        MgsRequest::ReadCaboose { key }
+        | MgsRequest::ReadComponentCaboose { key, .. } => {
+            let (component, slot) = if let MgsRequest::ReadComponentCaboose {
+                component,
+                slot,
+                ..
+            } = kind
+            {
+                (component, slot)
+            } else {
+                (SpComponent::SP_ITSELF, 0)
+            };
+            let r = handler.get_component_caboose_value(
+                component,
+                slot,
+                key,
+                trailing_tx_buf,
+            );
+            if let Ok(n) = r {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(n));
+            }
+            r.map(|_| SpResponse::CabooseValue)
+        }
     };
 
     let response = match result {
@@ -903,11 +927,24 @@ fn handle_mgs_request<H: SpHandler>(
 }
 
 enum OutgoingTrailingData<H: SpHandler> {
-    DeviceInventory { device_index: u32, total_devices: u32 },
-    ComponentDetails { component: SpComponent, offset: u32, total: u32 },
+    DeviceInventory {
+        device_index: u32,
+        total_devices: u32,
+    },
+    ComponentDetails {
+        component: SpComponent,
+        offset: u32,
+        total: u32,
+    },
     BulkIgnitionState(H::BulkIgnitionStateIter),
     BulkIgnitionLinkEvents(H::BulkIgnitionLinkEventsIter),
-    CabooseData(&'static [u8]),
+
+    /// Shift some number of bytes from `tx_buf[Message::MAX_SIZE..]`
+    ///
+    /// This is useful if you want to read bytes into the transmit buffer as
+    /// part of message handling, instead of afterwards (e.g. because the read
+    /// is fallible but small)
+    ShiftFromTail(usize),
 }
 
 #[cfg(test)]
@@ -1230,13 +1267,6 @@ mod tests {
             unimplemented!()
         }
 
-        fn get_caboose_value(
-            &mut self,
-            _key: [u8; 4],
-        ) -> Result<&'static [u8], SpError> {
-            unimplemented!()
-        }
-
         fn reset_component_prepare(
             &mut self,
             _sender: SocketAddrV6,
@@ -1252,6 +1282,16 @@ mod tests {
             _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn get_component_caboose_value(
+            &mut self,
+            _component: SpComponent,
+            _slot: u16,
+            _key: [u8; 4],
+            _buf: &mut [u8],
+        ) -> Result<usize, SpError> {
             unimplemented!()
         }
     }

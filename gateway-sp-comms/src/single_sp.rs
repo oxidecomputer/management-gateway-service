@@ -728,6 +728,11 @@ impl SingleSp {
         })
     }
 
+    /// Reads a single value from the SP's caboose (in the active slot)
+    ///
+    /// This can eventually be deprecated in favor of
+    /// `read_component_caboose(SpComponent::SP_ITSELF, 0, key)`, once that
+    /// message is widely accepted by SPs in the field.
     pub async fn get_caboose_value(&self, key: [u8; 4]) -> Result<Vec<u8>> {
         let result =
             rpc(&self.cmds_tx, MgsRequest::ReadCaboose { key }, None).await;
@@ -810,6 +815,25 @@ impl SingleSp {
             .and_then(|(_peer, response, _data)| {
                 response.expect_component_action_ack()
             })
+    }
+
+    pub async fn read_component_caboose(
+        &self,
+        component: SpComponent,
+        slot: u16,
+        key: [u8; 4],
+    ) -> Result<Vec<u8>> {
+        let result = rpc(
+            &self.cmds_tx,
+            MgsRequest::ReadComponentCaboose { component, slot, key },
+            None,
+        )
+        .await;
+
+        result.result.map(|(_peer, response, data)| {
+            response.expect_caboose_value().unwrap();
+            data
+        })
     }
 }
 

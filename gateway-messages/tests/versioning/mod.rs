@@ -9,6 +9,7 @@ use serde::Serialize;
 mod v2;
 mod v3;
 mod v4;
+mod v5;
 
 pub fn assert_serialized(
     out: &mut [u8],

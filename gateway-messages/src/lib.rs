@@ -63,7 +63,7 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 4;
+    pub const CURRENT: u32 = 5;
 }
 
 #[derive(
@@ -233,6 +233,16 @@ impl<'de> Deserialize<'de> for SpComponent {
             // impl would do.
             let id = <[u8; Self::MAX_ID_LENGTH]>::deserialize(deserializer)?;
             Ok(Self { id })
+        }
+    }
+}
+
+impl core::fmt::Display for SpComponent {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        if let Some(s) = self.as_str() {
+            write!(f, "{s}")
+        } else {
+            write!(f, "{self:?}")
         }
     }
 }
