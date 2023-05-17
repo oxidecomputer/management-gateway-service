@@ -149,6 +149,8 @@ pub struct ImageVersion {
     pub version: u32,
 }
 
+/// This is quasi-deprecated in that it will only be returned by SPs with images
+/// older than the  introduction of `SpStateV2`.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
