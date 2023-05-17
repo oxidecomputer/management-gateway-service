@@ -25,7 +25,7 @@ pub use usdt::register_probes;
 pub mod error;
 
 pub use gateway_messages;
-pub use gateway_messages::SpState;
+pub use gateway_messages::SpStateV1;
 pub use gateway_messages::SpStateV2;
 pub use host_phase2::HostPhase2ImageError;
 pub use host_phase2::HostPhase2Provider;
@@ -67,6 +67,6 @@ pub struct SwitchPortConfig {
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub enum VersionedSpState {
-    V1(SpState),
+    V1(SpStateV1),
     V2(SpStateV2),
 }

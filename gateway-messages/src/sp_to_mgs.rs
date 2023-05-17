@@ -64,7 +64,7 @@ pub enum SpResponse {
     /// [`ignition::IgnitionState`]s.
     BulkIgnitionState(TlvPage),
     IgnitionCommandAck,
-    SpState(SpState),
+    SpState(SpStateV1),
     SpUpdatePrepareAck,
     ComponentUpdatePrepareAck,
     UpdateChunkAck,
@@ -152,7 +152,7 @@ pub struct ImageVersion {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct SpState {
+pub struct SpStateV1 {
     pub hubris_archive_id: [u8; 8],
     // Serial and revision are only 11 bytes in practice; we have plenty of room
     // so we'll leave the fields wider in case we grow it in the future. The
@@ -207,13 +207,6 @@ pub struct RotBootState {
     pub slot_a: Option<RotImageDetails>,
     pub slot_b: Option<RotImageDetails>,
 }
-
-/// The currently active boot slot, as well as persistent and transient boot
-/// preferences for the RoT.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub struct RotBootInfo {}
 
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
