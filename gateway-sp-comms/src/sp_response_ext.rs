@@ -3,12 +3,12 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 use crate::error::CommunicationError;
+use crate::VersionedSpState;
 use gateway_messages::ignition::LinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
 use gateway_messages::SpResponse;
-use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
@@ -34,7 +34,7 @@ pub(crate) trait SpResponseExt {
 
     fn expect_clear_ignition_link_events_ack(self) -> Result<()>;
 
-    fn expect_sp_state(self) -> Result<SpState>;
+    fn expect_sp_state(self) -> Result<VersionedSpState>;
 
     fn expect_serial_console_attach_ack(self) -> Result<()>;
 
@@ -111,7 +111,7 @@ impl SpResponseExt for SpResponse {
             Self::ClearIgnitionLinkEventsAck => {
                 response_kind_names::CLEAR_IGNITION_LINK_EVENTS_ACK
             }
-            Self::SpState(_) => response_kind_names::SP_STATE,
+            Self::SpState(_) => response_kind_names::VERSIONED_SP_STATE,
             Self::SerialConsoleAttachAck => {
                 response_kind_names::SERIAL_CONSOLE_ATTACH_ACK
             }
@@ -175,6 +175,7 @@ impl SpResponseExt for SpResponse {
             Self::ComponentActionAck => {
                 response_kind_names::COMPONENT_ACTION_ACK
             }
+            Self::SpStateV2(_) => response_kind_names::VERSIONED_SP_STATE,
         }
     }
 
@@ -255,12 +256,13 @@ impl SpResponseExt for SpResponse {
         }
     }
 
-    fn expect_sp_state(self) -> Result<SpState> {
+    fn expect_sp_state(self) -> Result<VersionedSpState> {
         match self {
-            Self::SpState(state) => Ok(state),
+            Self::SpState(state) => Ok(VersionedSpState::V1(state)),
+            Self::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
             Self::Error(err) => Err(CommunicationError::SpError(err)),
             other => Err(CommunicationError::BadResponseType {
-                expected: response_kind_names::SP_STATE,
+                expected: response_kind_names::VERSIONED_SP_STATE,
                 got: other.name(),
             }),
         }
@@ -576,7 +578,7 @@ mod response_kind_names {
     pub(super) const IGNITION_COMMAND_ACK: &str = "ignition_command_ack";
     pub(super) const CLEAR_IGNITION_LINK_EVENTS_ACK: &str =
         "clear_ignition_link_events_ack";
-    pub(super) const SP_STATE: &str = "sp_state";
+    pub(super) const VERSIONED_SP_STATE: &str = "versioned_sp_state";
     pub(super) const SERIAL_CONSOLE_ATTACH_ACK: &str =
         "serial_console_attach_ack";
     pub(super) const SERIAL_CONSOLE_WRITE_ACK: &str =

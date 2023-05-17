@@ -8,7 +8,7 @@
 //! If a test in this module fails, _do not change the test_! This means you
 //! have changed, deleted, or reordered an existing message type or enum
 //! variant, and you should revert that change. This will remain true until we
-//! bump the `version::MIN` to a value higher than 4, at which point these tests
+//! bump the `version::MIN` to a value higher than 5, at which point these tests
 //! can be removed as we will stop supporting v5.
 
 use super::assert_serialized;

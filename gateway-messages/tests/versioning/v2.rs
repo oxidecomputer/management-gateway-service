@@ -48,7 +48,7 @@ use gateway_messages::SpError;
 use gateway_messages::SpPort;
 use gateway_messages::SpRequest;
 use gateway_messages::SpResponse;
-use gateway_messages::SpState;
+use gateway_messages::SpStateV1;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::StartupOptions;
 use gateway_messages::SwitchDuration;
@@ -683,7 +683,7 @@ fn sp_response() {
         for (power_state, power_state_val) in
             [(PowerState::A0, 0), (PowerState::A1, 1), (PowerState::A2, 2)]
         {
-            let response = SpResponse::SpState(SpState {
+            let response = SpResponse::SpState(SpStateV1 {
                 hubris_archive_id: [1, 2, 3, 4, 5, 6, 7, 8],
                 serial_number: [
                     9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23,
