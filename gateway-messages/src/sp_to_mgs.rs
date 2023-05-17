@@ -7,6 +7,7 @@
 use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
+use crate::SlotId;
 use crate::SpComponent;
 use crate::StartupOptions;
 use crate::UpdateId;
@@ -110,6 +111,8 @@ pub enum SpResponse {
     ResetComponentTriggerAck,
     SwitchDefaultImageAck,
     ComponentActionAck,
+
+    SpStateV2(SpStateV2),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -166,6 +169,22 @@ pub struct SpState {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
+pub struct SpStateV2 {
+    pub hubris_archive_id: [u8; 8],
+    // Serial and revision are only 11 bytes in practice; we have plenty of room
+    // so we'll leave the fields wider in case we grow it in the future. The
+    // values are 0-padded.
+    pub serial_number: [u8; 32],
+    pub model: [u8; 32],
+    pub revision: u32,
+    pub base_mac_address: [u8; 6],
+    pub power_state: PowerState,
+    pub rot: Result<RotStateV2, RotError>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub enum RotSlot {
     A,
     B,
@@ -189,7 +208,13 @@ pub struct RotBootState {
     pub slot_b: Option<RotImageDetails>,
 }
 
-// TODO(AJS): Fill in with runtime state - i.e. updates that have completed before an RoT reset
+/// The currently active boot slot, as well as persistent and transient boot
+/// preferences for the RoT.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotBootInfo {}
+
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
@@ -202,6 +227,30 @@ pub struct RotUpdateDetails {
 )]
 pub struct RotState {
     pub rot_updates: RotUpdateDetails,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotStateV2 {
+    /// The slot of the currently running image
+    pub active: SlotId,
+    /// The persistent boot preference written into the current authoritative
+    /// CFPA page (ping or pong).
+    pub persistent_boot_preference: SlotId,
+    /// The persistent boot preference written into the CFPA scratch page that
+    /// will become the persistent boot preference in the authoritative CFPA
+    /// page upon reboot, unless CFPA update of the authoritative page fails for
+    /// some reason.
+    pub pending_persistent_boot_preference: Option<SlotId>,
+    /// Override persistent preference selection for a single boot
+    ///
+    /// This is a magic ram value that is cleared by bootleby
+    pub transient_boot_preference: Option<SlotId>,
+    /// Sha3-256 Digest of Slot A in Flash
+    pub slot_a_sha3_256_digest: Option<[u8; 32]>,
+    /// Sha3-256 Digest of Slot B in Flash
+    pub slot_b_sha3_256_digest: Option<[u8; 32]>,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
@@ -673,6 +722,8 @@ pub enum UpdateError {
     // this type. The meaning of the error code here should be found in the
     // `From<HubrisType> for MgsType` implementation in the hubris code.
     Unknown(u32),
+
+    MissingHandoffData,
 }
 
 impl fmt::Display for UpdateError {
@@ -708,6 +759,9 @@ impl fmt::Display for UpdateError {
             Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::NotImplemented => write!(f, "not implemented"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
+            Self::MissingHandoffData => {
+                write!(f, "boot data not handed off to hubris kernel")
+            }
         }
     }
 }

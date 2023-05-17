@@ -25,6 +25,8 @@ pub use usdt::register_probes;
 pub mod error;
 
 pub use gateway_messages;
+pub use gateway_messages::SpState;
+pub use gateway_messages::SpStateV2;
 pub use host_phase2::HostPhase2ImageError;
 pub use host_phase2::HostPhase2Provider;
 pub use host_phase2::InMemoryHostPhase2Provider;
@@ -61,4 +63,10 @@ pub struct SwitchPortConfig {
     /// Name of the interface for this switch port. The interface should be
     /// bound to the correct VLAN tag for this port per RFD 250.
     pub interface: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub enum VersionedSpState {
+    V1(SpState),
+    V2(SpStateV2),
 }

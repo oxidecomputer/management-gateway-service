@@ -14,6 +14,7 @@ use crate::shared_socket::SingleSpMessage;
 use crate::sp_response_ext::SpResponseExt;
 use crate::SharedSocket;
 use crate::SwitchPortConfig;
+use crate::VersionedSpState;
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
 use gateway_messages::ignition::LinkEvents;
@@ -37,7 +38,6 @@ use gateway_messages::SpError;
 use gateway_messages::SpPort;
 use gateway_messages::SpRequest;
 use gateway_messages::SpResponse;
-use gateway_messages::SpState;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
@@ -376,7 +376,7 @@ impl SingleSp {
     }
 
     /// Request the state of the SP.
-    pub async fn state(&self) -> Result<SpState> {
+    pub async fn state(&self) -> Result<VersionedSpState> {
         self.rpc(MgsRequest::SpState).await.and_then(
             |(_peer, response, _data)| {
                 response.expect_sp_state().map_err(Into::into)

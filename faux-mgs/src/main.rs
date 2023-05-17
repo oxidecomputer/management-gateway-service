@@ -27,6 +27,7 @@ use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SpComponentDetails;
 use gateway_sp_comms::SwitchPortConfig;
+use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
 use serde_json::json;
 use slog::info;
@@ -723,38 +724,74 @@ async fn run_command(
                 return Ok(Output::Json(serde_json::to_value(state).unwrap()));
             }
             let mut lines = Vec::new();
-            lines.push(format!(
-                "hubris archive: {}",
-                hex::encode(state.hubris_archive_id)
-            ));
-
             let zero_padded_to_str = |bytes: [u8; 32]| {
                 let stop =
                     bytes.iter().position(|&b| b == 0).unwrap_or(bytes.len());
                 String::from_utf8_lossy(&bytes[..stop]).to_string()
             };
 
-            lines.push(format!(
-                "serial number: {}",
-                zero_padded_to_str(state.serial_number)
-            ));
-            lines.push(format!("model: {}", zero_padded_to_str(state.model)));
-            lines.push(format!("revision: {}", state.revision));
-            lines.push(format!(
-                "base MAC address: {}",
-                state
-                    .base_mac_address
-                    .iter()
-                    .map(|b| format!("{b:02x}"))
-                    .collect::<Vec<_>>()
-                    .join(":")
-            ));
-            lines.push(format!("hubris version: {:?}", state.version));
-            lines.push(format!("power state: {:?}", state.power_state));
+            match state {
+                VersionedSpState::V1(state) => {
+                    lines.push(format!(
+                        "hubris archive: {}",
+                        hex::encode(state.hubris_archive_id)
+                    ));
 
-            // TODO: pretty print RoT state?
-            lines.push(format!("RoT state: {:?}", state.rot));
-            Ok(Output::Lines(lines))
+                    lines.push(format!(
+                        "serial number: {}",
+                        zero_padded_to_str(state.serial_number)
+                    ));
+                    lines.push(format!(
+                        "model: {}",
+                        zero_padded_to_str(state.model)
+                    ));
+                    lines.push(format!("revision: {}", state.revision));
+                    lines.push(format!(
+                        "base MAC address: {}",
+                        state
+                            .base_mac_address
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    ));
+                    lines.push(format!("hubris version: {:?}", state.version));
+                    lines.push(format!("power state: {:?}", state.power_state));
+
+                    // TODO: pretty print RoT state?
+                    lines.push(format!("RoT state: {:?}", state.rot));
+                    Ok(Output::Lines(lines))
+                }
+                VersionedSpState::V2(state) => {
+                    lines.push(format!(
+                        "hubris archive: {}",
+                        hex::encode(state.hubris_archive_id)
+                    ));
+
+                    lines.push(format!(
+                        "serial number: {}",
+                        zero_padded_to_str(state.serial_number)
+                    ));
+                    lines.push(format!(
+                        "model: {}",
+                        zero_padded_to_str(state.model)
+                    ));
+                    lines.push(format!("revision: {}", state.revision));
+                    lines.push(format!(
+                        "base MAC address: {}",
+                        state
+                            .base_mac_address
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    ));
+                    lines.push(format!("power state: {:?}", state.power_state));
+                    // TODO: pretty print RoT state?
+                    lines.push(format!("RoT state: {:?}", state.rot));
+                    Ok(Output::Lines(lines))
+                }
+            }
         }
         Command::Ignition { target } => {
             let mut by_target = BTreeMap::new();
