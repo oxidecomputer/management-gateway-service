@@ -94,7 +94,7 @@ pub enum UpdateError {
     #[error("RoT slot mismatch: target slot {slot} cannot be written with {image_name:?} image")]
     RotSlotMismatch { slot: u16, image_name: String },
     #[error("error reading aux flash image: {0:?}")]
-    TlvcError(tlvc::TlvcReadError),
+    TlvcError(tlvc::TlvcReadError<std::convert::Infallible>),
     #[error("corrupt aux flash image: {0}")]
     CorruptTlvc(String),
     #[error("failed to send update message to SP")]
