@@ -3,7 +3,7 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The tests in this module check that the serialized form of messages from MGS
-//! protocol version 5 have not changed.
+//! protocol version 6 have not changed.
 //!
 //! If a test in this module fails, _do not change the test_! This means you
 //! have changed, deleted, or reordered an existing message type or enum
@@ -13,22 +13,22 @@
 
 use super::assert_serialized;
 use gateway_messages::RotError;
+use gateway_messages::RotSlotId;
 use gateway_messages::RotStateV2;
 use gateway_messages::SerializedSize;
-use gateway_messages::SlotId;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::SpStateV2;
 use gateway_messages::UpdateError;
 
 #[test]
-fn mgs_request() {
+fn sp_response() {
     let mut out = [0; SpResponse::MAX_SIZE];
 
     let rot = RotStateV2 {
-        active: SlotId::A,
-        persistent_boot_preference: SlotId::A,
-        pending_persistent_boot_preference: Some(SlotId::B),
+        active: RotSlotId::A,
+        persistent_boot_preference: RotSlotId::A,
+        pending_persistent_boot_preference: Some(RotSlotId::B),
         transient_boot_preference: None,
         slot_a_sha3_256_digest: Some([0u8; 32]),
         slot_b_sha3_256_digest: Some([0u8; 32]),

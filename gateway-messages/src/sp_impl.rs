@@ -25,8 +25,8 @@ use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
+use crate::RotSlotId;
 use crate::SerializedSize;
-use crate::SlotId;
 use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
@@ -876,8 +876,8 @@ fn handle_mgs_request<H: SpHandler>(
         }
         MgsRequest::SwitchDefaultImage { component, slot, duration } => {
             let slot = match slot {
-                SlotId::A => 0,
-                SlotId::B => 1,
+                RotSlotId::A => 0,
+                RotSlotId::B => 1,
             };
             let persist = match duration {
                 SwitchDuration::Once => false,

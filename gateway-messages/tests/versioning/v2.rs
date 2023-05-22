@@ -38,11 +38,10 @@ use gateway_messages::MgsResponse;
 use gateway_messages::PowerState;
 use gateway_messages::RotBootState;
 use gateway_messages::RotImageDetails;
-use gateway_messages::RotSlot;
+use gateway_messages::RotSlotId;
 use gateway_messages::RotState;
 use gateway_messages::RotUpdateDetails;
 use gateway_messages::SerializedSize;
-use gateway_messages::SlotId;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
 use gateway_messages::SpPort;
@@ -403,7 +402,7 @@ fn mgs_request() {
 
     let request = MgsRequest::SwitchDefaultImage {
         component: SpComponent::ROT,
-        slot: SlotId::A,
+        slot: RotSlotId::A,
         duration: SwitchDuration::Forever,
     };
     let expected =
@@ -615,7 +614,7 @@ fn sp_response() {
             Ok(RotState {
                 rot_updates: RotUpdateDetails {
                     boot_state: RotBootState {
-                        active: RotSlot::A,
+                        active: RotSlotId::A,
                         slot_a: None,
                         slot_b: None,
                     },
@@ -627,7 +626,7 @@ fn sp_response() {
             Ok(RotState {
                 rot_updates: RotUpdateDetails {
                     boot_state: RotBootState {
-                        active: RotSlot::B,
+                        active: RotSlotId::B,
                         slot_a: Some(RotImageDetails {
                             digest: [
                                 100, 101, 102, 103, 104, 105, 106, 107, 108,
@@ -655,7 +654,7 @@ fn sp_response() {
             Ok(RotState {
                 rot_updates: RotUpdateDetails {
                     boot_state: RotBootState {
-                        active: RotSlot::A,
+                        active: RotSlotId::A,
                         slot_a: None,
                         slot_b: Some(RotImageDetails {
                             digest: [

@@ -7,7 +7,7 @@
 use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
-use crate::SlotId;
+use crate::RotSlotId;
 use crate::SpComponent;
 use crate::StartupOptions;
 use crate::UpdateId;
@@ -185,14 +185,6 @@ pub struct SpStateV2 {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub enum RotSlot {
-    A,
-    B,
-}
-
-#[derive(
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
 )]
 pub struct RotImageDetails {
@@ -205,7 +197,7 @@ pub struct RotImageDetails {
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct RotBootState {
-    pub active: RotSlot,
+    pub active: RotSlotId,
     pub slot_a: Option<RotImageDetails>,
     pub slot_b: Option<RotImageDetails>,
 }
@@ -229,19 +221,19 @@ pub struct RotState {
 )]
 pub struct RotStateV2 {
     /// The slot of the currently running image
-    pub active: SlotId,
+    pub active: RotSlotId,
     /// The persistent boot preference written into the current authoritative
     /// CFPA page (ping or pong).
-    pub persistent_boot_preference: SlotId,
+    pub persistent_boot_preference: RotSlotId,
     /// The persistent boot preference written into the CFPA scratch page that
     /// will become the persistent boot preference in the authoritative CFPA
     /// page upon reboot, unless CFPA update of the authoritative page fails for
     /// some reason.
-    pub pending_persistent_boot_preference: Option<SlotId>,
+    pub pending_persistent_boot_preference: Option<RotSlotId>,
     /// Override persistent preference selection for a single boot
     ///
     /// This is a magic ram value that is cleared by bootleby
-    pub transient_boot_preference: Option<SlotId>,
+    pub transient_boot_preference: Option<RotSlotId>,
     /// Sha3-256 Digest of Slot A in Flash
     pub slot_a_sha3_256_digest: Option<[u8; 32]>,
     /// Sha3-256 Digest of Slot B in Flash
@@ -413,6 +405,13 @@ pub enum UpdateStatus {
     /// update starts (or the status is reset some other way, such as an SP
     /// reboot).
     Failed { id: UpdateId, code: u32 },
+    /// Returned when an update to the RoT has failed.
+    ///
+    /// The SP has no concept of time, so we cannot indicate how recently this
+    /// abort happened. The SP will continue to return this status until a new
+    /// update starts (or the status is reset some other way, such as an SP
+    /// reboot).
+    RotError { id: UpdateId, error: RotError },
 }
 
 /// Current state when the SP is preparing to apply an update.
