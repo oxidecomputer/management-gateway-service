@@ -1031,6 +1031,10 @@ async fn run_command(
                     let id = Uuid::from(id);
                     format!("update {id} failed (code={code})")
                 }
+                UpdateStatus::RotError { id, error } => {
+                    let id = Uuid::from(id);
+                    format!("update {id} failed (rot error={error:?})")
+                }
                 UpdateStatus::None => "no update status available".to_string(),
             };
             info!(log, "{status}");
@@ -1264,6 +1268,12 @@ async fn update(
                     bail!("different update failed ({id:?}, code {code})");
                 }
                 bail!("update failed (code {code})");
+            }
+            UpdateStatus::RotError { id, error } => {
+                if id != sp_update_id {
+                    bail!("different update failed ({id:?}, error {error:?})");
+                }
+                bail!("update failed (error {error:?})");
             }
         }
         tokio::time::sleep(Duration::from_secs(1)).await;

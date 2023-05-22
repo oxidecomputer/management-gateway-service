@@ -490,6 +490,7 @@ async fn poll_until_update_prep_complete(
             UpdateStatus::None
             | UpdateStatus::Complete(_)
             | UpdateStatus::Failed { .. }
+            | UpdateStatus::RotError { .. }
             | UpdateStatus::Aborted(_) => {
                 // Fall through to returning an error below.
             }

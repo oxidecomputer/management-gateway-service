@@ -413,6 +413,13 @@ pub enum UpdateStatus {
     /// update starts (or the status is reset some other way, such as an SP
     /// reboot).
     Failed { id: UpdateId, code: u32 },
+    /// Returned when an update to the RoT has failed.
+    ///
+    /// The SP has no concept of time, so we cannot indicate how recently this
+    /// abort happened. The SP will continue to return this status until a new
+    /// update starts (or the status is reset some other way, such as an SP
+    /// reboot).
+    RotError { id: UpdateId, error: RotError },
 }
 
 /// Current state when the SP is preparing to apply an update.
