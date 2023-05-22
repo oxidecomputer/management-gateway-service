@@ -7,7 +7,7 @@
 use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
-use crate::SlotId;
+use crate::RotSlotId;
 use crate::SpComponent;
 use crate::SwitchDuration;
 use crate::UpdateId;
@@ -141,7 +141,7 @@ pub enum MgsRequest {
     /// Change boot image selection on reset or power-on.
     SwitchDefaultImage {
         component: SpComponent,
-        slot: SlotId,
+        slot: RotSlotId,
         duration: SwitchDuration,
     },
 

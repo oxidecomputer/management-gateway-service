@@ -127,7 +127,7 @@ pub enum BadRequestReason {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub enum SlotId {
+pub enum RotSlotId {
     A,
     B,
 }
