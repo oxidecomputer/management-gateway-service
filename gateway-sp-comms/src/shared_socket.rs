@@ -417,6 +417,7 @@ enum RecvError {
 // When we receive a packet that needs to be handled by a `SingleSp` instance,
 // we look up the `SingleSp` instance by the scope ID of the source of the
 // packet then send it an instance of this enum to handle.
+#[derive(Debug, Clone)]
 pub(crate) enum SingleSpMessage {
     HostPhase2Request(HostPhase2Request),
     SerialConsole {
