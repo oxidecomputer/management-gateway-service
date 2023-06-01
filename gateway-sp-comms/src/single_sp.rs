@@ -63,7 +63,6 @@ use tokio::sync::oneshot;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use tokio::time;
-use tokio::time::timeout;
 use tokio::time::Instant;
 use uuid::Uuid;
 
@@ -1836,23 +1835,29 @@ impl<T: InnerSocket> Inner<T> {
         // (e.g., a serial console relay).
         let mut resend_request = true;
 
+        // We want a resettable timeout, so we'll use an `Interval`. We only
+        // care about the first tick (see the `select!` below); if it fires,
+        // we've timed out and will give up.
+        //
+        // Whenever we send the request, we reset this interval. Critically, we
+        // can loop _without_ resending (and therefore without resetting this
+        // interval) - this allows us to still time out even if we're getting a
+        // steady stream of out-of-band messages.
+        let mut timeout = tokio::time::interval(self.per_attempt_timeout);
+
         loop {
             if resend_request {
                 self.socket_handle.send(serialized_request).await?;
+                timeout.reset();
             }
 
             // Reset our default policy of resending requests if we iterate on
             // this loop.
             resend_request = true;
 
-            let message = match timeout(
-                self.per_attempt_timeout,
-                self.socket_handle.recv(),
-            )
-            .await
-            {
-                Ok(result) => result,
-                Err(_elapsed) => return Ok(None),
+            let message = tokio::select! {
+                result = self.socket_handle.recv() => result,
+                _ = timeout.tick() => return Ok(None),
             };
 
             let (peer, header, response, sp_trailing_data) = match message {
@@ -2050,5 +2055,112 @@ mod probes {
         _data: u64, // TODO actually a `*const u8`, but that isn't allowed by usdt
         _len: u64,
     ) {
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // A fake `InnerSocket` whose `recv()` method is connected to a tokio
+    // channel.
+    #[derive(Debug)]
+    struct ChannelInnerSocket {
+        log: Logger,
+        packets_sent: Vec<Vec<u8>>,
+        recv: mpsc::UnboundedReceiver<SingleSpMessage>,
+    }
+
+    impl ChannelInnerSocket {
+        fn new(log: Logger) -> (Self, mpsc::UnboundedSender<SingleSpMessage>) {
+            let (recv_tx, recv) = mpsc::unbounded_channel();
+            (Self { log, packets_sent: Vec::new(), recv }, recv_tx)
+        }
+    }
+
+    #[async_trait]
+    impl InnerSocket for ChannelInnerSocket {
+        fn log(&self) -> &Logger {
+            &self.log
+        }
+
+        fn discovery_addr(&self) -> SocketAddrV6 {
+            unimplemented!()
+        }
+
+        async fn send(
+            &mut self,
+            data: &[u8],
+        ) -> Result<(), SingleSpHandleError> {
+            self.packets_sent.push(data.into());
+            Ok(())
+        }
+
+        async fn recv(&mut self) -> SingleSpMessage {
+            self.recv.recv().await.unwrap()
+        }
+    }
+
+    #[tokio::test]
+    async fn rpc_call_one_attempt_times_out_while_receiving_host_request_updates(
+    ) {
+        let (sp_addr_tx, _sp_addr_rx) = watch::channel(None);
+        let (_cmds_tx, cmds_rx) = mpsc::channel(128);
+        let (socket, socket_tx) =
+            ChannelInnerSocket::new(Logger::root(slog::Discard, slog::o!()));
+        let mut inner = Inner::new(
+            socket,
+            sp_addr_tx,
+            1,
+            Duration::from_millis(200),
+            cmds_rx,
+        );
+
+        // Spawn a task that emulates the SP sending host phase 2 requests on a
+        // frequency that's higher than our timeout (we'll do 20ms, so 10x
+        // higher).
+        tokio::spawn(async move {
+            let req = SingleSpMessage::HostPhase2Request(HostPhase2Request {
+                hash: [0; 32],
+                offset: 0,
+                data_sent: 0,
+                received: Instant::now(),
+            });
+            loop {
+                if socket_tx.send(req.clone()).is_err() {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(20)).await;
+            }
+        });
+
+        // Call `rpc_call_one_attempt`; this should time out in ~200ms, but
+        // we'll be generous to overloaded systems like CI and give it 10x that
+        // time.
+        let start = Instant::now();
+        match tokio::time::timeout(
+            Duration::from_secs(2),
+            inner.rpc_call_one_attempt(0, b"dummy"),
+        )
+        .await
+        {
+            // rpc_call_one_attempt timed itself out as expected
+            Ok(Ok(None)) => {
+                assert!(
+                    start.elapsed() >= Duration::from_millis(200),
+                    "rpc_call_one_attempt returned after {:?} \
+                     (we expected a timeout after 200ms",
+                    start.elapsed(),
+                );
+            }
+            Ok(Ok(Some(value))) => panic!("unexpected response {value:?}"),
+            Ok(Err(err)) => panic!("unexpected error {err}"),
+            Err(_elapsed) => {
+                panic!(
+                    "rpc_call_one_attempt failed to time out \
+                     (expected timeout after 200ms, waited 2000ms)"
+                );
+            }
+        }
     }
 }
