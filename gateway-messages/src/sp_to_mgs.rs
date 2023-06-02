@@ -733,6 +733,7 @@ pub enum UpdateError {
     Unknown(u32),
 
     MissingHandoffData,
+    BlockOutOfOrder,
 }
 
 impl fmt::Display for UpdateError {
@@ -771,6 +772,7 @@ impl fmt::Display for UpdateError {
             Self::MissingHandoffData => {
                 write!(f, "boot data not handed off to hubris kernel")
             }
+            Self::BlockOutOfOrder => write!(f, "bootloader blocks delivered out of order"),
         }
     }
 }
