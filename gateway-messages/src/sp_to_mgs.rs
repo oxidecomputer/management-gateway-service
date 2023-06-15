@@ -540,6 +540,7 @@ pub enum SpError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
+    Attest(AttestError),
 }
 
 impl fmt::Display for SpError {
@@ -649,6 +650,7 @@ impl fmt::Display for SpError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
+            Self::Attest(e) => write!(f, "attest: {e}"),
         }
     }
 }
@@ -906,6 +908,7 @@ pub enum RotError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
+    Attest(AttestError),
 }
 
 impl fmt::Display for RotError {
@@ -918,9 +921,31 @@ impl fmt::Display for RotError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
+            Self::Attest(e) => write!(f, "attest: {}", e),
         }
     }
 }
 
 #[cfg(feature = "std")]
 impl std::error::Error for RotError {}
+
+#[derive(
+    Copy, Clone, Debug, Deserialize, Eq, PartialEq, Serialize, SerializedSize,
+)]
+pub enum AttestError {
+    CertTooBig,
+    InvalidCertIndex,
+    NoCerts,
+    OutOfRange,
+}
+
+impl fmt::Display for AttestError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::CertTooBig => write!(f, "Cert too big for transmission"),
+            Self::InvalidCertIndex => write!(f, "No cert at provided index"),
+            Self::NoCerts => write!(f, "No certs available"),
+            Self::OutOfRange => write!(f, "Lease provided is too large"),
+        }
+    }
+}
