@@ -851,6 +851,35 @@ async fn run_command(
                     lines.push(format!("RoT state: {:?}", state.rot));
                     Ok(Output::Lines(lines))
                 }
+                VersionedSpState::V3(state) => {
+                    lines.push(format!(
+                        "hubris archive: {}",
+                        hex::encode(state.hubris_archive_id)
+                    ));
+
+                    lines.push(format!(
+                        "serial number: {}",
+                        zero_padded_to_str(state.serial_number)
+                    ));
+                    lines.push(format!(
+                        "model: {}",
+                        zero_padded_to_str(state.model)
+                    ));
+                    lines.push(format!("revision: {}", state.revision));
+                    lines.push(format!(
+                        "base MAC address: {}",
+                        state
+                            .base_mac_address
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    ));
+                    lines.push(format!("power state: {:?}", state.power_state));
+                    // TODO: pretty print RoT state?
+                    lines.push(format!("RoT state: {:?}", state.rot));
+                    Ok(Output::Lines(lines))
+                }
             }
         }
         Command::Ignition { target } => {

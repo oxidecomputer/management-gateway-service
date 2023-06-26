@@ -35,7 +35,8 @@ use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
 use crate::SpResponse;
-use crate::SpStateV2;
+// use crate::SpStateV2;
+use crate::SpStateV3;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
 use crate::SwitchDuration;
@@ -145,7 +146,7 @@ pub trait SpHandler {
         &mut self,
         sender: SocketAddrV6,
         port: SpPort,
-    ) -> Result<SpStateV2, SpError>;
+    ) -> Result<SpStateV3, SpError>;
 
     fn sp_update_prepare(
         &mut self,
@@ -771,7 +772,7 @@ fn handle_mgs_request<H: SpHandler>(
             .ignition_command(sender, port, target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
         MgsRequest::SpState => {
-            handler.sp_state(sender, port).map(SpResponse::SpStateV2)
+            handler.sp_state(sender, port).map(SpResponse::SpStateV3)
         }
         MgsRequest::SpUpdatePrepare(update) => handler
             .sp_update_prepare(sender, port, update)
@@ -897,6 +898,7 @@ fn handle_mgs_request<H: SpHandler>(
             let slot = match slot {
                 RotSlotId::A => 0,
                 RotSlotId::B => 1,
+                _ => return (SpResponse::Error(SpError::InvalidSlotIdForOperation), None),
             };
             let persist = match duration {
                 SwitchDuration::Once => false,
@@ -1066,7 +1068,7 @@ mod tests {
             &mut self,
             _sender: SocketAddrV6,
             _port: SpPort,
-        ) -> Result<SpStateV2, SpError> {
+        ) -> Result<SpStateV3, SpError> {
             unimplemented!()
         }
 

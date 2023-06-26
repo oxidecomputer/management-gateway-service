@@ -126,6 +126,7 @@ pub enum SpResponse {
     ReadSensor(SensorResponse),
     CurrentTime(u64),
     ReadRot(RotResponse),
+    SpStateV3(SpStateV3),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -198,6 +199,22 @@ pub struct SpStateV2 {
 }
 
 #[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct SpStateV3 {
+    pub hubris_archive_id: [u8; 8],
+    // Serial and revision are only 11 bytes in practice; we have plenty of room
+    // so we'll leave the fields wider in case we grow it in the future. The
+    // values are 0-padded.
+    pub serial_number: [u8; 32],
+    pub model: [u8; 32],
+    pub revision: u32,
+    pub base_mac_address: [u8; 6],
+    pub power_state: PowerState,
+    pub rot: Result<RotStateV3, RotError>,
+}
+
+#[derive(
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
 )]
 pub struct RotImageDetails {
@@ -251,6 +268,42 @@ pub struct RotStateV2 {
     pub slot_a_sha3_256_digest: Option<[u8; 32]>,
     /// Sha3-256 Digest of Slot B in Flash
     pub slot_b_sha3_256_digest: Option<[u8; 32]>,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotStateV3 {
+    /// The slot of the currently running image
+    pub active: RotSlotId,
+    /// The persistent boot preference written into the current authoritative
+    /// CFPA page (ping or pong).
+    pub persistent_boot_preference: RotSlotId,
+    /// The persistent boot preference written into the CFPA scratch page that
+    /// will become the persistent boot preference in the authoritative CFPA
+    /// page upon reboot, unless CFPA update of the authoritative page fails for
+    /// some reason.
+    pub pending_persistent_boot_preference: Option<RotSlotId>,
+    /// Override persistent preference selection for a single boot
+    ///
+    /// This is a magic ram value that is cleared by bootleby
+    pub transient_boot_preference: Option<RotSlotId>,
+    /// Sha3-256 Digest of Slot A in Flash
+    pub slot_a_sha3_256_digest: Option<[u8; 32]>,
+    /// Sha3-256 Digest of Slot B in Flash
+    pub slot_b_sha3_256_digest: Option<[u8; 32]>,
+    /// Sha3-256 Digest of Bootloader in Flash at boot time
+    pub bootloader_sha3_256_digest: Option<[u8; 32]>,
+    /// Sha3-256 Digest of Staged Bootloader in Flash at boot time
+    pub staged_bootloader_sha3_256_digest: Option<[u8; 32]>,
+    /// Slot A signature verified at boot time
+    slot_a_signature_good: Option<bool>,
+    /// Slot B signature verified at boot time
+    slot_b_signature_good: Option<bool>,
+    /// Boot Loader Signature Verified At Boot
+    boot_loader_signature_good: Option<bool>,
+    /// Staged Boot Loader Signature Verified At Boot
+    staged_boot_loader_signature_good: Option<bool>,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
@@ -554,6 +607,8 @@ pub enum SpError {
     Sprockets(SprocketsError),
     Update(UpdateError),
     Sensor(SensorError),
+    BlockOutOfOrder,
+    InvalidSlotIdForOperation,
 }
 
 impl fmt::Display for SpError {
@@ -664,6 +719,12 @@ impl fmt::Display for SpError {
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
             Self::Sensor(e) => write!(f, "sensor: {}", e),
+            Self::BlockOutOfOrder => {
+                write!(f, "block written out of order")
+            },
+            Self::InvalidSlotIdForOperation => {
+                write!(f, "SlotId parameter is not valid for request")
+            },
         }
     }
 }

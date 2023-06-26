@@ -133,6 +133,8 @@ pub enum BadRequestReason {
 pub enum RotSlotId {
     A,
     B,
+    Boot,
+    Stage,
 }
 
 /// Duration for SwitchDefaultImage
