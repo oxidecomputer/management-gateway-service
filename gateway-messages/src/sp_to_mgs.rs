@@ -226,10 +226,22 @@ pub struct RotImageDetails {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
+pub struct RotBootStateV1 {
+    pub active: RotSlotId,
+    pub slot_a: Option<RotImageDetails>,
+    pub slot_b: Option<RotImageDetails>,
+}
+
+/// The boot time details dumped by Stage0 into Hubris on the RoT
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct RotBootState {
     pub active: RotSlotId,
     pub slot_a: Option<RotImageDetails>,
     pub slot_b: Option<RotImageDetails>,
+    pub bootloader: Option<RotImageDetails>,
+    pub staged_bootloader: Option<RotImageDetails>,
 }
 
 #[derive(
@@ -297,13 +309,13 @@ pub struct RotStateV3 {
     /// Sha3-256 Digest of Staged Bootloader in Flash at boot time
     pub staged_bootloader_sha3_256_digest: Option<[u8; 32]>,
     /// Slot A signature verified at boot time
-    slot_a_signature_good: Option<bool>,
+    pub slot_a_signature_good: Option<bool>,
     /// Slot B signature verified at boot time
-    slot_b_signature_good: Option<bool>,
+    pub slot_b_signature_good: Option<bool>,
     /// Boot Loader Signature Verified At Boot
-    boot_loader_signature_good: Option<bool>,
+    pub boot_loader_signature_good: Option<bool>,
     /// Staged Boot Loader Signature Verified At Boot
-    staged_boot_loader_signature_good: Option<bool>,
+    pub staged_boot_loader_signature_good: Option<bool>,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
@@ -721,10 +733,10 @@ impl fmt::Display for SpError {
             Self::Sensor(e) => write!(f, "sensor: {}", e),
             Self::BlockOutOfOrder => {
                 write!(f, "block written out of order")
-            },
+            }
             Self::InvalidSlotIdForOperation => {
                 write!(f, "SlotId parameter is not valid for request")
-            },
+            }
         }
     }
 }
@@ -795,6 +807,7 @@ pub enum UpdateError {
 
     MissingHandoffData,
     BlockOutOfOrder,
+    InvalidSlotIdForOperation,
 }
 
 impl fmt::Display for UpdateError {
@@ -833,7 +846,12 @@ impl fmt::Display for UpdateError {
             Self::MissingHandoffData => {
                 write!(f, "boot data not handed off to hubris kernel")
             }
-            Self::BlockOutOfOrder => write!(f, "bootloader blocks delivered out of order"),
+            Self::BlockOutOfOrder => {
+                write!(f, "bootloader blocks delivered out of order")
+            }
+            Self::InvalidSlotIdForOperation => {
+                write!(f, "specified SlotId is not supported for operation")
+            }
         }
     }
 }
