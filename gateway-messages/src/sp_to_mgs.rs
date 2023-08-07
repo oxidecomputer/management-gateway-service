@@ -808,6 +808,7 @@ pub enum UpdateError {
     MissingHandoffData,
     BlockOutOfOrder,
     InvalidSlotIdForOperation,
+    InvalidArchive,
 }
 
 impl fmt::Display for UpdateError {
@@ -851,6 +852,9 @@ impl fmt::Display for UpdateError {
             }
             Self::InvalidSlotIdForOperation => {
                 write!(f, "specified SlotId is not supported for operation")
+            }
+            Self::InvalidArchive => {
+                write!(f, "invalid archive")
             }
         }
     }

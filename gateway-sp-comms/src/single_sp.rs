@@ -582,8 +582,26 @@ impl SingleSp {
             }
             start_sp_update(&self.cmds_tx, update_id, image, self.log()).await
         } else if component == SpComponent::ROT {
-            start_rot_update(&self.cmds_tx, update_id, slot, image, self.log())
+            if !matches!(slot, 0 | 1) {
+                // 0(A) or 1(B) only. The binaries are linked to those slot addresses
+                // and the requester needs to provide the correct image.
+                return Err(UpdateError::Communication(
+                    CommunicationError::SpError(
+                        SpError::InvalidSlotForComponent,
+                    ),
+                ));
+            }
+            start_rot_update(&self.cmds_tx, update_id, component, slot, image, self.log())
                 .await
+        } else if component == SpComponent::STAGE0 {
+            if slot != 0 {
+                return Err(UpdateError::Communication(
+                    CommunicationError::SpError(
+                        SpError::InvalidSlotForComponent,
+                    ),
+                ));
+            }
+            start_rot_update( &self.cmds_tx, update_id, component, slot, image, self.log()).await
         } else {
             start_component_update(
                 &self.cmds_tx,

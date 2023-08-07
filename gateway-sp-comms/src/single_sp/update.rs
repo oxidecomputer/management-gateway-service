@@ -29,6 +29,7 @@ use std::time::Duration;
 use tlvc::TlvcReader;
 use tokio::sync::mpsc;
 use uuid::Uuid;
+use std::io::Read;
 
 /// Start an update to the SP itself.
 ///
@@ -261,47 +262,91 @@ fn read_auxi_check_from_tlvc(data: &[u8]) -> Result<[u8; 32], UpdateError> {
 pub(super) async fn start_rot_update(
     cmds_tx: &mpsc::Sender<InnerCommand>,
     update_id: Uuid,
+    component: SpComponent,
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
 ) -> Result<(), UpdateError> {
-    let archive = RawHubrisArchive::from_vec(image)?;
-    let rot_image = archive.image.to_binary()?;
+    println!("\n\nXXX start_rot_update slot:{:?}\n", slot);
+    let rot_image = match (component, slot) {
+        // Hubris images
+        (SpComponent::ROT, 0 | 1) => {
+            let archive = RawHubrisArchive::from_vec(image)?;
+            let rot_image = archive.image.to_binary()?;
 
-    // Sanity check on `hubtools`: Prior to using hubtools, we would manually
-    // extract `img/final.bin` from the archive (which is a zip file); we're now
-    // using `archive.image.to_binary()` which _should_ be the same thing. Check
-    // here and log a warning if it is not. We should never see this, but if we
-    // do it's likely something is about to go wrong, and it'd be nice to have a
-    // breadcrumb.
-    if let Ok(final_bin) = archive.extract_file("img/final.bin") {
-        if rot_image != final_bin {
-            warn!(
-                log,
-                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
-            );
-        }
-    }
+            // Sanity check on `hubtools`: Prior to using hubtools, we would manually
+            // extract `img/final.bin` from the archive (which is a zip file); we're now
+            // using `archive.image.to_binary()` which _should_ be the same thing. Check
+            // here and log a warning if it is not. We should never see this, but if we
+            // do it's likely something is about to go wrong, and it'd be nice to have a
+            // breadcrumb.
+            if let Ok(final_bin) = archive.extract_file("img/final.bin") {
+                if rot_image != final_bin {
+                    warn!(
+                        log,
+                        "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+                    );
+                }
+            }
 
-    // Preflight check 1: Does the image name of this archive match the target
-    // slot?
-    match archive.image_name() {
-        Ok(image_name) => match (image_name.as_str(), slot) {
-            ("a", 0) | ("b", 1) => (), // OK!
-            _ => return Err(UpdateError::RotSlotMismatch { slot, image_name }),
+            // Preflight check 1: Does the image name of this archive match the target
+            // slot?
+            match archive.image_name() {
+                Ok(image_name) => match (image_name.as_str(), slot) {
+                    ("a", 0) | ("b", 1) => (), // OK!
+                    _ => return Err(UpdateError::RotSlotMismatch { slot, image_name }),
+                },
+                // At the time of this writing `image-name` is a recent addition to
+                // hubris archives, so skip this check if we don't have one.
+                Err(HubtoolsError::MissingFile(..)) => (),
+                Err(err) => return Err(err.into()),
+            }
+
+            // TODO: Add a caboose BORD preflight check just like the SP has, once the
+            // RoT has a caboose and we have RPC calls to read its values.
+            rot_image
         },
-        // At the time of this writing `image-name` is a recent addition to
-        // hubris archives, so skip this check if we don't have one.
-        Err(HubtoolsError::MissingFile(..)) => (),
-        Err(err) => return Err(err.into()),
-    }
-
-    // TODO: Add a caboose BORD preflight check just like the SP has, once the
-    // RoT has a caboose and we have RPC calls to read its values.
+        // Bootloader image
+        (SpComponent::STAGE0, 0) => {
+            println!("\n\nXXX STAGE0,0");
+            // Bootloader is released in a simpler zip archive than Hubris.
+            // No bootloaders have been released yet with an Oxide header or
+            // caboose.
+            // TODO: Add a caboose to the bootloader images.
+            // TOOD: Implement appropriate sanity checks on the image.
+            // TODO: Elsewhere: check against archive's CFPA and RoT's.
+            let contents = image.clone();
+            println!("XXX contents.len(): {:?}", contents.len());
+            let cursor = Cursor::new(contents.as_slice());
+            let mut archive = match zip::ZipArchive::new(cursor) {
+                Ok(archive) => archive,
+                Err(_) => return Err(UpdateError::InvalidArchive),
+            };
+            const BIN_FILE: &str = "bootleby.bin";
+            let mut file = match archive.by_name(BIN_FILE) {
+                Ok(file) => {
+                    println!("XXX file");
+                    file
+                },
+                Err(_) => {
+                    println!("XXX failed");
+                    return Err(UpdateError::InvalidArchive)
+                }
+            };
+            let mut rot_image = vec![];
+            if file.read_to_end(&mut rot_image).is_err() {
+                println!("XXX invalid archive");
+                return Err(UpdateError::InvalidArchive);
+            }
+            println!("XXX ok! rot_image.len():{:?}", rot_image.len());
+            rot_image
+        },
+        _ => return Err(UpdateError::InvalidSlotIdForOperation),
+    };
 
     start_component_update(
         cmds_tx,
-        SpComponent::ROT,
+        component,
         update_id,
         slot,
         rot_image,
@@ -324,6 +369,7 @@ pub(super) async fn start_component_update(
 ) -> Result<(), UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
+    println!("XXX start_component_update total_size={:?}", total_size);
 
     info!(
         log, "starting update";
