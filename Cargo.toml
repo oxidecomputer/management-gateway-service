@@ -17,8 +17,8 @@ resolver = "2"
 # published to crates.io
 nix = { git = "https://github.com/jgallagher/nix", branch = "r0.26-illumos" }
 
-tlvc = {git = "https://github.com/oxidecomputer/tlvc.git", version = "0.3.0"}
-hubtools = {git = "https://github.com/oxidecomputer/hubtools.git", version = "0.3.0"}
+tlvc = { git = "https://github.com/oxidecomputer/tlvc.git" }
+hubtools = { git = "https://github.com/oxidecomputer/hubtools.git" }
 
 anyhow = "1.0"
 async-trait = "0.1"
@@ -53,7 +53,7 @@ usdt = "0.3.1"
 uuid = { version = "1.1", default-features = false }
 version_check = "0.9.4"
 zerocopy = "0.6.1"
-zip = { version = "0.6.2", default-features = false, features = ["deflate","bzip2"] }
+zip = { version = "0.6.2", default-features = false, features = ["deflate", "bzip2"] }
 
 gateway-messages.path = "gateway-messages"
 gateway-sp-comms.path = "gateway-sp-comms"
