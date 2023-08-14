@@ -17,8 +17,8 @@ resolver = "2"
 # published to crates.io
 nix = { git = "https://github.com/jgallagher/nix", branch = "r0.26-illumos" }
 
-tlvc = { git = "https://github.com/oxidecomputer/tlvc.git" }
-hubtools = { git = "https://github.com/oxidecomputer/hubtools.git" }
+tlvc = { git = "https://github.com/oxidecomputer/tlvc.git", branch = "main" }
+hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", branch = "main"}
 
 anyhow = "1.0"
 async-trait = "0.1"
