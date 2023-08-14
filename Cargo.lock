@@ -576,7 +576,7 @@ dependencies = [
  "socket2 0.5.3",
  "string_cache",
  "thiserror",
- "tlvc",
+ "tlvc 0.3.1",
  "tokio",
  "usdt",
  "uuid",
@@ -698,17 +698,16 @@ dependencies = [
 
 [[package]]
 name = "hubtools"
-version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/hubtools.git#8e233e193341a29ef52a23854803f481afe1e838"
+version = "0.4.1"
+source = "git+https://github.com/oxidecomputer/hubtools.git?branch=main#fbd499ceb440b838b9d8f6d9d73d046586bc24b8"
 dependencies = [
  "lpc55_areas",
  "lpc55_sign",
  "object",
- "packed_struct",
  "path-slash",
  "rsa",
  "thiserror",
- "tlvc",
+ "tlvc 0.3.0",
  "tlvc-text",
  "toml",
  "x509-cert",
@@ -1757,13 +1756,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tlvc"
+version = "0.3.1"
+source = "git+https://github.com/oxidecomputer/tlvc.git?branch=main#e644a21a7ca973ed31499106ea926bd63ebccc6f"
+dependencies = [
+ "byteorder",
+ "crc",
+ "zerocopy 0.6.1",
+]
+
+[[package]]
 name = "tlvc-text"
 version = "0.3.0"
 source = "git+https://github.com/oxidecomputer/tlvc.git#559c72856a215ae217e9e6f25ff317edde0b0041"
 dependencies = [
  "ron",
  "serde",
- "tlvc",
+ "tlvc 0.3.0",
  "zerocopy 0.6.1",
 ]
 
