@@ -168,6 +168,17 @@ macro_rules! expect {
         }
     }};
 }
+macro_rules! expect_fn {
+    ($name:ident) => {{
+        |(_peer, response, _data)| expect!(response, $name)
+    }};
+    ($name:ident($arg:ident)) => {{
+        |(_peer, response, _data)| expect!(response, $name($arg))
+    }};
+    ($name:ident{$arg:ident}) => {{
+        |(_peer, response, _data)| expect!(response, $name { $arg })
+    }};
+}
 
 impl SingleSp {
     /// Construct a new `SingleSp` that will periodically attempt to discover an
@@ -327,9 +338,9 @@ impl SingleSp {
     ///
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_state(&self, target: u8) -> Result<IgnitionState> {
-        self.rpc(MgsRequest::IgnitionState { target }).await.and_then(
-            |(_peer, response, _data)| expect!(response, IgnitionState(out)),
-        )
+        self.rpc(MgsRequest::IgnitionState { target })
+            .await
+            .and_then(expect_fn!(IgnitionState(out)))
     }
 
     /// Request the state of all ignition targets.
@@ -348,11 +359,9 @@ impl SingleSp {
     ///
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_link_events(&self, target: u8) -> Result<LinkEvents> {
-        self.rpc(MgsRequest::IgnitionLinkEvents { target }).await.and_then(
-            |(_peer, response, _data)| {
-                expect!(response, IgnitionLinkEvents(out))
-            },
-        )
+        self.rpc(MgsRequest::IgnitionLinkEvents { target })
+            .await
+            .and_then(expect_fn!(IgnitionLinkEvents(out)))
     }
 
     /// Request all link events on all ignition targets.
@@ -387,9 +396,7 @@ impl SingleSp {
             transceiver_select,
         })
         .await
-        .and_then(|(_peer, response, _data)| {
-            expect!(response, ClearIgnitionLinkEventsAck)
-        })
+        .and_then(expect_fn!(ClearIgnitionLinkEventsAck))
     }
 
     /// Send an ignition command to the given target.
@@ -402,9 +409,7 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(MgsRequest::IgnitionCommand { target, command })
             .await
-            .and_then(|(_peer, response, _data)| {
-                expect!(response, IgnitionCommandAck)
-            })
+            .and_then(expect_fn!(IgnitionCommandAck))
     }
 
     /// Request the state of the SP.
@@ -449,11 +454,9 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<u16> {
-        self.rpc(MgsRequest::ComponentGetActiveSlot(component)).await.and_then(
-            |(_peer, response, _data)| {
-                expect!(response, ComponentActiveSlot(slot))
-            },
-        )
+        self.rpc(MgsRequest::ComponentGetActiveSlot(component))
+            .await
+            .and_then(expect_fn!(ComponentActiveSlot(slot)))
     }
 
     /// Set the currently-active slot of a particular component.
@@ -483,11 +486,9 @@ impl SingleSp {
         &self,
         component: SpComponent,
     ) -> Result<()> {
-        self.rpc(MgsRequest::ComponentClearStatus(component)).await.and_then(
-            |(_peer, response, _data)| {
-                expect!(response, ComponentClearStatusAck)
-            },
-        )
+        self.rpc(MgsRequest::ComponentClearStatus(component))
+            .await
+            .and_then(expect_fn!(ComponentClearStatusAck))
     }
 
     async fn get_paginated_tlv_data<T: TlvRpc>(
@@ -582,9 +583,9 @@ impl SingleSp {
     /// Startup options are only meaningful for sleds and will only take effect
     /// the next time the sled starts up.
     pub async fn get_startup_options(&self) -> Result<StartupOptions> {
-        self.rpc(MgsRequest::GetStartupOptions).await.and_then(
-            |(_peer, response, _data)| expect!(response, StartupOptions(opts)),
-        )
+        self.rpc(MgsRequest::GetStartupOptions)
+            .await
+            .and_then(expect_fn!(StartupOptions(opts)))
     }
 
     /// Set startup options on the target SP.
@@ -595,9 +596,9 @@ impl SingleSp {
         &self,
         startup_options: StartupOptions,
     ) -> Result<()> {
-        self.rpc(MgsRequest::SetStartupOptions(startup_options)).await.and_then(
-            |(_peer, response, _data)| expect!(response, SetStartupOptionsAck),
-        )
+        self.rpc(MgsRequest::SetStartupOptions(startup_options))
+            .await
+            .and_then(expect_fn!(SetStartupOptionsAck))
     }
 
     /// Update a component of the SP (or the SP itself!).
@@ -662,23 +663,21 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(MgsRequest::UpdateAbort { component, id: update_id.into() })
             .await
-            .and_then(|(_peer, response, _data)| {
-                expect!(response, UpdateAbortAck)
-            })
+            .and_then(expect_fn!(UpdateAbortAck))
     }
 
     /// Get the current power state.
     pub async fn power_state(&self) -> Result<PowerState> {
-        self.rpc(MgsRequest::GetPowerState).await.and_then(
-            |(_peer, response, _data)| expect!(response, PowerState(out)),
-        )
+        self.rpc(MgsRequest::GetPowerState)
+            .await
+            .and_then(expect_fn!(PowerState(out)))
     }
 
     /// Set the current power state.
     pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
-        self.rpc(MgsRequest::SetPowerState(power_state)).await.and_then(
-            |(_peer, response, _data)| expect!(response, SetPowerStateAck),
-        )
+        self.rpc(MgsRequest::SetPowerState(power_state))
+            .await
+            .and_then(expect_fn!(SetPowerStateAck))
     }
 
     /// "Attach" to the serial console, setting up a tokio channel for all
@@ -728,9 +727,9 @@ impl SingleSp {
     }
 
     pub async fn send_host_nmi(&self) -> Result<()> {
-        self.rpc(MgsRequest::SendHostNmi).await.and_then(
-            |(_peer, response, _data)| expect!(response, SendHostNmiAck),
-        )
+        self.rpc(MgsRequest::SendHostNmi)
+            .await
+            .and_then(expect_fn!(SendHostNmiAck))
     }
 
     pub async fn set_ipcc_key_lookup_value(
@@ -755,9 +754,7 @@ impl SingleSp {
         // never have any leftover data.
         assert!(CursorExt::is_empty(&leftover_data));
 
-        result.and_then(|(_peer, response, _data)| {
-            expect!(response, SetIpccKeyLookupValueAck)
-        })
+        result.and_then(expect_fn!(SetIpccKeyLookupValueAck))
     }
 
     /// Reads a single value from the SP's caboose (in the active slot)
@@ -792,9 +789,7 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(MgsRequest::ResetComponentPrepare { component })
             .await
-            .and_then(|(_peer, response, _data)| {
-                expect!(response, ResetComponentPrepareAck)
-            })
+            .and_then(expect_fn!(ResetComponentPrepareAck))
     }
 
     /// Instruct the SP to reset a component.
@@ -842,9 +837,7 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(MgsRequest::ComponentAction { component, action })
             .await
-            .and_then(|(_peer, response, _data)| {
-                expect!(response, ComponentActionAck)
-            })
+            .and_then(expect_fn!(ComponentActionAck))
     }
 
     pub async fn read_component_caboose(
@@ -1228,12 +1221,9 @@ impl AttachedSerialConsoleSend {
                 - CursorExt::remaining_slice(&new_data).len())
                 as u64;
 
-            let n = result.and_then(|(_peer, response, _data)| {
-                expect!(
-                    response,
-                    SerialConsoleWriteAck { furthest_ingested_offset }
-                )
-            })?;
+            let n = result.and_then(expect_fn!(SerialConsoleWriteAck {
+                furthest_ingested_offset
+            }))?;
 
             // Confirm the ack we got back makes sense; its `n` should be in the
             // range `[self.tx_offset..self.tx_offset + data_sent]`.
@@ -1293,9 +1283,7 @@ impl AttachedSerialConsoleSend {
         rpc(&self.inner_tx, MgsRequest::SerialConsoleBreak, None)
             .await
             .result
-            .and_then(|(_peer, response, _data)| {
-                expect!(response, SerialConsoleBreakAck)
-            })
+            .and_then(expect_fn!(SerialConsoleBreakAck))
     }
 }
 
@@ -1729,9 +1717,7 @@ impl<T: InnerSocket> Inner<T> {
                 let result = self
                     .rpc_call(MgsRequest::SerialConsoleKeepAlive, None)
                     .await
-                    .and_then(|(_peer, response, _trailing_data)| {
-                        expect!(response, SerialConsoleKeepAliveAck)
-                    });
+                    .and_then(expect_fn!(SerialConsoleKeepAliveAck));
                 _ = response_tx.send(result);
             }
             InnerCommand::SerialConsoleDetach(key, response_tx) => {

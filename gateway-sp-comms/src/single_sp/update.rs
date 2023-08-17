@@ -8,7 +8,6 @@ use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
 use crate::error::UpdateError;
-use crate::sp_response_ext::SpResponseExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
