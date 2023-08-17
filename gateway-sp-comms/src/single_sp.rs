@@ -295,9 +295,7 @@ impl SingleSp {
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_state(&self, target: u8) -> Result<IgnitionState> {
         self.rpc(MgsRequest::IgnitionState { target }).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_ignition_state().map_err(Into::into)
-            },
+            |(_peer, response, _data)| response.expect_ignition_state(),
         )
     }
 
@@ -370,17 +368,15 @@ impl SingleSp {
         self.rpc(MgsRequest::IgnitionCommand { target, command })
             .await
             .and_then(|(_peer, response, _data)| {
-                response.expect_ignition_command_ack().map_err(Into::into)
+                response.expect_ignition_command_ack()
             })
     }
 
     /// Request the state of the SP.
     pub async fn state(&self) -> Result<VersionedSpState> {
-        self.rpc(MgsRequest::SpState).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_sp_state().map_err(Into::into)
-            },
-        )
+        self.rpc(MgsRequest::SpState)
+            .await
+            .and_then(|(_peer, response, _data)| response.expect_sp_state())
     }
 
     /// Request the inventory of the SP.
@@ -542,9 +538,7 @@ impl SingleSp {
     /// the next time the sled starts up.
     pub async fn get_startup_options(&self) -> Result<StartupOptions> {
         self.rpc(MgsRequest::GetStartupOptions).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_startup_options().map_err(Into::into)
-            },
+            |(_peer, response, _data)| response.expect_startup_options(),
         )
     }
 
@@ -558,7 +552,7 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(MgsRequest::SetStartupOptions(startup_options)).await.and_then(
             |(_peer, response, _data)| {
-                response.expect_set_startup_options_ack().map_err(Into::into)
+                response.expect_set_startup_options_ack()
             },
         )
     }
@@ -626,25 +620,21 @@ impl SingleSp {
         self.rpc(MgsRequest::UpdateAbort { component, id: update_id.into() })
             .await
             .and_then(|(_peer, response, _data)| {
-                response.expect_update_abort_ack().map_err(Into::into)
+                response.expect_update_abort_ack()
             })
     }
 
     /// Get the current power state.
     pub async fn power_state(&self) -> Result<PowerState> {
-        self.rpc(MgsRequest::GetPowerState).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_power_state().map_err(Into::into)
-            },
-        )
+        self.rpc(MgsRequest::GetPowerState)
+            .await
+            .and_then(|(_peer, response, _data)| response.expect_power_state())
     }
 
     /// Set the current power state.
     pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
         self.rpc(MgsRequest::SetPowerState(power_state)).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_set_power_state_ack().map_err(Into::into)
-            },
+            |(_peer, response, _data)| response.expect_set_power_state_ack(),
         )
     }
 
@@ -760,9 +750,7 @@ impl SingleSp {
         self.rpc(MgsRequest::ResetComponentPrepare { component })
             .await
             .and_then(|(_peer, response, _data)| {
-                response
-                    .expect_sys_reset_component_prepare_ack()
-                    .map_err(Into::into)
+                response.expect_sys_reset_component_prepare_ack()
             })
     }
 
@@ -791,7 +779,7 @@ impl SingleSp {
                     // (because it has reset!).
                     Err(CommunicationError::BadResponseType {
                         expected: "system-reset",
-                        got: response.name(),
+                        got: response.into(),
                     })
                 } else {
                     response.expect_sys_reset_component_trigger_ack()
@@ -1198,7 +1186,7 @@ impl AttachedSerialConsoleSend {
                 as u64;
 
             let n = result.and_then(|(_peer, response, _data)| {
-                response.expect_serial_console_write_ack().map_err(Into::into)
+                response.expect_serial_console_write_ack()
             })?;
 
             // Confirm the ack we got back makes sense; its `n` should be in the

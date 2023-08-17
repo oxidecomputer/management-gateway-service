@@ -55,8 +55,17 @@ pub enum SpRequest {
 }
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::IntoStaticStr,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum SpResponse {
     Discover(DiscoverResponse),
     IgnitionState(IgnitionState),
