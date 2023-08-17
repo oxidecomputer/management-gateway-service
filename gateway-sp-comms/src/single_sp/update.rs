@@ -4,19 +4,24 @@
 
 // Copyright 2022 Oxide Computer Company
 
+use super::expect_fn;
+use super::expect_response;
 use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
+use crate::error::CommunicationError;
 use crate::error::UpdateError;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
+use gateway_messages::SpResponse;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::UpdateChunk;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use hubtools::Error as HubtoolsError;
 use hubtools::RawHubrisArchive;
+use paste::paste;
 use slog::debug;
 use slog::error;
 use slog::info;
@@ -75,7 +80,7 @@ pub(super) async fn start_sp_update(
             .await
             .result
             .and_then(|(_peer, response, data)| {
-                response.expect_caboose_value()?;
+                expect_response!(response, CabooseValue)?;
                 Ok(data)
             })?;
     if archive_board != sp_board {
@@ -122,9 +127,7 @@ pub(super) async fn start_sp_update(
     )
     .await
     .result
-    .and_then(|(_peer, response, _data)| {
-        response.expect_sp_update_prepare_ack().map_err(Into::into)
-    })?;
+    .and_then(expect_fn!(SpUpdatePrepareAck))?;
 
     tokio::spawn(drive_sp_update(
         cmds_tx.clone(),
@@ -347,9 +350,7 @@ pub(super) async fn start_component_update(
     )
     .await
     .result
-    .and_then(|(_peer, response, _data)| {
-        response.expect_component_update_prepare_ack().map_err(Into::into)
-    })?;
+    .and_then(expect_fn!(ComponentUpdatePrepareAck))?;
 
     tokio::spawn(drive_component_update(
         cmds_tx.clone(),
@@ -507,9 +508,7 @@ pub(super) async fn update_status(
     super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
         .await
         .result
-        .and_then(|(_peer, response, _data)| {
-            response.expect_update_status().map_err(Into::into)
-        })
+        .and_then(expect_fn!(UpdateStatus(out)))
 }
 
 /// Send an update image to the SP in chunks.
@@ -559,9 +558,6 @@ async fn send_single_update_chunk(
     )
     .await;
 
-    result.and_then(|(_peer, response, _data)| {
-        response.expect_update_chunk_ack().map_err(Into::into)
-    })?;
-
+    result.and_then(expect_fn!(UpdateChunkAck))?;
     Ok(data)
 }

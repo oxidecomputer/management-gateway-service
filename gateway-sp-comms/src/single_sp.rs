@@ -136,7 +136,7 @@ impl Drop for SingleSp {
     }
 }
 
-macro_rules! expect {
+macro_rules! expect_response {
     ($resp:ident, $name:ident) => {{
         match $resp {
             SpResponse::$name => Ok(()),
@@ -170,15 +170,17 @@ macro_rules! expect {
 }
 macro_rules! expect_fn {
     ($name:ident) => {{
-        |(_peer, response, _data)| expect!(response, $name)
+        |(_peer, response, _data)| expect_response!(response, $name)
     }};
     ($name:ident($arg:ident)) => {{
-        |(_peer, response, _data)| expect!(response, $name($arg))
+        |(_peer, response, _data)| expect_response!(response, $name($arg))
     }};
     ($name:ident{$arg:ident}) => {{
-        |(_peer, response, _data)| expect!(response, $name { $arg })
+        |(_peer, response, _data)| expect_response!(response, $name { $arg })
     }};
 }
+pub(crate) use expect_fn;
+pub(crate) use expect_response;
 
 impl SingleSp {
     /// Construct a new `SingleSp` that will periodically attempt to discover an
@@ -473,9 +475,9 @@ impl SingleSp {
         };
         self.rpc(msg).await.and_then(|(_peer, response, _data)| {
             if persist {
-                expect!(response, ComponentSetAndPersistActiveSlotAck)
+                expect_response!(response, ComponentSetAndPersistActiveSlotAck)
             } else {
-                expect!(response, ComponentSetActiveSlotAck)
+                expect_response!(response, ComponentSetActiveSlotAck)
             }
         })
     }
@@ -767,7 +769,7 @@ impl SingleSp {
             rpc(&self.cmds_tx, MgsRequest::ReadCaboose { key }, None).await;
 
         result.result.and_then(|(_peer, response, data)| {
-            expect!(response, CabooseValue)?;
+            expect_response!(response, CabooseValue)?;
             Ok(data)
         })
     }
@@ -820,7 +822,7 @@ impl SingleSp {
                         got: response.into(),
                     })
                 } else {
-                    expect!(response, ResetComponentTriggerAck)
+                    expect_response!(response, ResetComponentTriggerAck)
                 }
             }
             Err(CommunicationError::SpError(
@@ -854,7 +856,7 @@ impl SingleSp {
         .await;
 
         result.result.and_then(|(_peer, response, data)| {
-            expect!(response, CabooseValue)?;
+            expect_response!(response, CabooseValue)?;
             Ok(data)
         })
     }
@@ -898,7 +900,7 @@ impl TlvRpc for InventoryTlvRpc {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        expect!(response, Inventory(page))
+        expect_response!(response, Inventory(page))
     }
 
     fn parse_tag_value(
@@ -968,7 +970,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        expect!(response, ComponentDetails(page))
+        expect_response!(response, ComponentDetails(page))
     }
 
     fn parse_tag_value(
@@ -1051,7 +1053,7 @@ impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        expect!(response, BulkIgnitionState(page))
+        expect_response!(response, BulkIgnitionState(page))
     }
 
     fn parse_tag_value(
@@ -1099,7 +1101,7 @@ impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        expect!(response, BulkIgnitionLinkEvents(page))
+        expect_response!(response, BulkIgnitionLinkEvents(page))
     }
 
     fn parse_tag_value(
@@ -1674,7 +1676,7 @@ impl<T: InnerSocket> Inner<T> {
         let (addr, response, _data) =
             self.rpc_call(MgsRequest::Discover, None).await?;
 
-        let discovery = expect!(response, Discover(d))?;
+        let discovery = expect_response!(response, Discover(d))?;
 
         // The receiving half of `sp_addr_tx` is held by the `SingleSp` that
         // created us, and it aborts our task when it's dropped. This send
@@ -2016,7 +2018,7 @@ impl<T: InnerSocket> Inner<T> {
         let (_peer, response, _data) = self
             .rpc_call(MgsRequest::SerialConsoleAttach(component), None)
             .await?;
-        expect!(response, SerialConsoleAttachAck)?;
+        expect_response!(response, SerialConsoleAttachAck)?;
 
         let (tx, rx) = mpsc::channel(SERIAL_CONSOLE_CHANNEL_DEPTH);
         self.serial_console_tx = Some(tx);
@@ -2030,7 +2032,7 @@ impl<T: InnerSocket> Inner<T> {
     async fn detach_serial_console(&mut self) -> Result<()> {
         let (_peer, response, _data) =
             self.rpc_call(MgsRequest::SerialConsoleDetach, None).await?;
-        expect!(response, SerialConsoleDetachAck)?;
+        expect_response!(response, SerialConsoleDetachAck)?;
         self.serial_console_tx = None;
         Ok(())
     }
@@ -2186,9 +2188,9 @@ mod tests {
 
     #[test]
     fn test_expect() {
-        // Simple smoke test to confirm that the expect! macro is working
+        // Simple smoke test to confirm that the expect_response! macro is working
         let r = SpResponse::SwitchDefaultImageAck;
-        let v = expect!(r, ComponentActionAck);
+        let v = expect_response!(r, ComponentActionAck);
         assert!(
             matches!(
                 v,
