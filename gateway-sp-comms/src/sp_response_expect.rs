@@ -38,11 +38,14 @@ macro_rules! expect_fn {
                 r: (SocketAddrV6, SpResponse, Vec<u8>),
             ) -> Result<$out_type> {
                 let (_peer, response, data) = r;
-                if !data.is_empty() {
-                    return Err(CommunicationError::UnexpectedTrailingData(data))
-                }
                 match response {
-                    SpResponse::$full_name => Ok($out),
+                    SpResponse::$full_name => {
+                        if data.is_empty() {
+                            Ok($out)
+                        } else {
+                            Err(CommunicationError::UnexpectedTrailingData(data))
+                        }
+                    }
                     SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
                     other => Err(CommunicationError::BadResponseType {
                         expected: paste! { stringify!( [< $name:snake:lower >] )},
@@ -133,10 +136,7 @@ pub(crate) fn expect_sp_state(
     // This function translates between SpResponse variants and
     // `VersionedSpState`, so we can't use the usual expect! macro here
     let (_peer, response, data) = r;
-    if !data.is_empty() {
-        return Err(CommunicationError::UnexpectedTrailingData(data));
-    }
-    match response {
+    let out = match response {
         SpResponse::SpState(state) => Ok(VersionedSpState::V1(state)),
         SpResponse::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
         SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
@@ -144,7 +144,11 @@ pub(crate) fn expect_sp_state(
             expected: "versioned_sp_state", // hard-coded special string
             got: other.into(),
         }),
+    }?;
+    if !data.is_empty() {
+        return Err(CommunicationError::UnexpectedTrailingData(data));
     }
+    Ok(out)
 }
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -154,17 +158,18 @@ mod tests {
     use super::*;
     use std::net::Ipv6Addr;
 
+    fn dummy_addr() -> SocketAddrV6 {
+        SocketAddrV6::new(Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1), 8080, 0, 0)
+    }
+
     #[test]
     fn test_expect() {
         // Simple smoke test to confirm that the expect_fn! macro is working
-        let r = SpResponse::SwitchDefaultImageAck;
-        let dummy_addr = SocketAddrV6::new(
-            Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1),
-            8080,
-            0,
-            0,
-        );
-        let v = expect_component_action_ack((dummy_addr, r, vec![]));
+        let v = expect_component_action_ack((
+            dummy_addr(),
+            SpResponse::SwitchDefaultImageAck,
+            vec![],
+        ));
         assert!(
             matches!(
                 v,
@@ -175,5 +180,38 @@ mod tests {
             ),
             "mismatched value {v:?}"
         );
+    }
+
+    #[test]
+    fn test_expect_data() {
+        let v = expect_component_action_ack((
+            dummy_addr(),
+            SpResponse::ComponentActionAck,
+            vec![1, 2, 3],
+        ));
+        let Err(CommunicationError::UnexpectedTrailingData(d)) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(d, vec![1, 2, 3]);
+
+        // Type mismatches should trigger before the trailing data error
+        let v = expect_component_action_ack((
+            dummy_addr(),
+            SpResponse::SwitchDefaultImageAck,
+            vec![1, 2, 3],
+        ));
+        assert!(
+            matches!(
+                v,
+                Err(CommunicationError::BadResponseType {
+                    expected: "component_action_ack",
+                    got: "switch_default_image_ack",
+                })
+            ),
+            "mismatched value {v:?}"
+        );
+
+        // TODO: test expect_sp_state and expect_caboose, since they're
+        // hand-written
     }
 }
