@@ -8,7 +8,7 @@ use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
 use crate::error::UpdateError;
-use crate::sp_response_ext::SpResponseExt;
+use crate::sp_response_expect::*;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
@@ -75,10 +75,7 @@ pub(super) async fn start_sp_update(
         super::rpc(cmds_tx, MgsRequest::ReadCaboose { key: *b"BORD" }, None)
             .await
             .result
-            .and_then(|(_peer, response, data)| {
-                response.expect_caboose_value()?;
-                Ok(data)
-            })?;
+            .and_then(expect_caboose_value)?;
     if archive_board != sp_board {
         return Err(UpdateError::BoardMismatch {
             sp: String::from_utf8_lossy(&sp_board).to_string(),
@@ -123,9 +120,7 @@ pub(super) async fn start_sp_update(
     )
     .await
     .result
-    .and_then(|(_peer, response, _data)| {
-        response.expect_sp_update_prepare_ack().map_err(Into::into)
-    })?;
+    .and_then(expect_sp_update_prepare_ack)?;
 
     tokio::spawn(drive_sp_update(
         cmds_tx.clone(),
@@ -348,9 +343,7 @@ pub(super) async fn start_component_update(
     )
     .await
     .result
-    .and_then(|(_peer, response, _data)| {
-        response.expect_component_update_prepare_ack().map_err(Into::into)
-    })?;
+    .and_then(expect_component_update_prepare_ack)?;
 
     tokio::spawn(drive_component_update(
         cmds_tx.clone(),
@@ -508,9 +501,7 @@ pub(super) async fn update_status(
     super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
         .await
         .result
-        .and_then(|(_peer, response, _data)| {
-            response.expect_update_status().map_err(Into::into)
-        })
+        .and_then(expect_update_status)
 }
 
 /// Send an update image to the SP in chunks.
@@ -560,9 +551,7 @@ async fn send_single_update_chunk(
     )
     .await;
 
-    result.and_then(|(_peer, response, _data)| {
-        response.expect_update_chunk_ack().map_err(Into::into)
-    })?;
+    result.and_then(expect_update_chunk_ack)?;
 
     Ok(data)
 }

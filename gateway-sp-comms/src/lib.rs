@@ -15,7 +15,7 @@ mod host_phase2;
 mod scope_id_cache;
 mod shared_socket;
 mod single_sp;
-mod sp_response_ext;
+mod sp_response_expect;
 
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
