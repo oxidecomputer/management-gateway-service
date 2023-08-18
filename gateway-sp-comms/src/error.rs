@@ -60,6 +60,8 @@ pub enum CommunicationError {
     TlvPagination { reason: &'static str },
     #[error("IPCC key lookup value too large")]
     IpccKeyLookupValueTooLarge,
+    #[error("Packet included unexpected trailing data: {0:x?}")]
+    UnexpectedTrailingData(Vec<u8>),
 }
 
 impl From<SingleSpHandleError> for CommunicationError {
