@@ -132,7 +132,11 @@ pub(crate) fn expect_sp_state(
 ) -> Result<VersionedSpState> {
     // This function translates between SpResponse variants and
     // `VersionedSpState`, so we can't use the usual expect! macro here
-    match r.1 {
+    let (_peer, response, data) = r;
+    if !data.is_empty() {
+        return Err(CommunicationError::UnexpectedTrailingData(data));
+    }
+    match response {
         SpResponse::SpState(state) => Ok(VersionedSpState::V1(state)),
         SpResponse::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
         SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
