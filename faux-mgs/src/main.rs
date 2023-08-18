@@ -336,6 +336,12 @@ enum Command {
         #[clap(subcommand)]
         cmd: LedCommand,
     },
+
+    /// Reads a single sensor by `SensorId`, returning a `f32`
+    ReadSensorValue {
+        /// Sensor ID
+        id: u32,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1185,6 +1191,32 @@ async fn run_command(
             } else {
                 Ok(Output::Lines(vec![out]))
             }
+        }
+        Command::ReadSensorValue { id } => {
+            let out = sp.read_sensor_value(id).await?;
+            Ok(if json {
+                Output::Json(match out.value {
+                    Ok(v) => json!({
+                        "value": format!("{v}"),
+                        "timestamp": out.timestamp
+                    }),
+                    Err(e) => json!({
+                        "error": format!("{e:?}"),
+                        "timestamp": out.timestamp
+                    }),
+                })
+            } else {
+                Output::Lines(match out.value {
+                    Ok(v) => vec![
+                        format!("value:     {v}"),
+                        format!("timestamp: {}", out.timestamp),
+                    ],
+                    Err(e) => vec![
+                        format!("error:     {e:?}"),
+                        format!("timestamp: {}", out.timestamp),
+                    ],
+                })
+            })
         }
     }
 }

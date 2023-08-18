@@ -77,17 +77,13 @@ pub struct Header {
     pub message_id: u32,
 }
 
-#[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
-)]
+#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
 pub struct Message {
     pub header: Header,
     pub kind: MessageKind,
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
-)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, SerializedSize)]
 pub enum MessageKind {
     MgsRequest(MgsRequest),
     MgsResponse(MgsResponse),
@@ -139,6 +135,63 @@ pub enum RotSlotId {
 pub enum SwitchDuration {
     Once,
     Forever,
+}
+
+/// Sensor readings that we could request from the target by `SensorId`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SensorRequest {
+    /// Requests the current timestamp (as a `u64`)
+    CurrentTime,
+    /// Requests the most recent reading, which is either a value or error
+    LastReading { id: u32 },
+    /// Requests the most recent data value
+    LastData { id: u32 },
+    /// Requests the most recent error value
+    LastError { id: u32 },
+    /// Requests the error count for a given sensor
+    ErrorCount { id: u32 },
+}
+
+/// Most recent sensor reading, which may be a reading or a value
+#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+pub struct SensorReading {
+    pub value: Result<f32, SensorDataMissing>,
+    pub timestamp: u64,
+}
+
+/// Response to a [`SensorRequest`]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum SensorResponse {
+    CurrentTime(u64),
+    LastReading(SensorReading),
+    LastData { value: f32, timestamp: u64 },
+    LastError { value: SensorDataMissing, timestamp: u64 },
+    ErrorCount(u32),
+}
+
+/// An error or issue that led to sensor data not being available
+///
+/// Equivalent to `NoData` in Hubris.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SensorDataMissing {
+    DeviceOff,
+    DeviceError,
+    DeviceNotPresent,
+    DeviceUnavailable,
+    DeviceTimeout,
 }
 
 #[derive(

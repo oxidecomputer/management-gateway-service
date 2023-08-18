@@ -8,6 +8,7 @@ use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::RotSlotId;
+use crate::SensorResponse;
 use crate::SpComponent;
 use crate::StartupOptions;
 use crate::UpdateId;
@@ -61,8 +62,6 @@ pub enum SpRequest {
     SerializedSize,
     Serialize,
     Deserialize,
-    PartialEq,
-    Eq,
     strum_macros::IntoStaticStr,
 )]
 #[strum(serialize_all = "snake_case")]
@@ -122,6 +121,7 @@ pub enum SpResponse {
     ComponentActionAck,
 
     SpStateV2(SpStateV2),
+    ReadSensor(SensorResponse),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

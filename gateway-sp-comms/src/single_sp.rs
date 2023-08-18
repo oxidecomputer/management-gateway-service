@@ -33,6 +33,9 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::PowerState;
+use gateway_messages::SensorReading;
+use gateway_messages::SensorRequest;
+use gateway_messages::SensorResponse;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
 use gateway_messages::SpPort;
@@ -792,6 +795,22 @@ impl SingleSp {
         .await;
 
         result.result.and_then(expect_caboose_value)
+    }
+
+    pub async fn read_sensor_value(&self, id: u32) -> Result<SensorReading> {
+        let v = self
+            .rpc(MgsRequest::ReadSensor(SensorRequest::LastReading { id }))
+            .await
+            .and_then(expect_read_sensor)?;
+        match v {
+            SensorResponse::LastReading(r) => Ok(r),
+            // TODO: Is this a bad overloading of
+            // CommunicationError::BadResponseType?
+            other => Err(CommunicationError::BadResponseType {
+                expected: "last_reading",
+                got: other.into(),
+            }),
+        }
     }
 }
 

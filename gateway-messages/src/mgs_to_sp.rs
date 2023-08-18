@@ -8,6 +8,7 @@ use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::RotSlotId;
+use crate::SensorRequest;
 use crate::SpComponent;
 use crate::SwitchDuration;
 use crate::UpdateId;
@@ -158,6 +159,8 @@ pub enum MgsRequest {
         slot: u16,
         key: [u8; 4],
     },
+
+    ReadSensor(SensorRequest),
 }
 
 #[derive(

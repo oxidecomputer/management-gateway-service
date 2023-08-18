@@ -26,6 +26,8 @@ use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
 use crate::RotSlotId;
+use crate::SensorRequest;
+use crate::SensorResponse;
 use crate::SerializedSize;
 use crate::SpComponent;
 use crate::SpError;
@@ -373,6 +375,11 @@ pub trait SpHandler {
         port: SpPort,
         component: SpComponent,
     ) -> Result<(), SpError>;
+
+    fn read_sensor(
+        &mut self,
+        request: SensorRequest,
+    ) -> Result<SensorResponse, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -915,6 +922,9 @@ fn handle_mgs_request<H: SpHandler>(
                     Some(OutgoingTrailingData::ShiftFromTail(n));
             }
             r.map(|_| SpResponse::CabooseValue)
+        }
+        MgsRequest::ReadSensor(req) => {
+            handler.read_sensor(req).map(SpResponse::ReadSensor)
         }
     };
 
