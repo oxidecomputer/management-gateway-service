@@ -1304,6 +1304,13 @@ mod tests {
         ) -> Result<usize, SpError> {
             unimplemented!()
         }
+
+        fn read_sensor(
+            &mut self,
+            _r: SensorRequest,
+        ) -> Result<SensorResponse, SpError> {
+            unimplemented!()
+        }
     }
 
     #[cfg(feature = "std")]

@@ -77,13 +77,17 @@ pub struct Header {
     pub message_id: u32,
 }
 
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct Message {
     pub header: Header,
     pub kind: MessageKind,
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, SerializedSize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, SerializedSize,
+)]
 pub enum MessageKind {
     MgsRequest(MgsRequest),
     MgsResponse(MgsResponse),
@@ -155,7 +159,9 @@ pub enum SensorRequest {
 }
 
 /// Most recent sensor reading, which may be a reading or a value
-#[derive(Debug, Clone, Copy, SerializedSize, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
 pub struct SensorReading {
     pub value: Result<f32, SensorDataMissing>,
     pub timestamp: u64,
@@ -166,6 +172,7 @@ pub struct SensorReading {
     Debug,
     Clone,
     Copy,
+    PartialEq,
     SerializedSize,
     Serialize,
     Deserialize,

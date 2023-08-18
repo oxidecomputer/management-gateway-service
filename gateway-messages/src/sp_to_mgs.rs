@@ -59,6 +59,7 @@ pub enum SpRequest {
     Debug,
     Clone,
     Copy,
+    PartialEq,
     SerializedSize,
     Serialize,
     Deserialize,
