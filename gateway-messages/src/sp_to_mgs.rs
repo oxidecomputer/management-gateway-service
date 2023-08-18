@@ -457,7 +457,7 @@ pub struct UpdateInProgressStatus {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum SpError {
     /// The SP is busy; retry the request mometarily.
@@ -550,6 +550,7 @@ pub enum SpError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
+    Sensor(SensorError),
 }
 
 impl fmt::Display for SpError {
@@ -659,6 +660,7 @@ impl fmt::Display for SpError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
+            Self::Sensor(e) => write!(f, "sensor: {}", e),
         }
     }
 }
@@ -934,3 +936,27 @@ impl fmt::Display for RotError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for RotError {}
+
+/// Sensor errors encountered during a read
+///
+/// This value is wrapped by [`SpError`]; note that it is distinct from
+/// [`crate::SensorDataMissing`]!
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SensorError {
+    InvalidSensor,
+    NoReading,
+}
+
+impl fmt::Display for SensorError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidSensor => write!(f, "sensor ID is invalid"),
+            Self::NoReading => write!(f, "reading is not present"),
+        }
+    }
+}
+
+#[cfg(feature = "std")]
+impl std::error::Error for SensorError {}
