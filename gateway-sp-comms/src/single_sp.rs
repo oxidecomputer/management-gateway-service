@@ -1971,10 +1971,9 @@ impl<T: InnerSocket> Inner<T> {
             ));
         }
 
-        let r = self
-            .rpc_call(MgsRequest::SerialConsoleAttach(component), None)
-            .await?;
-        expect_serial_console_attach_ack(r)?;
+        self.rpc_call(MgsRequest::SerialConsoleAttach(component), None)
+            .await
+            .and_then(expect_serial_console_attach_ack)?;
 
         let (tx, rx) = mpsc::channel(SERIAL_CONSOLE_CHANNEL_DEPTH);
         self.serial_console_tx = Some(tx);
@@ -1986,8 +1985,9 @@ impl<T: InnerSocket> Inner<T> {
     }
 
     async fn detach_serial_console(&mut self) -> Result<()> {
-        let r = self.rpc_call(MgsRequest::SerialConsoleDetach, None).await?;
-        expect_serial_console_detach_ack(r)?;
+        self.rpc_call(MgsRequest::SerialConsoleDetach, None)
+            .await
+            .and_then(expect_serial_console_detach_ack)?;
         self.serial_console_tx = None;
         Ok(())
     }
