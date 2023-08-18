@@ -22,11 +22,11 @@ macro_rules! expect_fn {
     ($name:ident) => {
         expect_fn!($name -> ());
     };
-    ($name:ident($arg:ident) -> $out_type:ty) => {
-        expect_fn!($name, $name($arg), $arg, $out_type);
-    };
     ($name:ident -> $out_type:ty) => {
         expect_fn!($name, $name, (), $out_type);
+    };
+    ($name:ident($arg:ident) -> $out_type:ty) => {
+        expect_fn!($name, $name($arg), $arg, $out_type);
     };
     ($name:ident{$arg:ident} -> $out_type:ty) => {
         expect_fn!($name, $name{$arg}, $arg, $out_type);
@@ -59,14 +59,8 @@ macro_rules! expect_data_fn {
     ($name:ident) => {
         expect_data_fn!($name, $name, ());
     };
-    ($name:ident -> $out_type:ty) => {
-        expect_data_fn!($name, $name, $out_type);
-    };
     ($name:ident($arg:ident) -> $out_type:ty) => {
         expect_data_fn!($name, $name($arg), $out_type);
-    };
-    ($name:ident{$arg:ident} -> $out_type:ty) => {
-        expect_data_fn!($name, $name { $arg }, $out_type);
     };
     ($name:ident, $full_name:expr, $out_type:ty) => {
         paste! {
