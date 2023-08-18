@@ -156,6 +156,7 @@ pub(crate) fn expect_sp_state(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::{SpStateV1, SpStateV2, VersionedSpState};
     use std::net::Ipv6Addr;
 
     fn dummy_addr() -> SocketAddrV6 {
@@ -211,7 +212,100 @@ mod tests {
             "mismatched value {v:?}"
         );
 
-        // TODO: test expect_sp_state and expect_caboose, since they're
-        // hand-written
+        let page = gateway_messages::TlvPage { offset: 123, total: 456 };
+        let v = expect_bulk_ignition_state((
+            dummy_addr(),
+            SpResponse::BulkIgnitionState(page),
+            vec![3, 2, 1],
+        ))
+        .unwrap();
+        assert_eq!(v, (page, vec![3, 2, 1]));
+
+        let page = gateway_messages::TlvPage { offset: 123, total: 456 };
+        let v = expect_bulk_ignition_state((
+            dummy_addr(),
+            SpResponse::BulkIgnitionState(page),
+            vec![],
+        ))
+        .unwrap();
+        assert_eq!(v, (page, vec![]));
+    }
+
+    #[test]
+    fn test_caboose_value() {
+        let v = expect_caboose_value((
+            dummy_addr(),
+            SpResponse::CabooseValue,
+            vec![1, 2, 3],
+        ));
+        let Ok(r) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(r, vec![1, 2, 3]);
+
+        let v = expect_caboose_value((
+            dummy_addr(),
+            SpResponse::UpdateChunkAck,
+            vec![1, 2, 3],
+        ));
+        assert!(
+            matches!(
+                v,
+                Err(CommunicationError::BadResponseType {
+                    expected: "caboose_value",
+                    got: "update_chunk_ack",
+                })
+            ),
+            "mismatched value {v:?}"
+        );
+    }
+
+    #[test]
+    fn test_expect_sp_state() {
+        let state = SpStateV1 {
+            hubris_archive_id: [1, 2, 3, 4, 5, 6, 7, 8],
+            serial_number: [0; 32],
+            model: [0; 32],
+            revision: 123,
+            base_mac_address: [0; 6],
+            version: gateway_messages::ImageVersion { epoch: 0, version: 1 },
+            power_state: gateway_messages::PowerState::A0,
+            rot: Err(gateway_messages::RotError::MessageError { code: 5 }),
+        };
+        let v = expect_sp_state((
+            dummy_addr(),
+            SpResponse::SpState(state),
+            vec![1, 2, 3],
+        ));
+        let Err(CommunicationError::UnexpectedTrailingData(d)) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(d, vec![1, 2, 3]);
+
+        let v =
+            expect_sp_state((dummy_addr(), SpResponse::SpState(state), vec![]));
+        let Ok(r) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(r, VersionedSpState::V1(state));
+
+        let state = SpStateV2 {
+            hubris_archive_id: [1, 2, 3, 4, 5, 6, 7, 8],
+            serial_number: [0; 32],
+            model: [0; 32],
+            revision: 123,
+            base_mac_address: [0; 6],
+            power_state: gateway_messages::PowerState::A0,
+            rot: Err(gateway_messages::RotError::MessageError { code: 5 }),
+        };
+        let v = expect_sp_state((
+            dummy_addr(),
+            SpResponse::SpStateV2(state),
+            vec![],
+        ));
+        let Ok(r) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(r, VersionedSpState::V2(state));
     }
 }
