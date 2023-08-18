@@ -11,7 +11,7 @@ use crate::error::UpdateError;
 use crate::shared_socket::SingleSpHandle;
 use crate::shared_socket::SingleSpHandleError;
 use crate::shared_socket::SingleSpMessage;
-use crate::sp_response_ext::*;
+use crate::sp_response_expect::*;
 use crate::SharedSocket;
 use crate::SwitchPortConfig;
 use crate::VersionedSpState;
