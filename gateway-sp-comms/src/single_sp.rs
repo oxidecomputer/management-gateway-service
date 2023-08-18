@@ -806,7 +806,7 @@ trait TlvRpc {
     // Build the appropriate request for the given offset.
     fn request(&self, offset: u32) -> MgsRequest;
 
-    // Parse the SP's response into a description of the page contents.
+    // Parse the response into a description of the page contents and raw data
     fn parse_response(
         &self,
         peer: SocketAddrV6,
