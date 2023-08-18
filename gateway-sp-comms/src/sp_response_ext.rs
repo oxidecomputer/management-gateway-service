@@ -16,263 +16,98 @@ use paste::paste;
 
 type Result<T> = std::result::Result<T, CommunicationError>;
 
-// When we send a request we expect a specific kind of response; the boilerplate
-// for confirming that is a little noisy, so it lives in this extension trait.
-pub(crate) trait SpResponseExt {
-    fn expect_discover(self) -> Result<DiscoverResponse>;
-
-    fn expect_ignition_state(self) -> Result<IgnitionState>;
-
-    fn expect_bulk_ignition_state(self) -> Result<TlvPage>;
-
-    fn expect_ignition_link_events(self) -> Result<LinkEvents>;
-
-    fn expect_bulk_ignition_link_events(self) -> Result<TlvPage>;
-
-    fn expect_ignition_command_ack(self) -> Result<()>;
-
-    fn expect_clear_ignition_link_events_ack(self) -> Result<()>;
-
-    fn expect_sp_state(self) -> Result<VersionedSpState>;
-
-    fn expect_serial_console_attach_ack(self) -> Result<()>;
-
-    fn expect_serial_console_write_ack(self) -> Result<u64>;
-
-    fn expect_serial_console_detach_ack(self) -> Result<()>;
-
-    fn expect_serial_console_keepalive_ack(self) -> Result<()>;
-
-    fn expect_serial_console_break_ack(self) -> Result<()>;
-
-    fn expect_sp_update_prepare_ack(self) -> Result<()>;
-
-    fn expect_component_update_prepare_ack(self) -> Result<()>;
-
-    fn expect_update_status(self) -> Result<UpdateStatus>;
-
-    fn expect_update_chunk_ack(self) -> Result<()>;
-
-    fn expect_update_abort_ack(self) -> Result<()>;
-
-    fn expect_power_state(self) -> Result<PowerState>;
-
-    fn expect_set_power_state_ack(self) -> Result<()>;
-
-    fn expect_inventory(self) -> Result<TlvPage>;
-
-    fn expect_startup_options(self) -> Result<StartupOptions>;
-
-    fn expect_set_startup_options_ack(self) -> Result<()>;
-
-    fn expect_component_details(self) -> Result<TlvPage>;
-
-    fn expect_component_clear_status_ack(self) -> Result<()>;
-
-    fn expect_component_active_slot(self) -> Result<u16>;
-
-    fn expect_component_set_active_slot_ack(self) -> Result<()>;
-
-    fn expect_component_set_and_persist_active_slot_ack(self) -> Result<()>;
-
-    fn expect_send_host_nmi_ack(self) -> Result<()>;
-
-    fn expect_set_ipcc_key_lookup_value_ack(self) -> Result<()>;
-
-    fn expect_caboose_value(self) -> Result<()>;
-
-    fn expect_sys_reset_component_prepare_ack(self) -> Result<()>;
-
-    fn expect_sys_reset_component_trigger_ack(self) -> Result<()>;
-
-    fn expect_switch_default_image_ack(self) -> Result<()>;
-
-    fn expect_component_action_ack(self) -> Result<()>;
+/// Macro to generate an `expect_*` function for the given [`SpResponse`]
+macro_rules! expect_fn {
+    ($name:ident) => {
+        expect_fn!($name, $name, (), ());
+    };
+    ($name:ident($arg:ident) -> $out_type:ty) => {
+        expect_fn!($name, $name($arg), $arg, $out_type);
+    };
+    ($name:ident{$arg:ident} -> $out_type:ty) => {
+        expect_fn!($name, $name{$arg}, $arg, $out_type);
+    };
+    ($name:ident, $full_name:expr, $out:expr, $out_type:ty) => {
+        paste! {
+            #[allow(unused)]
+            pub(crate) fn [< expect_ $name:snake:lower >](
+                response: SpResponse,
+            ) -> Result<$out_type> {
+                match response {
+                    SpResponse::$full_name => Ok($out),
+                    SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
+                    other => Err(CommunicationError::BadResponseType {
+                        expected: paste! { stringify!( [< $name:snake:lower >] )},
+                        got: other.into(),
+                    }),
+                }
+            }
+        }
+    };
 }
 
-macro_rules! expect {
-    ($self:ident, Self::$name:ident) => {{
-        match $self {
-            Self::$name => Ok(()),
-            Self::Error(err) => Err(CommunicationError::SpError(err)),
-            other => Err(CommunicationError::BadResponseType {
-                expected: paste! { stringify!( [< $name:snake:lower >] )},
-                got: other.into(),
-            }),
-        }
-    }};
-    ($self:ident, Self::$name:ident($arg:ident)) => {{
-        match $self {
-            Self::$name($arg) => Ok($arg),
-            Self::Error(err) => Err(CommunicationError::SpError(err)),
-            other => Err(CommunicationError::BadResponseType {
-                expected: paste! { stringify!( [< $name:snake:lower >] )},
-                got: other.into(),
-            }),
-        }
-    }};
-    ($self:ident, Self::$name:ident{$arg:ident}) => {{
-        match $self {
-            Self::$name { $arg } => Ok($arg),
-            Self::Error(err) => Err(CommunicationError::SpError(err)),
-            other => Err(CommunicationError::BadResponseType {
-                expected: paste! { stringify!( [< $name:snake:lower >] )},
-                got: other.into(),
-            }),
-        }
-    }};
+expect_fn!(Discover(d) -> DiscoverResponse);
+expect_fn!(IgnitionState(state) -> IgnitionState);
+expect_fn!(BulkIgnitionState(page) -> TlvPage);
+expect_fn!(IgnitionLinkEvents(events) -> LinkEvents);
+expect_fn!(BulkIgnitionLinkEvents(page) -> TlvPage);
+expect_fn!(IgnitionCommandAck);
+expect_fn!(ClearIgnitionLinkEventsAck);
+expect_fn!(SerialConsoleAttachAck);
+expect_fn!(SerialConsoleWriteAck { furthest_ingested_offset } -> u64);
+expect_fn!(SerialConsoleDetachAck);
+expect_fn!(SerialConsoleKeepAliveAck);
+expect_fn!(SerialConsoleBreakAck);
+expect_fn!(SpUpdatePrepareAck);
+expect_fn!(ComponentUpdatePrepareAck);
+expect_fn!(UpdateStatus(status) -> UpdateStatus);
+expect_fn!(UpdateChunkAck);
+expect_fn!(UpdateAbortAck);
+expect_fn!(PowerState(power_state) -> PowerState);
+expect_fn!(SetPowerStateAck);
+expect_fn!(Inventory(page) -> TlvPage);
+expect_fn!(StartupOptions(options) -> StartupOptions);
+expect_fn!(SetStartupOptionsAck);
+expect_fn!(ComponentDetails(page) -> TlvPage);
+expect_fn!(ComponentClearStatusAck);
+expect_fn!(ComponentActiveSlot(slot) -> u16);
+expect_fn!(ComponentSetActiveSlotAck);
+expect_fn!(ComponentSetAndPersistActiveSlotAck);
+expect_fn!(SendHostNmiAck);
+expect_fn!(SetIpccKeyLookupValueAck);
+expect_fn!(ResetComponentPrepareAck);
+expect_fn!(ResetComponentTriggerAck);
+expect_fn!(SwitchDefaultImageAck);
+expect_fn!(ComponentActionAck);
+
+////////////////////////////////////////////////////////////////////////////////
+// Some `SpResponse` types require special handling, manually implemented below
+
+/// Converts `SpResponse::{SpState, SpStateV2}` into `VersionedSpState`
+pub(crate) fn expect_sp_state(
+    response: SpResponse,
+) -> Result<VersionedSpState> {
+    // This function translates between SpResponse variants and
+    // `VersionedSpState`, so we can't use the usual expect! macro here
+    match response {
+        SpResponse::SpState(state) => Ok(VersionedSpState::V1(state)),
+        SpResponse::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
+        SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
+        other => Err(CommunicationError::BadResponseType {
+            expected: "versioned_sp_state", // hard-coded special string
+            got: other.into(),
+        }),
+    }
 }
 
-impl SpResponseExt for SpResponse {
-    fn expect_discover(self) -> Result<DiscoverResponse> {
-        expect!(self, Self::Discover(discover))
-    }
-
-    fn expect_ignition_state(self) -> Result<IgnitionState> {
-        expect!(self, Self::IgnitionState(state))
-    }
-
-    fn expect_bulk_ignition_state(self) -> Result<TlvPage> {
-        expect!(self, Self::BulkIgnitionState(page))
-    }
-
-    fn expect_ignition_link_events(self) -> Result<LinkEvents> {
-        expect!(self, Self::IgnitionLinkEvents(events))
-    }
-
-    fn expect_bulk_ignition_link_events(self) -> Result<TlvPage> {
-        expect!(self, Self::BulkIgnitionLinkEvents(page))
-    }
-
-    fn expect_ignition_command_ack(self) -> Result<()> {
-        expect!(self, Self::IgnitionCommandAck)
-    }
-
-    fn expect_clear_ignition_link_events_ack(self) -> Result<()> {
-        expect!(self, Self::ClearIgnitionLinkEventsAck)
-    }
-
-    fn expect_sp_state(self) -> Result<VersionedSpState> {
-        // This function translates between SpResponse variants and
-        // `VersionedSpState`, so we can't use the usual expect! macro here
-        match self {
-            Self::SpState(state) => Ok(VersionedSpState::V1(state)),
-            Self::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
-            Self::Error(err) => Err(CommunicationError::SpError(err)),
-            other => Err(CommunicationError::BadResponseType {
-                expected: "versioned_sp_state", // hard-coded special string
-                got: other.into(),
-            }),
-        }
-    }
-
-    fn expect_serial_console_attach_ack(self) -> Result<()> {
-        expect!(self, Self::SerialConsoleAttachAck)
-    }
-
-    fn expect_serial_console_write_ack(self) -> Result<u64> {
-        expect!(self, Self::SerialConsoleWriteAck { furthest_ingested_offset })
-    }
-
-    fn expect_serial_console_detach_ack(self) -> Result<()> {
-        expect!(self, Self::SerialConsoleDetachAck)
-    }
-
-    fn expect_serial_console_keepalive_ack(self) -> Result<()> {
-        expect!(self, Self::SerialConsoleKeepAliveAck)
-    }
-
-    fn expect_serial_console_break_ack(self) -> Result<()> {
-        expect!(self, Self::SerialConsoleBreakAck)
-    }
-
-    fn expect_sp_update_prepare_ack(self) -> Result<()> {
-        expect!(self, Self::SpUpdatePrepareAck)
-    }
-
-    fn expect_component_update_prepare_ack(self) -> Result<()> {
-        expect!(self, Self::ComponentUpdatePrepareAck)
-    }
-
-    fn expect_update_status(self) -> Result<UpdateStatus> {
-        expect!(self, Self::UpdateStatus(status))
-    }
-
-    fn expect_update_chunk_ack(self) -> Result<()> {
-        expect!(self, Self::UpdateChunkAck)
-    }
-
-    fn expect_update_abort_ack(self) -> Result<()> {
-        expect!(self, Self::UpdateAbortAck)
-    }
-
-    fn expect_power_state(self) -> Result<PowerState> {
-        expect!(self, Self::PowerState(power_state))
-    }
-
-    fn expect_set_power_state_ack(self) -> Result<()> {
-        expect!(self, Self::SetPowerStateAck)
-    }
-
-    fn expect_inventory(self) -> Result<TlvPage> {
-        expect!(self, Self::Inventory(page))
-    }
-
-    fn expect_startup_options(self) -> Result<StartupOptions> {
-        expect!(self, Self::StartupOptions(options))
-    }
-
-    fn expect_set_startup_options_ack(self) -> Result<()> {
-        expect!(self, Self::SetStartupOptionsAck)
-    }
-
-    fn expect_component_details(self) -> Result<TlvPage> {
-        expect!(self, Self::ComponentDetails(page))
-    }
-
-    fn expect_component_clear_status_ack(self) -> Result<()> {
-        expect!(self, Self::ComponentClearStatusAck)
-    }
-
-    fn expect_component_active_slot(self) -> Result<u16> {
-        expect!(self, Self::ComponentActiveSlot(slot))
-    }
-
-    fn expect_component_set_active_slot_ack(self) -> Result<()> {
-        expect!(self, Self::ComponentSetActiveSlotAck)
-    }
-
-    fn expect_component_set_and_persist_active_slot_ack(self) -> Result<()> {
-        expect!(self, Self::ComponentSetAndPersistActiveSlotAck)
-    }
-
-    fn expect_send_host_nmi_ack(self) -> Result<()> {
-        expect!(self, Self::SendHostNmiAck)
-    }
-
-    fn expect_set_ipcc_key_lookup_value_ack(self) -> Result<()> {
-        expect!(self, Self::SetIpccKeyLookupValueAck)
-    }
-
-    fn expect_caboose_value(self) -> Result<()> {
-        expect!(self, Self::CabooseValue)
-    }
-
-    fn expect_sys_reset_component_prepare_ack(self) -> Result<()> {
-        expect!(self, Self::ResetComponentPrepareAck)
-    }
-
-    fn expect_sys_reset_component_trigger_ack(self) -> Result<()> {
-        expect!(self, Self::ResetComponentTriggerAck)
-    }
-
-    fn expect_switch_default_image_ack(self) -> Result<()> {
-        expect!(self, Self::SwitchDefaultImageAck)
-    }
-
-    fn expect_component_action_ack(self) -> Result<()> {
-        expect!(self, Self::ComponentActionAck)
-    }
+/// Checks that the response is `SpResponse::CabooseValue`, then returns `data`
+pub(crate) fn expect_caboose_value(
+    response: SpResponse,
+    data: Vec<u8>,
+) -> Result<Vec<u8>> {
+    expect_fn!(CabooseValue);
+    expect_caboose_value(response)?;
+    Ok(data)
 }
 
 #[cfg(test)]
@@ -281,9 +116,9 @@ mod tests {
 
     #[test]
     fn test_expect() {
-        // Simple smoke test to confirm that the expect! macro is working
+        // Simple smoke test to confirm that the expect_fn! macro is working
         let r = SpResponse::SwitchDefaultImageAck;
-        let v = r.expect_component_action_ack();
+        let v = expect_component_action_ack(r);
         assert!(
             matches!(
                 v,

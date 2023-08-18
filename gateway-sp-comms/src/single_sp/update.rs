@@ -8,7 +8,7 @@ use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
 use crate::error::UpdateError;
-use crate::sp_response_ext::SpResponseExt;
+use crate::sp_response_ext::*;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
@@ -76,8 +76,7 @@ pub(super) async fn start_sp_update(
             .await
             .result
             .and_then(|(_peer, response, data)| {
-                response.expect_caboose_value()?;
-                Ok(data)
+                expect_caboose_value(response, data)
             })?;
     if archive_board != sp_board {
         return Err(UpdateError::BoardMismatch {
@@ -124,7 +123,7 @@ pub(super) async fn start_sp_update(
     .await
     .result
     .and_then(|(_peer, response, _data)| {
-        response.expect_sp_update_prepare_ack().map_err(Into::into)
+        expect_sp_update_prepare_ack(response)
     })?;
 
     tokio::spawn(drive_sp_update(
@@ -349,7 +348,7 @@ pub(super) async fn start_component_update(
     .await
     .result
     .and_then(|(_peer, response, _data)| {
-        response.expect_component_update_prepare_ack().map_err(Into::into)
+        expect_component_update_prepare_ack(response)
     })?;
 
     tokio::spawn(drive_component_update(
@@ -508,9 +507,7 @@ pub(super) async fn update_status(
     super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
         .await
         .result
-        .and_then(|(_peer, response, _data)| {
-            response.expect_update_status().map_err(Into::into)
-        })
+        .and_then(|(_peer, response, _data)| expect_update_status(response))
 }
 
 /// Send an update image to the SP in chunks.
@@ -561,7 +558,7 @@ async fn send_single_update_chunk(
     .await;
 
     result.and_then(|(_peer, response, _data)| {
-        response.expect_update_chunk_ack().map_err(Into::into)
+        expect_update_chunk_ack(response)
     })?;
 
     Ok(data)

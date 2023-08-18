@@ -11,7 +11,7 @@ use crate::error::UpdateError;
 use crate::shared_socket::SingleSpHandle;
 use crate::shared_socket::SingleSpHandleError;
 use crate::shared_socket::SingleSpMessage;
-use crate::sp_response_ext::SpResponseExt;
+use crate::sp_response_ext::*;
 use crate::SharedSocket;
 use crate::SwitchPortConfig;
 use crate::VersionedSpState;
@@ -295,7 +295,7 @@ impl SingleSp {
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_state(&self, target: u8) -> Result<IgnitionState> {
         self.rpc(MgsRequest::IgnitionState { target }).await.and_then(
-            |(_peer, response, _data)| response.expect_ignition_state(),
+            |(_peer, response, _data)| expect_ignition_state(response),
         )
     }
 
@@ -316,7 +316,7 @@ impl SingleSp {
     /// This will fail if this SP is not connected to an ignition controller.
     pub async fn ignition_link_events(&self, target: u8) -> Result<LinkEvents> {
         self.rpc(MgsRequest::IgnitionLinkEvents { target }).await.and_then(
-            |(_peer, response, _data)| response.expect_ignition_link_events(),
+            |(_peer, response, _data)| expect_ignition_link_events(response),
         )
     }
 
@@ -353,7 +353,7 @@ impl SingleSp {
         })
         .await
         .and_then(|(_peer, response, _data)| {
-            response.expect_clear_ignition_link_events_ack()
+            expect_clear_ignition_link_events_ack(response)
         })
     }
 
@@ -368,7 +368,7 @@ impl SingleSp {
         self.rpc(MgsRequest::IgnitionCommand { target, command })
             .await
             .and_then(|(_peer, response, _data)| {
-                response.expect_ignition_command_ack()
+                expect_ignition_command_ack(response)
             })
     }
 
@@ -376,7 +376,7 @@ impl SingleSp {
     pub async fn state(&self) -> Result<VersionedSpState> {
         self.rpc(MgsRequest::SpState)
             .await
-            .and_then(|(_peer, response, _data)| response.expect_sp_state())
+            .and_then(|(_peer, response, _data)| expect_sp_state(response))
     }
 
     /// Request the inventory of the SP.
@@ -407,7 +407,7 @@ impl SingleSp {
         component: SpComponent,
     ) -> Result<u16> {
         self.rpc(MgsRequest::ComponentGetActiveSlot(component)).await.and_then(
-            |(_peer, response, _data)| response.expect_component_active_slot(),
+            |(_peer, response, _data)| expect_component_active_slot(response),
         )
     }
 
@@ -425,9 +425,9 @@ impl SingleSp {
         };
         self.rpc(msg).await.and_then(|(_peer, response, _data)| {
             if persist {
-                response.expect_component_set_and_persist_active_slot_ack()
+                expect_component_set_and_persist_active_slot_ack(response)
             } else {
-                response.expect_component_set_active_slot_ack()
+                expect_component_set_active_slot_ack(response)
             }
         })
     }
@@ -440,7 +440,7 @@ impl SingleSp {
     ) -> Result<()> {
         self.rpc(MgsRequest::ComponentClearStatus(component)).await.and_then(
             |(_peer, response, _data)| {
-                response.expect_component_clear_status_ack()
+                expect_component_clear_status_ack(response)
             },
         )
     }
@@ -538,7 +538,7 @@ impl SingleSp {
     /// the next time the sled starts up.
     pub async fn get_startup_options(&self) -> Result<StartupOptions> {
         self.rpc(MgsRequest::GetStartupOptions).await.and_then(
-            |(_peer, response, _data)| response.expect_startup_options(),
+            |(_peer, response, _data)| expect_startup_options(response),
         )
     }
 
@@ -551,9 +551,7 @@ impl SingleSp {
         startup_options: StartupOptions,
     ) -> Result<()> {
         self.rpc(MgsRequest::SetStartupOptions(startup_options)).await.and_then(
-            |(_peer, response, _data)| {
-                response.expect_set_startup_options_ack()
-            },
+            |(_peer, response, _data)| expect_set_startup_options_ack(response),
         )
     }
 
@@ -620,7 +618,7 @@ impl SingleSp {
         self.rpc(MgsRequest::UpdateAbort { component, id: update_id.into() })
             .await
             .and_then(|(_peer, response, _data)| {
-                response.expect_update_abort_ack()
+                expect_update_abort_ack(response)
             })
     }
 
@@ -628,13 +626,13 @@ impl SingleSp {
     pub async fn power_state(&self) -> Result<PowerState> {
         self.rpc(MgsRequest::GetPowerState)
             .await
-            .and_then(|(_peer, response, _data)| response.expect_power_state())
+            .and_then(|(_peer, response, _data)| expect_power_state(response))
     }
 
     /// Set the current power state.
     pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
         self.rpc(MgsRequest::SetPowerState(power_state)).await.and_then(
-            |(_peer, response, _data)| response.expect_set_power_state_ack(),
+            |(_peer, response, _data)| expect_set_power_state_ack(response),
         )
     }
 
@@ -686,7 +684,7 @@ impl SingleSp {
 
     pub async fn send_host_nmi(&self) -> Result<()> {
         self.rpc(MgsRequest::SendHostNmi).await.and_then(
-            |(_peer, response, _data)| response.expect_send_host_nmi_ack(),
+            |(_peer, response, _data)| expect_send_host_nmi_ack(response),
         )
     }
 
@@ -713,7 +711,7 @@ impl SingleSp {
         assert!(CursorExt::is_empty(&leftover_data));
 
         result.and_then(|(_peer, response, _data)| {
-            response.expect_set_ipcc_key_lookup_value_ack()
+            expect_set_ipcc_key_lookup_value_ack(response)
         })
     }
 
@@ -726,9 +724,8 @@ impl SingleSp {
         let result =
             rpc(&self.cmds_tx, MgsRequest::ReadCaboose { key }, None).await;
 
-        result.result.map(|(_peer, response, data)| {
-            response.expect_caboose_value().unwrap();
-            data
+        result.result.and_then(|(_peer, response, data)| {
+            expect_caboose_value(response, data)
         })
     }
 
@@ -750,7 +747,7 @@ impl SingleSp {
         self.rpc(MgsRequest::ResetComponentPrepare { component })
             .await
             .and_then(|(_peer, response, _data)| {
-                response.expect_sys_reset_component_prepare_ack()
+                expect_reset_component_prepare_ack(response)
             })
     }
 
@@ -782,7 +779,7 @@ impl SingleSp {
                         got: response.into(),
                     })
                 } else {
-                    response.expect_sys_reset_component_trigger_ack()
+                    expect_reset_component_trigger_ack(response)
                 }
             }
             Err(CommunicationError::SpError(
@@ -800,7 +797,7 @@ impl SingleSp {
         self.rpc(MgsRequest::ComponentAction { component, action })
             .await
             .and_then(|(_peer, response, _data)| {
-                response.expect_component_action_ack()
+                expect_component_action_ack(response)
             })
     }
 
@@ -817,9 +814,8 @@ impl SingleSp {
         )
         .await;
 
-        result.result.map(|(_peer, response, data)| {
-            response.expect_caboose_value().unwrap();
-            data
+        result.result.and_then(|(_peer, response, data)| {
+            expect_caboose_value(response, data)
         })
     }
 }
@@ -862,7 +858,7 @@ impl TlvRpc for InventoryTlvRpc {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        response.expect_inventory()
+        expect_inventory(response)
     }
 
     fn parse_tag_value(
@@ -932,7 +928,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        response.expect_component_details()
+        expect_component_details(response)
     }
 
     fn parse_tag_value(
@@ -1015,7 +1011,7 @@ impl TlvRpc for BulkIgnitionStateTlvRpc<'_> {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        response.expect_bulk_ignition_state()
+        expect_bulk_ignition_state(response)
     }
 
     fn parse_tag_value(
@@ -1063,7 +1059,7 @@ impl TlvRpc for BulkIgnitionLinkEventsTlvRpc<'_> {
     }
 
     fn parse_response(&self, response: SpResponse) -> Result<TlvPage> {
-        response.expect_bulk_ignition_link_events()
+        expect_bulk_ignition_link_events(response)
     }
 
     fn parse_tag_value(
@@ -1186,7 +1182,7 @@ impl AttachedSerialConsoleSend {
                 as u64;
 
             let n = result.and_then(|(_peer, response, _data)| {
-                response.expect_serial_console_write_ack()
+                expect_serial_console_write_ack(response)
             })?;
 
             // Confirm the ack we got back makes sense; its `n` should be in the
@@ -1248,7 +1244,7 @@ impl AttachedSerialConsoleSend {
             .await
             .result
             .and_then(|(_peer, response, _data)| {
-                response.expect_serial_console_break_ack()
+                expect_serial_console_break_ack(response)
             })
     }
 }
@@ -1640,7 +1636,7 @@ impl<T: InnerSocket> Inner<T> {
         let (addr, response, _data) =
             self.rpc_call(MgsRequest::Discover, None).await?;
 
-        let discovery = response.expect_discover()?;
+        let discovery = expect_discover(response)?;
 
         // The receiving half of `sp_addr_tx` is held by the `SingleSp` that
         // created us, and it aborts our task when it's dropped. This send
@@ -1684,7 +1680,7 @@ impl<T: InnerSocket> Inner<T> {
                     .rpc_call(MgsRequest::SerialConsoleKeepAlive, None)
                     .await
                     .and_then(|(_peer, response, _trailing_data)| {
-                        response.expect_serial_console_keepalive_ack()
+                        expect_serial_console_keep_alive_ack(response)
                     });
                 _ = response_tx.send(result);
             }
@@ -1984,7 +1980,7 @@ impl<T: InnerSocket> Inner<T> {
         let (_peer, response, _data) = self
             .rpc_call(MgsRequest::SerialConsoleAttach(component), None)
             .await?;
-        response.expect_serial_console_attach_ack()?;
+        expect_serial_console_attach_ack(response)?;
 
         let (tx, rx) = mpsc::channel(SERIAL_CONSOLE_CHANNEL_DEPTH);
         self.serial_console_tx = Some(tx);
@@ -1998,7 +1994,7 @@ impl<T: InnerSocket> Inner<T> {
     async fn detach_serial_console(&mut self) -> Result<()> {
         let (_peer, response, _data) =
             self.rpc_call(MgsRequest::SerialConsoleDetach, None).await?;
-        response.expect_serial_console_detach_ack()?;
+        expect_serial_console_detach_ack(response)?;
         self.serial_console_tx = None;
         Ok(())
     }
