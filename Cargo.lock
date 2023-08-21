@@ -26,6 +26,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "98161a4e3e2184da77bb14f02184cdd111e83bbbcc9979dfee3c44b9a85f5602"
 
 [[package]]
+name = "array-init"
+version = "0.0.4"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "23589ecb866b460d3a0f1278834750268c607e8e28a1b982c907219f3178cd72"
+dependencies = [
+ "nodrop",
+]
+
+[[package]]
 name = "async-trait"
 version = "0.1.58"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -179,6 +188,7 @@ dependencies = [
  "once_cell",
  "strsim",
  "termcolor",
+ "terminal_size",
 ]
 
 [[package]]
@@ -578,7 +588,7 @@ dependencies = [
  "socket2 0.5.3",
  "string_cache",
  "thiserror",
- "tlvc 0.3.1",
+ "tlvc 0.3.1 (git+https://github.com/oxidecomputer/tlvc.git?branch=main)",
  "tokio",
  "usdt",
  "uuid",
@@ -701,7 +711,7 @@ dependencies = [
 [[package]]
 name = "hubtools"
 version = "0.4.1"
-source = "git+https://github.com/oxidecomputer/hubtools.git?branch=main#fbd499ceb440b838b9d8f6d9d73d046586bc24b8"
+source = "git+https://github.com/oxidecomputer/hubtools.git?branch=main#0c642f6e1f83b74725c7119a546bc26ac7452a48"
 dependencies = [
  "lpc55_areas",
  "lpc55_sign",
@@ -709,7 +719,7 @@ dependencies = [
  "path-slash",
  "rsa",
  "thiserror",
- "tlvc 0.3.0",
+ "tlvc 0.3.1 (git+https://github.com/oxidecomputer/tlvc.git)",
  "tlvc-text",
  "toml",
  "x509-cert",
@@ -819,18 +829,19 @@ dependencies = [
 
 [[package]]
 name = "lpc55_areas"
-version = "0.2.3"
-source = "git+https://github.com/oxidecomputer/lpc55_support#73c990b7e9a49324f5c31f5fa629e7aa747967e8"
+version = "0.2.4"
+source = "git+https://github.com/oxidecomputer/lpc55_support#4051a3b9421573dc36ed6098b292a7609a3cf98b"
 dependencies = [
  "bitfield",
+ "clap",
  "packed_struct",
  "serde",
 ]
 
 [[package]]
 name = "lpc55_sign"
-version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/lpc55_support#73c990b7e9a49324f5c31f5fa629e7aa747967e8"
+version = "0.3.2"
+source = "git+https://github.com/oxidecomputer/lpc55_support#4051a3b9421573dc36ed6098b292a7609a3cf98b"
 dependencies = [
  "byteorder",
  "const-oid",
@@ -845,6 +856,7 @@ dependencies = [
  "pem-rfc7468",
  "rsa",
  "serde",
+ "serde-hex",
  "sha2",
  "thiserror",
  "x509-cert",
@@ -865,6 +877,12 @@ name = "managed"
 version = "0.8.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ca88d725a0a943b096803bd34e73a4437208b6077654cc4ecb2947a5f91618d"
+
+[[package]]
+name = "maybe-uninit"
+version = "2.0.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "60302e4db3a61da70c0cb7991976248362f30319e88850c487b9b95bbf059e00"
 
 [[package]]
 name = "memchr"
@@ -922,6 +940,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "nodrop"
+version = "0.1.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "72ef4a56884ca558e5ddb05a1d1e7e1bfd9a68d9ed024c21704cc98872dae1bb"
+
+[[package]]
 name = "num-bigint-dig"
 version = "0.8.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -934,7 +958,8 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand",
- "smallvec",
+ "serde",
+ "smallvec 1.10.0",
  "zeroize",
 ]
 
@@ -1053,7 +1078,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall",
- "smallvec",
+ "smallvec 1.10.0",
  "windows-sys 0.36.1",
 ]
 
@@ -1307,6 +1332,7 @@ dependencies = [
  "pkcs1",
  "pkcs8",
  "rand_core",
+ "serde",
  "sha2",
  "signature",
  "subtle",
@@ -1376,6 +1402,17 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f1bb66e1af4481c21cbc943cabb68b98aabb4d7f935e47d1b4de722ca09da0b4"
 dependencies = [
  "serde",
+]
+
+[[package]]
+name = "serde-hex"
+version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ca37e3e4d1b39afd7ff11ee4e947efae85adfddf4841787bfa47c470e96dc26d"
+dependencies = [
+ "array-init",
+ "serde",
+ "smallvec 0.6.14",
 ]
 
 [[package]]
@@ -1516,6 +1553,15 @@ dependencies = [
  "term",
  "thread_local",
  "time",
+]
+
+[[package]]
+name = "smallvec"
+version = "0.6.14"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "b97fcaeba89edba30f044a10c6a3cc39df9c3f17d7cd829dd1446cab35f890e0"
+dependencies = [
+ "maybe-uninit",
 ]
 
 [[package]]
@@ -1700,6 +1746,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "terminal_size"
+version = "0.2.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8e6bf6f19e9f8ed8d4048dc22981458ebcf406d67e94cd422e5ecd73d63b3237"
+dependencies = [
+ "rustix",
+ "windows-sys 0.48.0",
+]
+
+[[package]]
 name = "termios"
 version = "0.3.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1768,16 +1824,6 @@ checksum = "42657b1a6f4d817cda8e7a0ace261fe0cc946cf3a80314390b22cc61ae080792"
 
 [[package]]
 name = "tlvc"
-version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/tlvc.git#559c72856a215ae217e9e6f25ff317edde0b0041"
-dependencies = [
- "byteorder",
- "crc",
- "zerocopy 0.6.1",
-]
-
-[[package]]
-name = "tlvc"
 version = "0.3.1"
 source = "git+https://github.com/oxidecomputer/tlvc.git?branch=main#e644a21a7ca973ed31499106ea926bd63ebccc6f"
 dependencies = [
@@ -1787,13 +1833,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "tlvc"
+version = "0.3.1"
+source = "git+https://github.com/oxidecomputer/tlvc.git#e644a21a7ca973ed31499106ea926bd63ebccc6f"
+dependencies = [
+ "byteorder",
+ "crc",
+ "zerocopy 0.6.1",
+]
+
+[[package]]
 name = "tlvc-text"
 version = "0.3.0"
-source = "git+https://github.com/oxidecomputer/tlvc.git#559c72856a215ae217e9e6f25ff317edde0b0041"
+source = "git+https://github.com/oxidecomputer/tlvc.git#e644a21a7ca973ed31499106ea926bd63ebccc6f"
 dependencies = [
  "ron",
  "serde",
- "tlvc 0.3.0",
+ "tlvc 0.3.1 (git+https://github.com/oxidecomputer/tlvc.git)",
  "zerocopy 0.6.1",
 ]
 
