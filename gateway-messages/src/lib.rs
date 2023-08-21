@@ -63,7 +63,7 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 7;
+    pub const CURRENT: u32 = 8;
 }
 
 #[derive(
