@@ -12,8 +12,10 @@
 //! can be removed as we will stop supporting v8.
 
 use super::assert_serialized;
+use gateway_messages::MgsRequest;
 use gateway_messages::SensorDataMissing;
 use gateway_messages::SensorReading;
+use gateway_messages::SensorRequest;
 use gateway_messages::SensorResponse;
 use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
@@ -47,6 +49,25 @@ fn sp_response() {
         (SensorResponse::ErrorCount(0x12345678), &[4, 0x78, 0x56, 0x34, 0x12]),
     ] {
         let response = SpResponse::ReadSensor(response);
+        let mut expected = vec![
+            38, // SpResponse::ReadSensor
+        ];
+        expected.extend_from_slice(serialized);
+        assert_serialized(&mut out, &expected, &response);
+    }
+}
+
+#[test]
+fn host_request() {
+    let mut out = [0; MgsRequest::MAX_SIZE];
+    for (request, serialized) in [
+        (SensorRequest::CurrentTime, &[0_u8] as &[_]),
+        (SensorRequest::LastReading { id: 0x1234 }, &[1, 0x34, 0x12, 0, 0]),
+        (SensorRequest::LastData { id: 0x1234 }, &[2, 0x34, 0x12, 0, 0]),
+        (SensorRequest::LastError { id: 0x1234 }, &[3, 0x34, 0x12, 0, 0]),
+        (SensorRequest::ErrorCount { id: 0x1234 }, &[4, 0x34, 0x12, 0, 0]),
+    ] {
+        let response = MgsRequest::ReadSensor(request);
         let mut expected = vec![
             38, // SpResponse::ReadSensor
         ];
