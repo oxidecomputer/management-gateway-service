@@ -16,6 +16,7 @@ use gateway_messages::MgsRequest;
 use gateway_messages::SensorDataMissing;
 use gateway_messages::SensorReading;
 use gateway_messages::SensorRequest;
+use gateway_messages::SensorRequestKind;
 use gateway_messages::SensorResponse;
 use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
@@ -25,28 +26,24 @@ fn sp_response() {
     let mut out = [0; SpResponse::MAX_SIZE];
     for (response, serialized) in [
         (
-            SensorResponse::CurrentTime(0x1234),
-            &[0_u8, 0x34, 0x12, 0, 0, 0, 0, 0, 0] as &[_],
-        ),
-        (
             SensorResponse::LastReading(SensorReading {
                 value: Ok(1.0),
                 timestamp: 0x5566,
             }),
-            &[1, 0, 0, 0, 0x80, 0x3f, 0x66, 0x55, 0, 0, 0, 0, 0, 0],
+            &[0u8, 0, 0, 0, 0x80, 0x3f, 0x66, 0x55, 0, 0, 0, 0, 0, 0] as &[_],
         ),
         (
             SensorResponse::LastData { value: 1.0, timestamp: 0x5566 },
-            &[2, 0, 0, 0x80, 0x3f, 0x66, 0x55, 0, 0, 0, 0, 0, 0],
+            &[1, 0, 0, 0x80, 0x3f, 0x66, 0x55, 0, 0, 0, 0, 0, 0],
         ),
         (
             SensorResponse::LastError {
                 value: SensorDataMissing::DeviceOff,
                 timestamp: 0x5566,
             },
-            &[3, 0, 0x66, 0x55, 0, 0, 0, 0, 0, 0],
+            &[2, 0, 0x66, 0x55, 0, 0, 0, 0, 0, 0],
         ),
-        (SensorResponse::ErrorCount(0x12345678), &[4, 0x78, 0x56, 0x34, 0x12]),
+        (SensorResponse::ErrorCount(0x12345678), &[3, 0x78, 0x56, 0x34, 0x12]),
     ] {
         let response = SpResponse::ReadSensor(response);
         let mut expected = vec![
@@ -55,25 +52,35 @@ fn sp_response() {
         expected.extend_from_slice(serialized);
         assert_serialized(&mut out, &expected, &response);
     }
+
+    let response = SpResponse::CurrentTime(0x1234);
+    let expected = [39, 0x34, 0x12, 0, 0, 0, 0, 0, 0];
+    assert_serialized(&mut out, &expected, &response);
 }
 
 #[test]
 fn host_request() {
     let mut out = [0; MgsRequest::MAX_SIZE];
-    for (request, serialized) in [
-        (SensorRequest::CurrentTime, &[0_u8] as &[_]),
-        (SensorRequest::LastReading { id: 0x1234 }, &[1, 0x34, 0x12, 0, 0]),
-        (SensorRequest::LastData { id: 0x1234 }, &[2, 0x34, 0x12, 0, 0]),
-        (SensorRequest::LastError { id: 0x1234 }, &[3, 0x34, 0x12, 0, 0]),
-        (SensorRequest::ErrorCount { id: 0x1234 }, &[4, 0x34, 0x12, 0, 0]),
+    for (kind, serialized) in [
+        (SensorRequestKind::LastReading, &[0, 0x34, 0x12, 0, 0]),
+        (SensorRequestKind::LastData, &[1, 0x34, 0x12, 0, 0]),
+        (SensorRequestKind::LastError, &[2, 0x34, 0x12, 0, 0]),
+        (SensorRequestKind::ErrorCount, &[3, 0x34, 0x12, 0, 0]),
     ] {
-        let response = MgsRequest::ReadSensor(request);
+        let request =
+            MgsRequest::ReadSensor(SensorRequest { kind, id: 0x1234 });
         let mut expected = vec![
             38, // SpResponse::ReadSensor
         ];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&mut out, &expected, &request);
     }
+
+    let request = MgsRequest::CurrentTime;
+    let expected = vec![
+        39, // SpResponse::CurrentTime
+    ];
+    assert_serialized(&mut out, &expected, &request);
 }
 
 #[test]

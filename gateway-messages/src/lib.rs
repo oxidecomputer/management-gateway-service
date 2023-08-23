@@ -145,17 +145,24 @@ pub enum SwitchDuration {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub enum SensorRequest {
-    /// Requests the current timestamp (as a `u64`)
-    CurrentTime,
+pub enum SensorRequestKind {
     /// Requests the most recent reading, which is either a value or error
-    LastReading { id: u32 },
+    LastReading,
     /// Requests the most recent data value
-    LastData { id: u32 },
+    LastData,
     /// Requests the most recent error value
-    LastError { id: u32 },
+    LastError,
     /// Requests the error count for a given sensor
-    ErrorCount { id: u32 },
+    ErrorCount,
+}
+
+/// Sensor readings that we could request from the target by `SensorId`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct SensorRequest {
+    pub kind: SensorRequestKind,
+    pub id: u32,
 }
 
 /// Most recent sensor reading, which may be a reading or a value
@@ -180,7 +187,6 @@ pub struct SensorReading {
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum SensorResponse {
-    CurrentTime(u64),
     LastReading(SensorReading),
     LastData { value: f32, timestamp: u64 },
     LastError { value: SensorDataMissing, timestamp: u64 },

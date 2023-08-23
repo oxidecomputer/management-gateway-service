@@ -123,6 +123,7 @@ pub enum SpResponse {
 
     SpStateV2(SpStateV2),
     ReadSensor(SensorResponse),
+    CurrentTime(u64),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

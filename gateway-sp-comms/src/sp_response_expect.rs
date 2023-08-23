@@ -113,6 +113,7 @@ expect_fn!(ResetComponentTriggerAck);
 expect_fn!(SwitchDefaultImageAck);
 expect_fn!(ComponentActionAck);
 expect_fn!(ReadSensor(resp) -> SensorResponse);
+expect_fn!(CurrentTime(time) -> u64);
 
 // Data-bearing responses
 expect_data_fn!(BulkIgnitionState(page) -> TlvPage);

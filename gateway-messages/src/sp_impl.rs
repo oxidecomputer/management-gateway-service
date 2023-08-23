@@ -380,6 +380,8 @@ pub trait SpHandler {
         &mut self,
         request: SensorRequest,
     ) -> Result<SensorResponse, SpError>;
+
+    fn current_time(&mut self) -> Result<u64, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -926,6 +928,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ReadSensor(req) => {
             handler.read_sensor(req).map(SpResponse::ReadSensor)
         }
+        MgsRequest::CurrentTime => {
+            handler.current_time().map(SpResponse::CurrentTime)
+        }
     };
 
     let response = match result {
@@ -1309,6 +1314,10 @@ mod tests {
             &mut self,
             _r: SensorRequest,
         ) -> Result<SensorResponse, SpError> {
+            unimplemented!()
+        }
+
+        fn current_time(&mut self) -> Result<u64, SpError> {
             unimplemented!()
         }
     }

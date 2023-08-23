@@ -160,7 +160,11 @@ pub enum MgsRequest {
         key: [u8; 4],
     },
 
+    /// Issues a sensor read request
     ReadSensor(SensorRequest),
+
+    /// Requests the target's current time (usually milliseconds since boot)
+    CurrentTime,
 }
 
 #[derive(

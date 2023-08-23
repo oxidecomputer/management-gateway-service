@@ -35,6 +35,7 @@ use gateway_messages::MgsRequest;
 use gateway_messages::PowerState;
 use gateway_messages::SensorReading;
 use gateway_messages::SensorRequest;
+use gateway_messages::SensorRequestKind;
 use gateway_messages::SensorResponse;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
@@ -799,7 +800,10 @@ impl SingleSp {
 
     pub async fn read_sensor_value(&self, id: u32) -> Result<SensorReading> {
         let v = self
-            .rpc(MgsRequest::ReadSensor(SensorRequest::LastReading { id }))
+            .rpc(MgsRequest::ReadSensor(SensorRequest {
+                kind: SensorRequestKind::LastReading,
+                id,
+            }))
             .await
             .and_then(expect_read_sensor)?;
         match v {
