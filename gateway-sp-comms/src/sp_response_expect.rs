@@ -8,6 +8,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
+use gateway_messages::SensorResponse;
 use gateway_messages::SpResponse;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
@@ -111,6 +112,8 @@ expect_fn!(ResetComponentPrepareAck);
 expect_fn!(ResetComponentTriggerAck);
 expect_fn!(SwitchDefaultImageAck);
 expect_fn!(ComponentActionAck);
+expect_fn!(ReadSensor(resp) -> SensorResponse);
+expect_fn!(CurrentTime(time) -> u64);
 
 // Data-bearing responses
 expect_data_fn!(BulkIgnitionState(page) -> TlvPage);

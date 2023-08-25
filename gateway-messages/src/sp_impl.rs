@@ -26,6 +26,8 @@ use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
 use crate::RotSlotId;
+use crate::SensorRequest;
+use crate::SensorResponse;
 use crate::SerializedSize;
 use crate::SpComponent;
 use crate::SpError;
@@ -373,6 +375,13 @@ pub trait SpHandler {
         port: SpPort,
         component: SpComponent,
     ) -> Result<(), SpError>;
+
+    fn read_sensor(
+        &mut self,
+        request: SensorRequest,
+    ) -> Result<SensorResponse, SpError>;
+
+    fn current_time(&mut self) -> Result<u64, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -916,6 +925,12 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::CabooseValue)
         }
+        MgsRequest::ReadSensor(req) => {
+            handler.read_sensor(req).map(SpResponse::ReadSensor)
+        }
+        MgsRequest::CurrentTime => {
+            handler.current_time().map(SpResponse::CurrentTime)
+        }
     };
 
     let response = match result {
@@ -1292,6 +1307,17 @@ mod tests {
             _key: [u8; 4],
             _buf: &mut [u8],
         ) -> Result<usize, SpError> {
+            unimplemented!()
+        }
+
+        fn read_sensor(
+            &mut self,
+            _r: SensorRequest,
+        ) -> Result<SensorResponse, SpError> {
+            unimplemented!()
+        }
+
+        fn current_time(&mut self) -> Result<u64, SpError> {
             unimplemented!()
         }
     }

@@ -63,7 +63,7 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 7;
+    pub const CURRENT: u32 = 8;
 }
 
 #[derive(
@@ -78,7 +78,7 @@ pub struct Header {
 }
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct Message {
     pub header: Header,
@@ -86,7 +86,7 @@ pub struct Message {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, SerializedSize,
 )]
 pub enum MessageKind {
     MgsRequest(MgsRequest),
@@ -139,6 +139,72 @@ pub enum RotSlotId {
 pub enum SwitchDuration {
     Once,
     Forever,
+}
+
+/// Sensor readings that we could request from the target by `SensorId`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SensorRequestKind {
+    /// Requests the most recent reading, which is either a value or error
+    LastReading,
+    /// Requests the most recent data value
+    LastData,
+    /// Requests the most recent error value
+    LastError,
+    /// Requests the error count for a given sensor
+    ErrorCount,
+}
+
+/// Sensor readings that we could request from the target by `SensorId`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct SensorRequest {
+    pub kind: SensorRequestKind,
+    pub id: u32,
+}
+
+/// Most recent sensor reading, which may be a reading or a value
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct SensorReading {
+    pub value: Result<f32, SensorDataMissing>,
+    pub timestamp: u64,
+}
+
+/// Response to a [`SensorRequest`]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::IntoStaticStr,
+)]
+#[strum(serialize_all = "snake_case")]
+pub enum SensorResponse {
+    LastReading(SensorReading),
+    LastData { value: f32, timestamp: u64 },
+    LastError { value: SensorDataMissing, timestamp: u64 },
+    ErrorCount(u32),
+}
+
+/// An error or issue that led to sensor data not being available
+///
+/// Equivalent to `NoData` in Hubris.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SensorDataMissing {
+    DeviceOff,
+    DeviceError,
+    DeviceNotPresent,
+    DeviceUnavailable,
+    DeviceTimeout,
 }
 
 #[derive(
