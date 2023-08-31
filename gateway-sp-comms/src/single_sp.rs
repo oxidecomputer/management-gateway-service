@@ -808,8 +808,6 @@ impl SingleSp {
             .and_then(expect_read_sensor)?;
         match v {
             SensorResponse::LastReading(r) => Ok(r),
-            // TODO: Is this a bad overloading of
-            // CommunicationError::BadResponseType?
             other => Err(CommunicationError::BadResponseType {
                 expected: "last_reading",
                 got: other.into(),
