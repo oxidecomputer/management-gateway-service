@@ -21,6 +21,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
+use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
@@ -33,6 +34,7 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::PowerState;
+use gateway_messages::RotRequest;
 use gateway_messages::SensorReading;
 use gateway_messages::SensorRequest;
 use gateway_messages::SensorRequestKind;
@@ -46,6 +48,7 @@ use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
+use gateway_messages::ROT_PAGE_SIZE;
 use serde::Serialize;
 use slog::debug;
 use slog::error;
@@ -813,6 +816,30 @@ impl SingleSp {
                 got: other.into(),
             }),
         }
+    }
+
+    pub async fn read_rot_cmpa(&self) -> Result<[u8; ROT_PAGE_SIZE]> {
+        self.rpc(MgsRequest::ReadRot(RotRequest::ReadCmpa))
+            .await
+            .and_then(expect_read_rot)
+    }
+
+    pub async fn read_rot_active_cfpa(&self) -> Result<[u8; ROT_PAGE_SIZE]> {
+        self.rpc(MgsRequest::ReadRot(RotRequest::ReadCfpa(CfpaPage::Active)))
+            .await
+            .and_then(expect_read_rot)
+    }
+
+    pub async fn read_rot_inactive_cfpa(&self) -> Result<[u8; ROT_PAGE_SIZE]> {
+        self.rpc(MgsRequest::ReadRot(RotRequest::ReadCfpa(CfpaPage::Inactive)))
+            .await
+            .and_then(expect_read_rot)
+    }
+
+    pub async fn read_rot_scratch_cfpa(&self) -> Result<[u8; ROT_PAGE_SIZE]> {
+        self.rpc(MgsRequest::ReadRot(RotRequest::ReadCfpa(CfpaPage::Scratch)))
+            .await
+            .and_then(expect_read_rot)
     }
 }
 

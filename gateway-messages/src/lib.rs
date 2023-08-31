@@ -35,6 +35,9 @@ pub const SERIAL_CONSOLE_IDLE_TIMEOUT: Duration = Duration::from_secs(20);
 /// Maximum size in bytes for a serialized message.
 pub const MAX_SERIALIZED_SIZE: usize = 1024;
 
+/// Size for a memory page in the Root of Trust (LPC55)
+pub const ROT_PAGE_SIZE: usize = 512;
+
 /// Module specifying the minimum and current version of the MGS protocol.
 ///
 /// Our primary mechanism for serializing requests and responses is enums
@@ -63,7 +66,7 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 9;
+    pub const CURRENT: u32 = 10;
 }
 
 #[derive(
@@ -193,6 +196,21 @@ pub enum SensorResponse {
     ErrorCount(u32),
 }
 
+/// Response to an [`RotRequest`]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::IntoStaticStr,
+)]
+pub enum RotResponse {
+    Ok,
+}
+
 /// An error or issue that led to sensor data not being available
 ///
 /// Equivalent to `NoData` in Hubris.
@@ -205,6 +223,28 @@ pub enum SensorDataMissing {
     DeviceNotPresent,
     DeviceUnavailable,
     DeviceTimeout,
+}
+
+/// Request to the CMPA
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum RotRequest {
+    ReadCmpa,
+    ReadCfpa(CfpaPage),
+}
+
+/// Specific CFPA page
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum CfpaPage {
+    /// Currently active page
+    Active,
+    /// Currently inactive page
+    Inactive,
+    /// Page that may become active upon reset
+    Scratch,
 }
 
 #[derive(

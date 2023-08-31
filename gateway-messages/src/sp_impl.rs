@@ -25,6 +25,8 @@ use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
+use crate::RotRequest;
+use crate::RotResponse;
 use crate::RotSlotId;
 use crate::SensorRequest;
 use crate::SensorResponse;
@@ -41,6 +43,7 @@ use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
+use crate::ROT_PAGE_SIZE;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
 
@@ -382,6 +385,12 @@ pub trait SpHandler {
     ) -> Result<SensorResponse, SpError>;
 
     fn current_time(&mut self) -> Result<u64, SpError>;
+
+    fn read_rot(
+        &mut self,
+        request: RotRequest,
+        buf: &mut [u8],
+    ) -> Result<RotResponse, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -690,7 +699,8 @@ fn handle_mgs_request<H: SpHandler>(
     let trailing_data = match &kind {
         MgsRequest::UpdateChunk(_)
         | MgsRequest::SerialConsoleWrite { .. }
-        | MgsRequest::SetIpccKeyLookupValue { .. } => leftover,
+        | MgsRequest::SetIpccKeyLookupValue { .. }
+        | MgsRequest::ReadRot(_) => leftover,
         _ => {
             if !leftover.is_empty() {
                 return (
@@ -927,6 +937,14 @@ fn handle_mgs_request<H: SpHandler>(
         }
         MgsRequest::ReadSensor(req) => {
             handler.read_sensor(req).map(SpResponse::ReadSensor)
+        }
+        MgsRequest::ReadRot(req) => {
+            let r = handler.read_rot(req, trailing_tx_buf);
+            if r.is_ok() {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(ROT_PAGE_SIZE));
+            }
+            r.map(SpResponse::ReadRot)
         }
         MgsRequest::CurrentTime => {
             handler.current_time().map(SpResponse::CurrentTime)
@@ -1314,6 +1332,14 @@ mod tests {
             &mut self,
             _r: SensorRequest,
         ) -> Result<SensorResponse, SpError> {
+            unimplemented!()
+        }
+
+        fn read_rot(
+            &mut self,
+            _r: RotRequest,
+            _buf: &mut [u8],
+        ) -> Result<RotResponse, SpError> {
             unimplemented!()
         }
 

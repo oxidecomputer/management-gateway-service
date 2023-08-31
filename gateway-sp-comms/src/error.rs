@@ -62,6 +62,8 @@ pub enum CommunicationError {
     IpccKeyLookupValueTooLarge,
     #[error("Packet included unexpected trailing data: {0:x?}")]
     UnexpectedTrailingData(Vec<u8>),
+    #[error("Trailing data is wrong length: expected {expected}, got {got}")]
+    BadTrailingDataSize { expected: usize, got: usize },
 }
 
 impl From<SingleSpHandleError> for CommunicationError {
