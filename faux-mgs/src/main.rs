@@ -36,10 +36,12 @@ use slog::warn;
 use slog::Drain;
 use slog::Level;
 use slog::Logger;
+use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::io;
+use std::mem;
 use std::net::SocketAddrV6;
 use std::path::Path;
 use std::path::PathBuf;
@@ -437,25 +439,23 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
     }
 }
 
-fn build_logger(level: Level, path: Option<&Path>) -> Result<Logger> {
+fn build_logger(
+    level: Level,
+    path: Option<&Path>,
+) -> Result<(Logger, AsyncGuard)> {
     fn make_drain<D: slog_term::Decorator + Send + 'static>(
         level: Level,
         decorator: D,
-    ) -> slog::Fuse<slog_async::Async> {
+    ) -> (slog::Fuse<slog_async::Async>, AsyncGuard) {
         let drain = slog_term::FullFormat::new(decorator)
             .build()
             .filter_level(level)
             .fuse();
-        slog_async::Async::new(drain).build().fuse()
+        let (drain, guard) = slog_async::Async::new(drain).build_with_guard();
+        (drain.fuse(), guard)
     }
 
-    let drain = if let Some(path) = path {
-        // Special case /dev/null - don't even bother with slog_async, just
-        // return a discarding logger.
-        if path == Path::new("/dev/null") {
-            return Ok(Logger::root(slog::Discard, o!()));
-        }
-
+    let (drain, guard) = if let Some(path) = path {
         let file = File::create(path).with_context(|| {
             format!("failed to create logfile {}", path.display())
         })?;
@@ -464,7 +464,7 @@ fn build_logger(level: Level, path: Option<&Path>) -> Result<Logger> {
         make_drain(level, slog_term::TermDecorator::new().build())
     };
 
-    Ok(Logger::root(drain, o!("component" => "faux-mgs")))
+    Ok((Logger::root(drain, o!("component" => "faux-mgs")), guard))
 }
 
 fn build_requested_interfaces(patterns: Vec<String>) -> Result<Vec<String>> {
@@ -507,7 +507,8 @@ fn build_requested_interfaces(patterns: Vec<String>) -> Result<Vec<String>> {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    let log = build_logger(args.log_level, args.logfile.as_deref())?;
+    let (log, log_guard) =
+        build_logger(args.log_level, args.logfile.as_deref())?;
 
     let per_attempt_timeout =
         Duration::from_millis(args.per_attempt_timeout_millis);
@@ -589,7 +590,17 @@ async fn main() -> Result<()> {
             .await?;
 
             // If usart::run() returns, the user detached; exit.
-            return Ok(());
+            //
+            // We don't just `return Ok(())` here because we'll bump into
+            // https://github.com/tokio-rs/tokio/issues/2466: `usart::run()`
+            // reads from stdin, which means we end up with a task blocked in a
+            // system call, preventing tokio from shutting down the runtime
+            // created via `tokio::main`. We could create an explicit `Runtime`
+            // and call `shutdown_background`; instead, we explicitly exit to
+            // bypass tokio's shutdown. We first drop our `log_guard` to ensure
+            // any messages have been flushed.
+            mem::drop(log_guard);
+            std::process::exit(0);
         }
         Command::ServeHostPhase2 { directory } => {
             populate_phase2_images(&host_phase2_provider, &directory, &log)
