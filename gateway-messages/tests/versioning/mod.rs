@@ -14,6 +14,8 @@ mod v6;
 mod v7;
 mod v8;
 
+mod v10;
+
 pub fn assert_serialized(
     out: &mut [u8],
     expected: &[u8],
