@@ -828,27 +828,27 @@ pub enum SprotProtocolError {
     BadMessageLength,
     // We cannot assert chip select
     CannotAssertCSn,
-    // The request timed out
+    /// The request timed out
     Timeout,
-    // Hubpack error
+    /// Hubpack error
     Deserialization,
-    // The RoT has not de-asserted ROT_IRQ
+    /// The RoT has not de-asserted ROT_IRQ
     RotIrqRemainsAsserted,
-    // An unexpected response was received.
-    // This should basically be impossible. We only include it so we can
-    // return this error when unpacking a RspBody in idol calls.
+    /// An unexpected response was received.
+    /// This should basically be impossible. We only include it so we can
+    /// return this error when unpacking a RspBody in idol calls.
     UnexpectedResponse,
-
-    // Failed to load update status
+    /// Failed to load update status
     BadUpdateStatus,
-
-    // Used for mapping From<idol_runtime::ServerDeath>
+    /// Used for mapping From<idol_runtime::ServerDeath>
     TaskRestarted,
-
-    // When the type in hubris has been updated, but MGS does not yet know
-    // this type. The meaning of the error code here should be found in the
-    // `From<HubrisType> for MgsType` implementation in the hubris code.
+    /// When the type in hubris has been updated, but MGS does not yet know
+    /// this type. The meaning of the error code here should be found in the
+    /// `From<HubrisType> for MgsType` implementation in the hubris code.
     Unknown(u32),
+    /// The SP and RoT did not agree on whether the SP is sending a request or
+    /// waiting for a reply
+    Desynchronized,
 }
 
 impl fmt::Display for SprotProtocolError {
@@ -873,6 +873,7 @@ impl fmt::Display for SprotProtocolError {
             Self::BadUpdateStatus => write!(f, "failed to load update status"),
             Self::TaskRestarted => write!(f, "hubris task restarted"),
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
+            Self::Desynchronized => write!(f, "SP and RoT are desynchronized"),
         }
     }
 }
