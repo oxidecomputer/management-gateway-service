@@ -10,6 +10,7 @@ use anyhow::Context;
 use anyhow::Result;
 use clap::Parser;
 use clap::Subcommand;
+use clap::ValueEnum;
 use futures::stream::FuturesOrdered;
 use futures::FutureExt;
 use futures::StreamExt;
@@ -22,6 +23,7 @@ use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
+use gateway_messages::ROT_PAGE_SIZE;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
@@ -344,6 +346,23 @@ enum Command {
         /// Sensor ID
         id: u32,
     },
+
+    /// Reads the CMPA from an attached Root of Trust
+    ReadCmpa {
+        /// Output file (by default, pretty-printed to `stdout`)
+        #[clap(short, long)]
+        out: Option<PathBuf>,
+    },
+
+    /// Reads a CFPA slot from an attached Root of Trust
+    ReadCfpa {
+        /// Output file (by default, pretty-printed to `stdout`)
+        #[clap(short, long)]
+        out: Option<PathBuf>,
+
+        #[clap(short, long, default_value_t = CfpaSlot::Active)]
+        slot: CfpaSlot,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -354,6 +373,30 @@ enum LedCommand {
     Off,
     /// Enables blinking
     Blink,
+}
+
+#[derive(ValueEnum, Debug, Clone)]
+enum CfpaSlot {
+    Active,
+    Inactive,
+    Scratch,
+}
+
+impl std::fmt::Display for CfpaSlot {
+    fn fmt(
+        &self,
+        f: &mut std::fmt::Formatter<'_>,
+    ) -> Result<(), std::fmt::Error> {
+        write!(
+            f,
+            "{}",
+            match self {
+                CfpaSlot::Active => "active",
+                CfpaSlot::Inactive => "inactive",
+                CfpaSlot::Scratch => "scratch",
+            }
+        )
+    }
 }
 
 impl Command {
@@ -1229,7 +1272,42 @@ async fn run_command(
                 })
             })
         }
+        Command::ReadCmpa { out } => {
+            let data = sp.read_rot_cmpa().await?;
+            handle_cxpa("cmpa", data, out, json)
+        }
+        Command::ReadCfpa { out, slot } => {
+            let data = match slot {
+                CfpaSlot::Active => sp.read_rot_active_cfpa().await,
+                CfpaSlot::Inactive => sp.read_rot_inactive_cfpa().await,
+                CfpaSlot::Scratch => sp.read_rot_scratch_cfpa().await,
+            }?;
+            handle_cxpa("cfpa", data, out, json)
+        }
     }
+}
+
+fn handle_cxpa(
+    name: &str,
+    data: [u8; ROT_PAGE_SIZE],
+    out: Option<PathBuf>,
+    json: bool,
+) -> Result<Output> {
+    Ok(if let Some(f) = &out {
+        std::fs::write(f, data).context(format!(
+            "failed to write {} to {f:?}",
+            name.to_uppercase()
+        ))?;
+        if json {
+            Output::Json(json!({ "ok": true }))
+        } else {
+            Output::Lines(vec!["ok".to_string()])
+        }
+    } else if json {
+        Output::Json(json!({ name: data.to_vec() }))
+    } else {
+        Output::Lines(vec![format!("{data:x?}")])
+    })
 }
 
 async fn update(

@@ -70,7 +70,7 @@ fn host_request() {
         let request =
             MgsRequest::ReadSensor(SensorRequest { kind, id: 0x1234 });
         let mut expected = vec![
-            38, // SpResponse::ReadSensor
+            38, // MgsRequest::ReadSensor
         ];
         expected.extend_from_slice(serialized);
         assert_serialized(&mut out, &expected, &request);
@@ -78,7 +78,7 @@ fn host_request() {
 
     let request = MgsRequest::CurrentTime;
     let expected = vec![
-        39, // SpResponse::CurrentTime
+        39, // MgsRequest::CurrentTime
     ];
     assert_serialized(&mut out, &expected, &request);
 }

@@ -6,14 +6,15 @@
 
 use serde::Serialize;
 
-mod v2;
-mod v3;
-mod v4;
-mod v5;
-mod v6;
-mod v7;
-mod v8;
-mod v9;
+mod v02;
+mod v03;
+mod v04;
+mod v05;
+mod v06;
+mod v07;
+mod v08;
+mod v09;
+mod v10;
 
 pub fn assert_serialized(
     out: &mut [u8],

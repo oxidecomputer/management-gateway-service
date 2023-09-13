@@ -7,6 +7,7 @@
 use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
+use crate::RotRequest;
 use crate::RotSlotId;
 use crate::SensorRequest;
 use crate::SpComponent;
@@ -165,6 +166,9 @@ pub enum MgsRequest {
 
     /// Requests the target's current time (usually milliseconds since boot)
     CurrentTime,
+
+    /// Issues a sensor read request
+    ReadRot(RotRequest),
 }
 
 #[derive(

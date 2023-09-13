@@ -7,6 +7,7 @@
 use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
+use crate::RotResponse;
 use crate::RotSlotId;
 use crate::SensorResponse;
 use crate::SpComponent;
@@ -124,6 +125,7 @@ pub enum SpResponse {
     SpStateV2(SpStateV2),
     ReadSensor(SensorResponse),
     CurrentTime(u64),
+    ReadRot(RotResponse),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
