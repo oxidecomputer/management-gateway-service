@@ -3,13 +3,13 @@
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
 //! The tests in this module check that the serialized form of messages from MGS
-//! protocol version 9 have not changed.
+//! protocol version 10 have not changed.
 //!
 //! If a test in this module fails, _do not change the test_! This means you
 //! have changed, deleted, or reordered an existing message type or enum
 //! variant, and you should revert that change. This will remain true until we
-//! bump the `version::MIN` to a value higher than 9, at which point these tests
-//! can be removed as we will stop supporting v9.
+//! bump the `version::MIN` to a value higher than 10, at which point these
+//! tests can be removed as we will stop supporting v10.
 
 use super::assert_serialized;
 use gateway_messages::CfpaPage;
