@@ -809,6 +809,8 @@ pub enum UpdateError {
     BlockOutOfOrder,
     InvalidSlotIdForOperation,
     InvalidArchive,
+    ImageMismatch,
+    SignatureNotValidated,
 }
 
 impl fmt::Display for UpdateError {
@@ -855,6 +857,12 @@ impl fmt::Display for UpdateError {
             }
             Self::InvalidArchive => {
                 write!(f, "invalid archive")
+            }
+            Self::ImageMismatch => {
+                write!(f, "image does not match")
+            }
+            Self::SignatureNotValidated => {
+                write!(f, "image not present or signature not valid")
             }
         }
     }

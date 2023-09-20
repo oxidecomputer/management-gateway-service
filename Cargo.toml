@@ -59,3 +59,7 @@ zip = { version = "0.6.6", default-features = false, features = ["deflate", "bzi
 
 gateway-messages.path = "gateway-messages"
 gateway-sp-comms.path = "gateway-sp-comms"
+
+[profile.dev]
+opt-level = 0
+debug = true

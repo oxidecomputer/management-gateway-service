@@ -594,6 +594,10 @@ impl SingleSp {
             start_rot_update(&self.cmds_tx, update_id, component, slot, image, self.log())
                 .await
         } else if component == SpComponent::STAGE0 {
+            info!(
+                self.log,
+                "starting STAGE0:0 update"
+            );
             if slot != 0 {
                 return Err(UpdateError::Communication(
                     CommunicationError::SpError(
@@ -601,7 +605,7 @@ impl SingleSp {
                     ),
                 ));
             }
-            start_rot_update( &self.cmds_tx, update_id, component, slot, image, self.log()).await
+            start_rot_update(&self.cmds_tx, update_id, component, slot, image, self.log()).await
         } else {
             start_component_update(
                 &self.cmds_tx,

@@ -267,7 +267,7 @@ pub(super) async fn start_rot_update(
     image: Vec<u8>,
     log: &Logger,
 ) -> Result<(), UpdateError> {
-    println!("\n\nXXX start_rot_update slot:{:?}\n", slot);
+    debug!(log, "start_rot_update slot:{:?}\n", slot);
     let rot_image = match (component, slot) {
         // Hubris images
         (SpComponent::ROT, 0 | 1) => {
@@ -308,15 +308,15 @@ pub(super) async fn start_rot_update(
         },
         // Bootloader image
         (SpComponent::STAGE0, 0) => {
-            println!("\n\nXXX STAGE0,0");
+            debug!(log, "need bootloader image");
             // Bootloader is released in a simpler zip archive than Hubris.
             // No bootloaders have been released yet with an Oxide header or
             // caboose.
             // TODO: Add a caboose to the bootloader images.
-            // TOOD: Implement appropriate sanity checks on the image.
+            // TODO: Implement appropriate sanity checks on the image.
             // TODO: Elsewhere: check against archive's CFPA and RoT's.
             let contents = image.clone();
-            println!("XXX contents.len(): {:?}", contents.len());
+            debug!(log, "contents.len(): {:?}", contents.len());
             let cursor = Cursor::new(contents.as_slice());
             let mut archive = match zip::ZipArchive::new(cursor) {
                 Ok(archive) => archive,
@@ -325,20 +325,20 @@ pub(super) async fn start_rot_update(
             const BIN_FILE: &str = "bootleby.bin";
             let mut file = match archive.by_name(BIN_FILE) {
                 Ok(file) => {
-                    println!("XXX file");
+                    debug!(log, "found bootloader file {}", BIN_FILE);
                     file
                 },
                 Err(_) => {
-                    println!("XXX failed");
+                    error!(log, "did not find bootloader file");
                     return Err(UpdateError::InvalidArchive)
                 }
             };
             let mut rot_image = vec![];
             if file.read_to_end(&mut rot_image).is_err() {
-                println!("XXX invalid archive");
+                error!(log, "invalid archive");
                 return Err(UpdateError::InvalidArchive);
             }
-            println!("XXX ok! rot_image.len():{:?}", rot_image.len());
+            info!(log, "ok! rot_image.len():{:?}", rot_image.len());
             rot_image
         },
         _ => return Err(UpdateError::InvalidSlotIdForOperation),
@@ -369,8 +369,6 @@ pub(super) async fn start_component_update(
 ) -> Result<(), UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
-    println!("XXX start_component_update total_size={:?}", total_size);
-
     info!(
         log, "starting update";
         "component" => component.as_str(),
