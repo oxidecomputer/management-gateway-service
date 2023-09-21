@@ -163,6 +163,39 @@ pub struct ImageVersion {
     pub version: u32,
 }
 
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub enum ImageError {
+    /// Image has not been sanity checked (internal use)
+    Unchecked = 1,
+    /// First page of image is erased.
+    FirstPageErased,
+    /// Some pages in the image are erased.
+    PartiallyProgrammed,
+    /// The NXP image offset + length caused a wrapping add.
+    InvalidLength,
+    /// The header flash page is erased.
+    HeaderNotProgrammed,
+    /// An image not requiring an ImageHeader is too short.
+    Short,
+    /// A required ImageHeader is missing.
+    BadMagic,
+    /// The image size in ImageHeader is unreasonable.
+    HeaderImageSize,
+    /// total_image_length in ImageHeader is not properly aligned.
+    UnalignedLength,
+    /// Some NXP image types are not supported.
+    UnsupportedType,
+    /// Wrong format reset vector.
+    ResetVectorNotThumb2,
+    /// Reset vector points outside of image execution range.
+    ResetVector,
+    /// Signature check on image failed.
+    Signature,
+}
+
+
 /// This is quasi-deprecated in that it will only be returned by SPs with images
 /// older than the  introduction of `SpStateV2`.
 #[derive(
@@ -240,8 +273,8 @@ pub struct RotBootState {
     pub active: RotSlotId,
     pub slot_a: Option<RotImageDetails>,
     pub slot_b: Option<RotImageDetails>,
-    pub bootloader: Option<RotImageDetails>,
-    pub staged_bootloader: Option<RotImageDetails>,
+    pub stage0: Option<RotImageDetails>,
+    pub stage0_next: Option<RotImageDetails>,
 }
 
 #[derive(
@@ -301,21 +334,22 @@ pub struct RotStateV3 {
     /// This is a magic ram value that is cleared by bootleby
     pub transient_boot_preference: Option<RotSlotId>,
     /// Sha3-256 Digest of Slot A in Flash
-    pub slot_a_sha3_256_digest: Option<[u8; 32]>,
+    pub slot_a_sha3_256_digest: [u8; 32],
     /// Sha3-256 Digest of Slot B in Flash
-    pub slot_b_sha3_256_digest: Option<[u8; 32]>,
+    pub slot_b_sha3_256_digest: [u8; 32],
     /// Sha3-256 Digest of Bootloader in Flash at boot time
-    pub bootloader_sha3_256_digest: Option<[u8; 32]>,
+    pub stage0_sha3_256_digest: [u8; 32],
     /// Sha3-256 Digest of Staged Bootloader in Flash at boot time
-    pub staged_bootloader_sha3_256_digest: Option<[u8; 32]>,
-    /// Slot A signature verified at boot time
-    pub slot_a_signature_good: Option<bool>,
-    /// Slot B signature verified at boot time
-    pub slot_b_signature_good: Option<bool>,
-    /// Boot Loader Signature Verified At Boot
-    pub boot_loader_signature_good: Option<bool>,
-    /// Staged Boot Loader Signature Verified At Boot
-    pub staged_boot_loader_signature_good: Option<bool>,
+    pub stage0_next_sha3_256_digest: [u8; 32],
+
+    /// Slot A ImageVersion if image verifies, otherwise failure cause.
+    pub slot_a_status: Result<ImageVersion, ImageError>,
+    /// Slot B ImageVersion if image verifies, otherwise failure cause.
+    pub slot_b_status: Result<ImageVersion, ImageError>,
+    /// Stage0 ImageVersion if image verifies, otherwise failure cause.
+    pub stage0_status: Result<ImageVersion, ImageError>,
+    /// Stage0Next ImageVersion if image verifies, otherwise failure cause.
+    pub stage0_next_status: Result<ImageVersion, ImageError>,
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded

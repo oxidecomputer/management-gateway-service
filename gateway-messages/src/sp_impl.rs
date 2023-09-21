@@ -35,7 +35,6 @@ use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
 use crate::SpResponse;
-// use crate::SpStateV2;
 use crate::SpStateV3;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
