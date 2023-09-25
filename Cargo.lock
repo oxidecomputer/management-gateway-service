@@ -711,7 +711,7 @@ dependencies = [
 [[package]]
 name = "hubtools"
 version = "0.4.1"
-source = "git+https://github.com/oxidecomputer/hubtools.git?branch=main#0c642f6e1f83b74725c7119a546bc26ac7452a48"
+source = "git+https://github.com/oxidecomputer/hubtools.git?branch=main#2481445b80f8476041f62a1c8b6301e4918c63ed"
 dependencies = [
  "lpc55_areas",
  "lpc55_sign",
@@ -830,7 +830,7 @@ dependencies = [
 [[package]]
 name = "lpc55_areas"
 version = "0.2.4"
-source = "git+https://github.com/oxidecomputer/lpc55_support#4051a3b9421573dc36ed6098b292a7609a3cf98b"
+source = "git+https://github.com/oxidecomputer/lpc55_support#6df13b9cb5126d9a4875ec2ee273d7c5b9ff894f"
 dependencies = [
  "bitfield",
  "clap",
@@ -840,8 +840,8 @@ dependencies = [
 
 [[package]]
 name = "lpc55_sign"
-version = "0.3.2"
-source = "git+https://github.com/oxidecomputer/lpc55_support#4051a3b9421573dc36ed6098b292a7609a3cf98b"
+version = "0.3.3"
+source = "git+https://github.com/oxidecomputer/lpc55_support#6df13b9cb5126d9a4875ec2ee273d7c5b9ff894f"
 dependencies = [
  "byteorder",
  "const-oid",
