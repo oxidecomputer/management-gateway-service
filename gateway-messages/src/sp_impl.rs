@@ -897,12 +897,8 @@ fn handle_mgs_request<H: SpHandler>(
             let slot = match slot {
                 RotSlotId::A => 0,
                 RotSlotId::B => 1,
-                _ => {
-                    return (
-                        SpResponse::Error(SpError::InvalidSlotIdForOperation),
-                        None,
-                    )
-                }
+                RotSlotId::Stage0 => 2,
+                RotSlotId::Stage0Next => 3,
             };
             let persist = match duration {
                 SwitchDuration::Once => false,

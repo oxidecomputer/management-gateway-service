@@ -25,11 +25,11 @@ use slog::warn;
 use slog::Logger;
 use std::convert::TryInto;
 use std::io::Cursor;
+use std::io::Read;
 use std::time::Duration;
 use tlvc::TlvcReader;
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use std::io::Read;
 
 /// Start an update to the SP itself.
 ///
@@ -262,15 +262,13 @@ fn read_auxi_check_from_tlvc(data: &[u8]) -> Result<[u8; 32], UpdateError> {
 pub(super) async fn start_rot_update(
     cmds_tx: &mpsc::Sender<InnerCommand>,
     update_id: Uuid,
-    component: SpComponent,
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
 ) -> Result<(), UpdateError> {
-    debug!(log, "start_rot_update slot:{:?}\n", slot);
-    let rot_image = match (component, slot) {
+    let rot_image = match slot {
         // Hubris images
-        (SpComponent::ROT, 0 | 1) => {
+        0 | 1 => {
             let archive = RawHubrisArchive::from_vec(image)?;
             let rot_image = archive.image.to_binary()?;
 
@@ -294,7 +292,12 @@ pub(super) async fn start_rot_update(
             match archive.image_name() {
                 Ok(image_name) => match (image_name.as_str(), slot) {
                     ("a", 0) | ("b", 1) => (), // OK!
-                    _ => return Err(UpdateError::RotSlotMismatch { slot, image_name }),
+                    _ => {
+                        return Err(UpdateError::RotSlotMismatch {
+                            slot,
+                            image_name,
+                        })
+                    }
                 },
                 // At the time of this writing `image-name` is a recent addition to
                 // hubris archives, so skip this check if we don't have one.
@@ -305,10 +308,9 @@ pub(super) async fn start_rot_update(
             // TODO: Add a caboose BORD preflight check just like the SP has, once the
             // RoT has a caboose and we have RPC calls to read its values.
             rot_image
-        },
-        // Bootloader image
-        (SpComponent::STAGE0, 0) => {
-            debug!(log, "need bootloader image");
+        }
+        // Staging area for a Bootloader image
+        3 => {
             // Bootloader is released in a simpler zip archive than Hubris.
             // No bootloaders have been released yet with an Oxide header or
             // caboose.
@@ -327,10 +329,10 @@ pub(super) async fn start_rot_update(
                 Ok(file) => {
                     debug!(log, "found bootloader file {}", BIN_FILE);
                     file
-                },
+                }
                 Err(_) => {
                     error!(log, "did not find bootloader file");
-                    return Err(UpdateError::InvalidArchive)
+                    return Err(UpdateError::InvalidArchive);
                 }
             };
             let mut rot_image = vec![];
@@ -340,13 +342,13 @@ pub(super) async fn start_rot_update(
             }
             info!(log, "ok! rot_image.len():{:?}", rot_image.len());
             rot_image
-        },
+        }
         _ => return Err(UpdateError::InvalidSlotIdForOperation),
     };
 
     start_component_update(
         cmds_tx,
-        component,
+        SpComponent::ROT,
         update_id,
         slot,
         rot_image,
@@ -369,6 +371,7 @@ pub(super) async fn start_component_update(
 ) -> Result<(), UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
+
     info!(
         log, "starting update";
         "component" => component.as_str(),

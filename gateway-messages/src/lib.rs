@@ -377,9 +377,6 @@ impl SpComponent {
     // The RoT attached to the SP via SPI
     pub const ROT: Self = Self { id: *b"rot\0\0\0\0\0\0\0\0\0\0\0\0\0" };
 
-    // The Stage0 bootloader for the RoT attached to the SP via SPI
-    pub const STAGE0: Self = Self { id: *b"stage0\0\0\0\0\0\0\0\0\0\0" };
-
     /// Prefix for devices that are identified generically by index (e.g.,
     /// `dev-17`).
     pub const GENERIC_DEVICE_PREFIX: &'static str = "dev-";

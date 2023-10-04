@@ -172,6 +172,7 @@ pub(crate) fn expect_sp_state(
     let out = match response {
         SpResponse::SpState(state) => Ok(VersionedSpState::V1(state)),
         SpResponse::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
+        SpResponse::SpStateV3(state) => Ok(VersionedSpState::V3(state)),
         SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
         other => Err(CommunicationError::BadResponseType {
             expected: "versioned_sp_state", // hard-coded special string

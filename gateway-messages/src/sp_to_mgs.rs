@@ -177,8 +177,8 @@ pub enum ImageError {
     InvalidLength,
     /// The header flash page is erased.
     HeaderNotProgrammed,
-    /// An image not requiring an ImageHeader is too short.
-    Short,
+    /// A bootloader image is too short.
+    BootloaderTooSmall,
     /// A required ImageHeader is missing.
     BadMagic,
     /// The image size in ImageHeader is unreasonable.
@@ -194,7 +194,6 @@ pub enum ImageError {
     /// Signature check on image failed.
     Signature,
 }
-
 
 /// This is quasi-deprecated in that it will only be returned by SPs with images
 /// older than the  introduction of `SpStateV2`.

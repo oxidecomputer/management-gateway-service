@@ -178,6 +178,12 @@ enum Command {
     },
 
     /// Get or set the active slot of a component (e.g., `host-boot-flash`).
+    /// In the case of the RoT bootloader, there is no A/B selection and
+    /// no transient selection.
+    /// The Stage0Next (slot 3) is persisted which will only copy a valid
+    /// signed image from Stage0Next to Stage0 (slot 2).
+    /// Note that there is a window of vulnerability during that copy operation
+    /// where a power failure can make the RoT unbootable.
     ComponentActiveSlot {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
@@ -1179,7 +1185,7 @@ async fn run_command(
 
         Command::ResetComponent { component } => {
             sp.reset_component_prepare(component).await?;
-            info!(log, "SP is repared to reset component {component}",);
+            info!(log, "SP is prepared to reset component {component}",);
             sp.reset_component_trigger(component).await?;
             info!(log, "SP reset component {component} complete");
             if json {
