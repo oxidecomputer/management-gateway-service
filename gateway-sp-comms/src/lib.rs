@@ -25,6 +25,7 @@ pub use usdt::register_probes;
 pub mod error;
 
 pub use gateway_messages;
+pub use gateway_messages::SpComponent;
 pub use gateway_messages::SpStateV1;
 pub use gateway_messages::SpStateV2;
 pub use host_phase2::HostPhase2ImageError;
