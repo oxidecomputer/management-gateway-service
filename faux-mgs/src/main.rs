@@ -1150,7 +1150,7 @@ async fn run_command(
 
         Command::ResetComponent { component } => {
             sp.reset_component_prepare(component).await?;
-            info!(log, "SP is repared to reset component {component}",);
+            info!(log, "SP is prepared to reset component {component}",);
             sp.reset_component_trigger(component).await?;
             info!(log, "SP reset component {component} complete");
             if json {
