@@ -129,10 +129,7 @@ pub(crate) async fn run(
                 // case it first sends a message on this channel).
                 let fatal_err = fatal_err_result
                     .expect("tx_to_sp task panicked");
-                error!(
-                    log, "fatal communication error with SP";
-                    "err" => #%fatal_err,
-                );
+                error!(log, "fatal communication error with SP"; fatal_err);
                 encountered_fatal_error = true;
                 break;
             }
@@ -269,10 +266,7 @@ async fn relay_data_to_sp(
                         keepalive.reset();
                     }
                     Err(err) => {
-                        warn!(
-                            log, "failed to send console keepalive";
-                            "err" => #%err,
-                        );
+                        warn!(log, "failed to send console keepalive"; err);
                     }
                 }
             }
@@ -320,7 +314,7 @@ async fn drain_messages_to_send(
             Err(non_fatal_err) => {
                 warn!(
                     log, "communication error with SP (will retry)";
-                    "err" => #%non_fatal_err,
+                    non_fatal_err,
                 );
                 *recently_warned = true;
                 return Ok(());

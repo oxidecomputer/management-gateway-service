@@ -1595,7 +1595,7 @@ impl<T: InnerSocket> Inner<T> {
                         Err(err) => {
                             warn!(
                                 self.log(), "idle discovery check failed";
-                                "err" => %err,
+                                err,
                             );
                         }
                     }
@@ -1627,8 +1627,8 @@ impl<T: InnerSocket> Inner<T> {
                     info!(
                         self.log(),
                         "initial discovery failed";
-                        "err" => %err,
                         "addr" => %self.socket_handle.discovery_addr(),
+                        err,
                     );
                 }
             }

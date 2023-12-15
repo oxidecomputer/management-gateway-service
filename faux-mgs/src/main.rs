@@ -1447,7 +1447,7 @@ async fn populate_phase2_images(
                 warn!(
                     log, "skipping file (not a phase2 image?)";
                     "path" => entry_path.display(),
-                    "err" => %err,
+                    err,
                 );
             }
         }
