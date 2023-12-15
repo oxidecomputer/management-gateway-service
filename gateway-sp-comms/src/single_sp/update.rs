@@ -193,7 +193,7 @@ async fn drive_sp_update(
                 error!(
                     log, "aux flash update failed";
                     "id" => %update_id,
-                    "err" => %err,
+                    err,
                 );
                 return;
             }
@@ -217,7 +217,7 @@ async fn drive_sp_update(
             error!(
                 log, "update failed";
                 "id" => %update_id,
-                "err" => %err,
+                err,
             );
         }
     }
@@ -398,7 +398,7 @@ async fn drive_component_update(
             error!(
                 log, "update failed";
                 "id" => %update_id,
-                "err" => %err,
+                err,
             );
         }
     }

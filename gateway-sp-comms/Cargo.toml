@@ -19,6 +19,7 @@ paste.workspace = true
 serde.workspace = true
 serde-big-array.workspace = true
 slog.workspace = true
+slog-error-chain.workspace = true
 socket2.workspace = true
 string_cache.workspace = true
 thiserror.workspace = true

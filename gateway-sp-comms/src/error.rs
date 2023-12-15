@@ -6,6 +6,7 @@
 
 use gateway_messages::tlv;
 use gateway_messages::SpError;
+use slog_error_chain::SlogInlineError;
 use std::io;
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
@@ -14,7 +15,7 @@ use thiserror::Error;
 pub use crate::scope_id_cache::InterfaceError;
 use crate::shared_socket::SingleSpHandleError;
 
-#[derive(Debug, Clone, Error)]
+#[derive(Debug, Clone, Error, SlogInlineError)]
 pub enum HostPhase2Error {
     #[error("host image with hash {hash} unavailable")]
     NoImage { hash: String },
@@ -26,7 +27,7 @@ pub enum HostPhase2Error {
     Other { hash: String, offset: u64, err: String },
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, SlogInlineError)]
 pub enum CommunicationError {
     #[error(transparent)]
     InterfaceError(#[from] InterfaceError),
@@ -46,7 +47,7 @@ pub enum CommunicationError {
     ExhaustedNumAttempts(usize),
     #[error("bogus SP response type: expected {expected:?} but got {got:?}")]
     BadResponseType { expected: &'static str, got: &'static str },
-    #[error("Error response from SP: {0}")]
+    #[error("Error response from SP")]
     SpError(#[from] SpError),
     #[error("Bogus serial console state; detach and reattach")]
     BogusSerialConsoleState,
@@ -54,7 +55,7 @@ pub enum CommunicationError {
     VersionMismatch { sp: u32, mgs: u32 },
     #[error("failed to deserialize TLV value for tag {tag:?}: {err}")]
     TlvDeserialize { tag: tlv::Tag, err: gateway_messages::HubpackError },
-    #[error("failed to decode TLV triple: {0}")]
+    #[error("failed to decode TLV triple")]
     TlvDecode(#[from] tlv::DecodeError),
     #[error("invalid pagination: {reason}")]
     TlvPagination { reason: &'static str },
@@ -83,7 +84,7 @@ impl From<SingleSpHandleError> for CommunicationError {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, SlogInlineError)]
 pub enum UpdateError {
     #[error("update image cannot be empty")]
     ImageEmpty,

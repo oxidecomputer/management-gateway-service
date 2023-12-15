@@ -10,6 +10,7 @@ use hubpack::SerializedSize;
 use lru_cache::LruCache;
 use serde::Deserialize;
 use serde_big_array::BigArray;
+use slog_error_chain::SlogInlineError;
 use std::convert::TryFrom;
 use std::sync::Arc;
 use thiserror::Error;
@@ -17,9 +18,9 @@ use tokio::sync::Mutex;
 
 type Sha256Digest = [u8; 32];
 
-#[derive(Debug, Clone, Copy, Error)]
+#[derive(Debug, Clone, Copy, Error, SlogInlineError)]
 pub enum HostPhase2ImageError {
-    #[error("could not deserialize image header: {0}")]
+    #[error("could not deserialize image header")]
     DeserializeHeader(#[from] hubpack::error::Error),
     #[error(
         "incorrect magic in image header (expected {expected:#x}, got {got:#x})"

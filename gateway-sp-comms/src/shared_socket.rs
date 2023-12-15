@@ -25,6 +25,7 @@ use slog::error;
 use slog::o;
 use slog::warn;
 use slog::Logger;
+use slog_error_chain::SlogInlineError;
 use std::collections::hash_map;
 use std::io;
 use std::net::Ipv6Addr;
@@ -48,10 +49,11 @@ use crate::single_sp::HostPhase2Request;
 use crate::HostPhase2Provider;
 use crate::SP_TO_MGS_MULTICAST_ADDR;
 
-#[derive(Debug, Error)]
-#[error("failed to bind to {addr}: {err})")]
+#[derive(Debug, Error, SlogInlineError)]
+#[error("failed to bind to {addr})")]
 pub struct BindError {
     pub addr: SocketAddrV6,
+    #[source]
     pub err: io::Error,
 }
 
@@ -202,18 +204,28 @@ impl SharedSocket {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, SlogInlineError)]
 pub(crate) enum SingleSpHandleError {
-    #[error("failed to join multicast group {group} on {interface}: {err}")]
-    JoinMulticast { group: Ipv6Addr, interface: String, err: io::Error },
+    #[error("failed to join multicast group {group} on {interface}")]
+    JoinMulticast {
+        group: Ipv6Addr,
+        interface: String,
+        #[source]
+        err: io::Error,
+    },
 
-    #[error("send_to({addr:}) on {interface} failed: {err}")]
-    SendTo { addr: SocketAddrV6, interface: String, err: io::Error },
+    #[error("send_to({addr:}) on {interface} failed")]
+    SendTo {
+        addr: SocketAddrV6,
+        interface: String,
+        #[source]
+        err: io::Error,
+    },
 
     #[error("scope ID of interface {interface} changing too frequently")]
     ScopeIdChangingFrequently { interface: String },
 
-    #[error("cannot determine scope ID for interface: {0}")]
+    #[error("cannot determine scope ID for interface")]
     InterfaceError(#[from] InterfaceError),
 }
 
@@ -396,12 +408,12 @@ mod send_only {
     }
 }
 
-#[derive(Debug, Error)]
+#[derive(Debug, Error, SlogInlineError)]
 enum RecvError {
-    #[error("failed to deserialize message header: {0}")]
-    DeserializeHeader(hubpack::Error),
-    #[error("failed to deserialize message body: {0}")]
-    DeserializeBody(hubpack::Error),
+    #[error("failed to deserialize message header")]
+    DeserializeHeader(#[source] hubpack::Error),
+    #[error("failed to deserialize message body")]
+    DeserializeBody(#[source] hubpack::Error),
     #[error("version mismatch (expected {expected}, SP sent {sp})")]
     VersionMismatch { expected: u32, sp: u32 },
     #[error("invalid message kind ({0})")]
@@ -479,7 +491,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                         self.log,
                         "failed to look up interface for peer; discarding packet";
                         "peer" => %peer,
-                        "err" => %err,
+                        err,
                     );
                     continue;
                 }
@@ -505,7 +517,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                         self.log, "failed to parse incoming packet";
                         "data" => ?data,
                         "peer" => %peer,
-                        "err" => %err,
+                        err,
                     );
                     continue;
                 }
@@ -519,7 +531,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                     self.log, "failed to handle incoming message";
                     "message" => ?Message { header, kind },
                     "peer" => %peer,
-                    "err" => %err,
+                    err,
                 );
                 continue;
             }
@@ -752,7 +764,7 @@ impl<T: HostPhase2Provider> SendHostPhase2ResponseTask<T> {
             Err(err) => {
                 warn!(
                     self.log, "cannot fulfill SP request for host phase 2 data";
-                    "err" => %err,
+                    &err,
                 );
                 let error_kind = match err {
                     HostPhase2Error::NoImage { .. }
@@ -793,7 +805,7 @@ impl<T: HostPhase2Provider> SendHostPhase2ResponseTask<T> {
                         warn!(
                             self.log,
                             "failed to notify handler of host phase2 request";
-                            "err" => %err,
+                            err,
                         );
                     }
                 }

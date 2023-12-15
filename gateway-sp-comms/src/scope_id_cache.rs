@@ -10,18 +10,23 @@ use fxhash::FxHashMap;
 use nix::libc::c_uint;
 use nix::net::if_::if_nameindex;
 use nix::net::if_::if_nametoindex;
+use slog_error_chain::SlogInlineError;
 use std::fmt;
 use std::ops::Deref;
 use string_cache::DefaultAtom;
 use thiserror::Error;
 use tokio::sync::Mutex;
 
-#[derive(Debug, Clone, PartialEq, Eq, Error)]
+#[derive(Debug, Clone, PartialEq, Eq, Error, SlogInlineError)]
 pub enum InterfaceError {
-    #[error("if_nametoindex({name:?}) failed: {err}")]
-    IfNameToIndex { name: String, err: nix::Error },
-    #[error("if_nameindex() failed: {0}")]
-    IfNameIndex(nix::Error),
+    #[error("if_nametoindex({name:?}) failed")]
+    IfNameToIndex {
+        name: String,
+        #[source]
+        err: nix::Error,
+    },
+    #[error("if_nameindex() failed")]
+    IfNameIndex(#[source] nix::Error),
     #[error("non-UTF8 interface: {0:?}")]
     NonUtf8Interface(Vec<u8>),
     #[error("no interface name found for index {0}")]
