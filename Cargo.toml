@@ -13,10 +13,6 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
-# TODO: Replace with real nix after https://github.com/nix-rust/nix/pull/1973 is
-# published to crates.io
-nix = { git = "https://github.com/jgallagher/nix", branch = "r0.26-illumos" }
-
 tlvc = { git = "https://github.com/oxidecomputer/tlvc.git", branch = "main" }
 hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", branch = "main"}
 
@@ -31,6 +27,7 @@ glob = "0.3.1"
 hex = "0.4.3"
 hubpack = "0.1.2"
 lru-cache = "0.1.2"
+nix = { version = "0.27.1", features = ["net"] }
 once_cell = "1.19.0"
 paste = "1.0.14"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
