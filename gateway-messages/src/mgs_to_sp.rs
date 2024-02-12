@@ -262,10 +262,14 @@ pub struct UpdateChunk {
     pub offset: u32,
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+#[repr(transparent)]
+pub struct StartupOptions(u64);
+
 bitflags::bitflags! {
-    #[derive(Serialize, Deserialize, SerializedSize)]
-    #[repr(transparent)]
-    pub struct StartupOptions: u64 {
+    impl StartupOptions: u64 {
         const PHASE2_RECOVERY_MODE = 1 << 0;
         const STARTUP_KBM = 1 << 1;
         const STARTUP_BOOTRD = 1 << 2;
