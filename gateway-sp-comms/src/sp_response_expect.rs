@@ -359,8 +359,9 @@ mod tests {
         ));
         let Err(CommunicationError::BadTrailingDataSize {
             expected: 512,
-            got: 510
-        }) = v else {
+            got: 510,
+        }) = v
+        else {
             panic!("mismatched value {v:?}");
         };
     }
