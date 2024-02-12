@@ -342,9 +342,22 @@ impl DeviceDescriptionHeader {
     pub const TAG: tlv::Tag = tlv::Tag(*b"DSC0");
 }
 
+#[derive(
+    Default,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+)]
+#[repr(transparent)]
+pub struct DeviceCapabilities(u32);
+
 bitflags! {
-    #[derive(Default, SerializedSize, Serialize, Deserialize)]
-    pub struct DeviceCapabilities: u32 {
+    impl DeviceCapabilities: u32 {
         const UPDATEABLE = 1 << 0;
         const HAS_MEASUREMENT_CHANNELS = 1 << 1;
         const HAS_SERIAL_CONSOLE = 1 << 2;
