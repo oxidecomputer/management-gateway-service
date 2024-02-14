@@ -25,6 +25,7 @@ use slog::warn;
 use slog::Logger;
 use std::convert::TryInto;
 use std::io::Cursor;
+use std::io::Read;
 use std::time::Duration;
 use tlvc::TlvcReader;
 use tokio::sync::mpsc;
@@ -102,7 +103,7 @@ pub(super) async fn start_sp_update(
     };
 
     info!(
-        log, "starting SP update";
+            log, "starting SP update";
         "id" => %update_id,
         "aux_flash_chck" => ?aux_flash_chck,
         "aux_flash_size" => aux_flash_size,
@@ -156,14 +157,14 @@ async fn drive_sp_update(
     {
         Ok(sp_matched_chck) => {
             info!(
-                log, "update preparation complete";
+                    log, "update preparation complete";
                 "update_id" => %update_id,
             );
             sp_matched_chck
         }
         Err(message) => {
             error!(
-                log, "update preparation failed";
+                    log, "update preparation failed";
                 "err" => message,
                 "update_id" => %update_id,
             );
@@ -191,7 +192,7 @@ async fn drive_sp_update(
             }
             Err(err) => {
                 error!(
-                    log, "aux flash update failed";
+                        log, "aux flash update failed";
                     "id" => %update_id,
                     err,
                 );
@@ -215,7 +216,7 @@ async fn drive_sp_update(
         }
         Err(err) => {
             error!(
-                log, "update failed";
+                    log, "update failed";
                 "id" => %update_id,
                 err,
             );
@@ -257,57 +258,142 @@ fn read_auxi_check_from_tlvc(data: &[u8]) -> Result<[u8; 32], UpdateError> {
     })
 }
 
+/// Isolate extraction of bootleby from old-format archives.
+// TODO: When old-format archives are eliminated from customer
+// racks and spares inventory, then this code can be removed.
+fn bootleby_from_old_style_archive(
+    image: Vec<u8>,
+    log: &Logger,
+) -> Result<Vec<u8>, UpdateError> {
+    // Try the pre-v1.2.0 Bootleby archive format.
+    let cursor = Cursor::new(image.as_slice());
+    let mut archive = zip::ZipArchive::new(cursor).map_err(|zip_error| {
+        // Return the original Hubris Archive error instead
+        // of our attempted zip extraction error.
+        HubtoolsError::ZipError(zip_error)
+    })?;
+
+    for i in 0..archive.len() {
+        match archive.by_index(i) {
+            Ok(mut file) => {
+                if file.name() == "bootleby.bin" {
+                    let mut rot_image = vec![];
+                    match file.read_to_end(&mut rot_image) {
+                        Ok(_) => {
+                            debug!(
+                                log,
+                                "using bootleby.bin from old-style archive"
+                            );
+                            return Ok(rot_image);
+                        }
+                        Err(err) => {
+                            error!(log, "cannot access bootleby.bin from zip file index {i}: {err}");
+                            return Err(UpdateError::InvalidArchive);
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                error!(log, "cannot access zip archive at index {i}: {err}")
+            }
+        }
+    }
+    Err(UpdateError::ImageNotFound)
+}
+
 /// Start an update to the RoT.
 pub(super) async fn start_rot_update(
     cmds_tx: &mpsc::Sender<InnerCommand>,
     update_id: Uuid,
+    component: SpComponent,
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
 ) -> Result<(), UpdateError> {
-    let archive = RawHubrisArchive::from_vec(image)?;
-    let rot_image = archive.image.to_binary()?;
+    let rot_image = match component {
+        SpComponent::ROT => {
+            match slot {
+                // Hubris images
+                0 | 1 => {
+                    let archive = RawHubrisArchive::from_vec(image)?;
+                    let rot_image = archive.image.to_binary()?;
 
-    // Sanity check on `hubtools`: Prior to using hubtools, we would manually
-    // extract `img/final.bin` from the archive (which is a zip file); we're now
-    // using `archive.image.to_binary()` which _should_ be the same thing. Check
-    // here and log a warning if it is not. We should never see this, but if we
-    // do it's likely something is about to go wrong, and it'd be nice to have a
-    // breadcrumb.
-    if let Ok(final_bin) = archive.extract_file("img/final.bin") {
-        if rot_image != final_bin {
-            warn!(
-                log,
-                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
-            );
+                    // Sanity check on `hubtools`: Prior to using hubtools, we would manually
+                    // extract `img/final.bin` from the archive (which is a zip file); we're now
+                    // using `archive.image.to_binary()` which _should_ be the same thing. Check
+                    // here and log a warning if it is not. We should never see this, but if we
+                    // do it's likely something is about to go wrong, and it'd be nice to have a
+                    // breadcrumb.
+                    if let Ok(final_bin) = archive.extract_file("img/final.bin")
+                    {
+                        if rot_image != final_bin {
+                            warn!(
+                                log,
+                                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+                            );
+                        }
+                    }
+
+                    // Preflight check 1: Does the image name of this archive match the target
+                    // slot?
+                    match archive.image_name() {
+                        Ok(image_name) => match (image_name.as_str(), slot) {
+                            ("a", 0) | ("b", 1) => (), // OK!
+                            _ => {
+                                return Err(UpdateError::RotSlotMismatch {
+                                    slot,
+                                    image_name,
+                                })
+                            }
+                        },
+                        // At the time of this writing `image-name` is a recent addition to
+                        // hubris archives, so skip this check if we don't have one.
+                        Err(HubtoolsError::MissingFile(..)) => (),
+                        Err(err) => return Err(err.into()),
+                    }
+
+                    // TODO: Add a caboose BORD preflight check just like the SP has, once the
+                    // RoT has a caboose and we have RPC calls to read its values.
+                    rot_image
+                }
+                _ => return Err(UpdateError::InvalidSlotIdForOperation),
+            }
         }
-    }
+        SpComponent::STAGE0 => {
+            // Staging area for a Bootloader image:
+            // stage0next can be updated directly, stage0 cannot.
+            // The RoT will reject updates to slot !=1 but don't
+            // waste its time.
+            if slot != 1 {
+                return Err(UpdateError::InvalidSlotIdForOperation);
+            }
 
-    // Preflight check 1: Does the image name of this archive match the target
-    // slot?
-    match archive.image_name() {
-        Ok(image_name) => match (image_name.as_str(), slot) {
-            ("a", 0) | ("b", 1) => (), // OK!
-            _ => return Err(UpdateError::RotSlotMismatch { slot, image_name }),
-        },
-        // At the time of this writing `image-name` is a recent addition to
-        // hubris archives, so skip this check if we don't have one.
-        Err(HubtoolsError::MissingFile(..)) => (),
-        Err(err) => return Err(err.into()),
-    }
+            RawHubrisArchive::from_vec(image.clone())
+                .and_then(|archive| archive.image.to_binary())
+                .or_else(|hubtool_error|
+                    // Prior to v1.2.0, Bootleby was packaged as a simple
+                    // zip archive containing a "bootleby.bin" file.
+                    //
+                    // TODO: Remove support for the old image format when
+                    // those bootleby versions are no longer used in
+                    // manufacturing and rollback protection can be used to
+                    // prevent their re-introduction. Until then, we need to
+                    // be able to test update and rollback using the oldest
+                    // releases that may be in customers' racks or spares pool.
+                    bootleby_from_old_style_archive(image, log)
+                        // Report the original Hubtools error if
+                        // this second chance did not work.
+                        .map_err(|_| hubtool_error))?
 
-    // TODO: Add a caboose BORD preflight check just like the SP has, once the
-    // RoT has a caboose and we have RPC calls to read its values.
+            // TODO: Even though the RoT will protect itself, put
+            // pre-flash checks here for BORD, Bootloader vs Hubris,
+            // and signature validity.
+        }
+        _ => return Err(UpdateError::InvalidComponent),
+    };
 
-    start_component_update(
-        cmds_tx,
-        SpComponent::ROT,
-        update_id,
-        slot,
-        rot_image,
-        log,
-    )
-    .await
+    start_component_update(cmds_tx, component, update_id, slot, rot_image, log)
+        .await
 }
 
 /// Start an update to a component of the SP.
@@ -326,7 +412,7 @@ pub(super) async fn start_component_update(
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
 
     info!(
-        log, "starting update";
+            log, "starting update";
         "component" => component.as_str(),
         "id" => %update_id,
         "total_size" => total_size,
@@ -373,13 +459,13 @@ async fn drive_component_update(
     {
         Ok(_) => {
             info!(
-                log, "update preparation complete";
+                    log, "update preparation complete";
                 "update_id" => %update_id,
             );
         }
         Err(message) => {
             error!(
-                log, "update preparation failed";
+                    log, "update preparation failed";
                 "err" => message,
                 "update_id" => %update_id,
             );
@@ -396,7 +482,7 @@ async fn drive_component_update(
         }
         Err(err) => {
             error!(
-                log, "update failed";
+                    log, "update failed";
                 "id" => %update_id,
                 err,
             );
@@ -518,7 +604,7 @@ async fn send_update_in_chunks(
     while !CursorExt::is_empty(&image) {
         let prior_pos = image.position();
         debug!(
-            log, "sending update chunk";
+                log, "sending update chunk";
             "id" => %update_id,
             "offset" => offset,
         );

@@ -204,6 +204,11 @@ pub enum MgsRequest {
     ComponentWatchdogSupported {
         component: SpComponent,
     },
+
+    /// Read RoT boot state at the highest version not to exceed specified version.
+    VersionedRotBootInfo {
+        version: u8,
+    },
 }
 
 #[derive(
