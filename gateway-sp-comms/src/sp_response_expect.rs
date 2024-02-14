@@ -8,6 +8,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
+use gateway_messages::RotBootInfo;
 use gateway_messages::RotResponse;
 use gateway_messages::SensorResponse;
 use gateway_messages::SpResponse;
@@ -116,6 +117,7 @@ expect_fn!(SwitchDefaultImageAck);
 expect_fn!(ComponentActionAck);
 expect_fn!(ReadSensor(resp) -> SensorResponse);
 expect_fn!(CurrentTime(time) -> u64);
+expect_fn!(RotBootInfo(rot_state) -> RotBootInfo);
 
 // Data-bearing responses
 expect_data_fn!(BulkIgnitionState(page) -> TlvPage);
@@ -180,6 +182,7 @@ pub(crate) fn expect_sp_state(
     let out = match response {
         SpResponse::SpState(state) => Ok(VersionedSpState::V1(state)),
         SpResponse::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
+        SpResponse::SpStateV3(state) => Ok(VersionedSpState::V3(state)),
         SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
         other => Err(CommunicationError::BadResponseType {
             expected: "versioned_sp_state", // hard-coded special string

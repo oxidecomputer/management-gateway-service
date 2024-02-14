@@ -34,6 +34,7 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::PowerState;
+use gateway_messages::RotBootInfo;
 use gateway_messages::RotRequest;
 use gateway_messages::SensorReading;
 use gateway_messages::SensorRequest;
@@ -380,6 +381,13 @@ impl SingleSp {
         self.rpc(MgsRequest::SpState).await.and_then(expect_sp_state)
     }
 
+    /// Request the state of the RoT.
+    pub async fn rot_state(&self, version: u8) -> Result<RotBootInfo> {
+        self.rpc(MgsRequest::VersionedRotBootInfo { version })
+            .await
+            .and_then(expect_rot_boot_info)
+    }
+
     /// Request the inventory of the SP.
     pub async fn inventory(&self) -> Result<SpInventory> {
         let devices = self.get_paginated_tlv_data(InventoryTlvRpc).await?;
@@ -581,9 +589,16 @@ impl SingleSp {
                 ));
             }
             start_sp_update(&self.cmds_tx, update_id, image, self.log()).await
-        } else if component == SpComponent::ROT {
-            start_rot_update(&self.cmds_tx, update_id, slot, image, self.log())
-                .await
+        } else if matches!(component, SpComponent::ROT | SpComponent::STAGE0) {
+            start_rot_update(
+                &self.cmds_tx,
+                update_id,
+                component,
+                slot,
+                image,
+                self.log(),
+            )
+            .await
         } else {
             start_component_update(
                 &self.cmds_tx,

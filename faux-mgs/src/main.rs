@@ -131,6 +131,14 @@ enum Command {
     /// Ask SP for its current state.
     State,
 
+    /// Ask RoT via SP for its current boot-time information represented by
+    /// a particular struct.
+    RotBootInfo {
+        /// RotStateV2 is the default verion
+        #[clap(long, short, default_value = "3")]
+        version: u8,
+    },
+
     /// Get the ignition state for a single target port (only valid if the SP is
     /// an ignition controller).
     Ignition {
@@ -178,6 +186,15 @@ enum Command {
     },
 
     /// Get or set the active slot of a component (e.g., `host-boot-flash`).
+    ///
+    /// In the case of the bootloader flash banks, there is no atomic switching
+    /// from stage0next (bank 1), to stage0 (bank 0). Instead, contents are copied.
+    ///
+    /// The copy is only performed if the signature on stage0next was valid at boot time
+    /// and the current contents still match the boot-time contents.
+    ///
+    /// Power failures during the copy can disable the RoT. Only one stage0 update
+    /// should be in process in a rack at any time.
     ComponentActiveSlot {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
@@ -821,8 +838,11 @@ async fn run_command(
                     lines.push(format!("hubris version: {:?}", state.version));
                     lines.push(format!("power state: {:?}", state.power_state));
 
-                    // TODO: pretty print RoT state?
-                    lines.push(format!("RoT state: {:?}", state.rot));
+                    match state.rot {
+                        Ok(rotstate) => lines.push(format!("{}", &rotstate)),
+                        Err(err) => lines.push(format!("RoT state: {:?}", err)),
+                    }
+
                     Ok(Output::Lines(lines))
                 }
                 VersionedSpState::V2(state) => {
@@ -850,11 +870,50 @@ async fn run_command(
                             .join(":")
                     ));
                     lines.push(format!("power state: {:?}", state.power_state));
-                    // TODO: pretty print RoT state?
-                    lines.push(format!("RoT state: {:?}", state.rot));
+                    match state.rot {
+                        Ok(rotstate) => lines.push(format!("{}", &rotstate)),
+                        Err(err) => lines.push(format!("RoT state: {:?}", err)),
+                    }
+                    Ok(Output::Lines(lines))
+                }
+                VersionedSpState::V3(state) => {
+                    lines.push(format!(
+                        "hubris archive: {}",
+                        hex::encode(state.hubris_archive_id)
+                    ));
+
+                    lines.push(format!(
+                        "serial number: {}",
+                        zero_padded_to_str(state.serial_number)
+                    ));
+                    lines.push(format!(
+                        "model: {}",
+                        zero_padded_to_str(state.model)
+                    ));
+                    lines.push(format!("revision: {}", state.revision));
+                    lines.push(format!(
+                        "base MAC address: {}",
+                        state
+                            .base_mac_address
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    ));
+                    lines.push(format!("power state: {:?}", state.power_state));
                     Ok(Output::Lines(lines))
                 }
             }
+        }
+        Command::RotBootInfo { version } => {
+            let state = sp.rot_state(version).await?;
+            info!(log, "{state:x?}");
+            if json {
+                return Ok(Output::Json(serde_json::to_value(state).unwrap()));
+            }
+            let mut lines = Vec::new();
+            lines.push(format!("{}", state));
+            Ok(Output::Lines(lines))
         }
         Command::Ignition { target } => {
             let mut by_target = BTreeMap::new();

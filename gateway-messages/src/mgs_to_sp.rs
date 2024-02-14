@@ -173,6 +173,11 @@ pub enum MgsRequest {
     /// Dump information about the lock state of the VPD (Vital Product Data)
     /// The values are serialized in the trailer of the packet
     VpdLockState,
+
+    /// Read RoT boot state at the highest version not to exceed specified version.
+    VersionedRotBootInfo {
+        version: u8,
+    },
 }
 
 #[derive(
