@@ -25,6 +25,7 @@ use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
+use crate::RotBootInfo;
 use crate::RotRequest;
 use crate::RotResponse;
 use crate::RotSlotId;
@@ -412,6 +413,13 @@ pub trait SpHandler {
         &mut self,
         component: SpComponent,
     ) -> Result<(), SpError>;
+
+    fn versioned_rot_boot_info(
+        &mut self,
+        sender: SocketAddrV6,
+        port: SpPort,
+        version: u8,
+    ) -> Result<RotBootInfo, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -991,6 +999,10 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentWatchdogSupported { component } => handler
             .component_watchdog_supported(component)
             .map(|()| SpResponse::ComponentWatchdogSupportedAck),
+        MgsRequest::VersionedRotBootInfo { version } => {
+            let r = handler.versioned_rot_boot_info(sender, port, version);
+            r.map(SpResponse::RotBootInfo)
+        }
     };
 
     let response = match result {
@@ -1414,6 +1426,15 @@ mod tests {
             &mut self,
             _component: SpComponent,
         ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn versioned_rot_boot_info(
+            &mut self,
+            _sender: SocketAddrV6,
+            _port: SpPort,
+            _version: u8,
+        ) -> Result<RotBootInfo, SpError> {
             unimplemented!()
         }
     }

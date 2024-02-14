@@ -8,6 +8,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
+use gateway_messages::RotBootInfo;
 use gateway_messages::RotResponse;
 use gateway_messages::SensorResponse;
 use gateway_messages::SpResponse;
@@ -118,6 +119,7 @@ expect_fn!(ReadSensor(resp) -> SensorResponse);
 expect_fn!(CurrentTime(time) -> u64);
 expect_fn!(DisableComponentWatchdogAck);
 expect_fn!(ComponentWatchdogSupportedAck);
+expect_fn!(RotBootInfo(rot_state) -> RotBootInfo);
 
 // Data-bearing responses
 expect_data_fn!(BulkIgnitionState(page) -> TlvPage);
@@ -182,6 +184,7 @@ pub(crate) fn expect_sp_state(
     let out = match response {
         SpResponse::SpState(state) => Ok(VersionedSpState::V1(state)),
         SpResponse::SpStateV2(state) => Ok(VersionedSpState::V2(state)),
+        SpResponse::SpStateV3(state) => Ok(VersionedSpState::V3(state)),
         SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
         other => Err(CommunicationError::BadResponseType {
             expected: "versioned_sp_state", // hard-coded special string
@@ -199,7 +202,7 @@ pub(crate) fn expect_sp_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SpStateV1, SpStateV2, VersionedSpState};
+    use crate::{SpStateV1, SpStateV2, SpStateV3, VersionedSpState};
     use std::net::Ipv6Addr;
 
     fn dummy_addr() -> SocketAddrV6 {
@@ -350,6 +353,24 @@ mod tests {
             panic!("mismatched value {v:?}");
         };
         assert_eq!(r, VersionedSpState::V2(state));
+
+        let state = SpStateV3 {
+            hubris_archive_id: [1, 2, 3, 4, 5, 6, 7, 8],
+            serial_number: [0; 32],
+            model: [0; 32],
+            revision: 123,
+            base_mac_address: [0; 6],
+            power_state: gateway_messages::PowerState::A0,
+        };
+        let v = expect_sp_state((
+            dummy_addr(),
+            SpResponse::SpStateV3(state),
+            vec![],
+        ));
+        let Ok(r) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(r, VersionedSpState::V3(state));
     }
 
     #[test]
