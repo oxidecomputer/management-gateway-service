@@ -169,6 +169,10 @@ pub enum MgsRequest {
 
     /// Issues a sensor read request
     ReadRot(RotRequest),
+
+    /// Dump information about the lock state of the VPD (Vital Product Data)
+    /// The values are serialized in the trailer of the packet
+    VpdLockState,
 }
 
 #[derive(

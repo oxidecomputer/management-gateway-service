@@ -841,6 +841,12 @@ impl SingleSp {
             .await
             .and_then(expect_read_rot)
     }
+
+    pub async fn vpd_lock_status_all(&self) -> Result<Vec<u8>> {
+        let result = rpc(&self.cmds_tx, MgsRequest::VpdLockState, None).await;
+
+        result.result.and_then(expect_vpd_lock_state)
+    }
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)

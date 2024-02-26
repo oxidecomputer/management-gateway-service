@@ -126,6 +126,8 @@ pub enum SpResponse {
     ReadSensor(SensorResponse),
     CurrentTime(u64),
     ReadRot(RotResponse),
+    /// The packet contains trailing lock information
+    VpdLockState,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -554,6 +556,7 @@ pub enum SpError {
     Sprockets(SprocketsError),
     Update(UpdateError),
     Sensor(SensorError),
+    Vpd(VpdError),
 }
 
 impl fmt::Display for SpError {
@@ -664,6 +667,7 @@ impl fmt::Display for SpError {
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
             Self::Sensor(e) => write!(f, "sensor: {}", e),
+            Self::Vpd(e) => write!(f, "vpd: {}", e),
         }
     }
 }
@@ -964,3 +968,55 @@ impl fmt::Display for SensorError {
 
 #[cfg(feature = "std")]
 impl std::error::Error for SensorError {}
+
+/// VPD errors encountered while reading
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum VpdError {
+    InvalidDevice,
+    NotPresent,
+    DeviceError,
+    Unavailable,
+    DeviceTimeout,
+    DeviceOff,
+    BadAddress,
+    BadBuffer,
+    BadRead,
+    BadWrite,
+    BadLock,
+    NotImplemented,
+    IsLocked,
+    PartiallyLocked,
+    AlreadyLocked,
+    TaskRestarted,
+}
+
+impl fmt::Display for VpdError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::InvalidDevice => write!(f, "device index is invalid"),
+            Self::NotPresent => write!(f, "device is not present"),
+            Self::DeviceError => write!(f, "error with VPD device"),
+            Self::Unavailable => write!(f, "vpd device is unavailable"),
+            Self::DeviceTimeout => write!(f, "vpd device timed out"),
+            Self::DeviceOff => write!(f, "vpd device is off"),
+            Self::BadAddress => write!(f, "bad address"),
+            Self::BadBuffer => write!(f, "bad buffer"),
+            Self::BadRead => write!(f, "bad read"),
+            Self::BadWrite => write!(f, "bad write"),
+            Self::BadLock => write!(f, "lock failed"),
+            Self::NotImplemented => {
+                write!(f, "Feature is not implemented/compiled out")
+            }
+            Self::IsLocked => write!(f, "VPD is locked, cannot write"),
+            Self::PartiallyLocked => write!(f, "VPD is partially locked"),
+            Self::AlreadyLocked => {
+                write!(f, "VPD is already locked, cannot lock again")
+            }
+            Self::TaskRestarted => write!(f, "task restarted"),
+        }
+    }
+}
