@@ -391,6 +391,9 @@ pub trait SpHandler {
         request: RotRequest,
         buf: &mut [u8],
     ) -> Result<RotResponse, SpError>;
+
+    fn vpd_lock_status_all(&mut self, buf: &mut [u8])
+        -> Result<usize, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -949,6 +952,15 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::CurrentTime => {
             handler.current_time().map(SpResponse::CurrentTime)
         }
+        MgsRequest::VpdLockState => {
+            let r = handler.vpd_lock_status_all(trailing_tx_buf);
+
+            if let Ok(n) = r {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(n));
+            }
+            r.map(|_| SpResponse::VpdLockState)
+        }
     };
 
     let response = match result {
@@ -1344,6 +1356,13 @@ mod tests {
         }
 
         fn current_time(&mut self) -> Result<u64, SpError> {
+            unimplemented!()
+        }
+
+        fn vpd_lock_status_all(
+            &mut self,
+            _buf: &mut [u8],
+        ) -> Result<usize, SpError> {
             unimplemented!()
         }
     }

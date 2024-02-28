@@ -363,6 +363,9 @@ enum Command {
         #[clap(short, long, default_value_t = CfpaSlot::Active)]
         slot: CfpaSlot,
     },
+
+    /// Reads the lock status of any VPD in the system
+    VpdLockStatus,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1283,6 +1286,19 @@ async fn run_command(
                 CfpaSlot::Scratch => sp.read_rot_scratch_cfpa().await,
             }?;
             handle_cxpa("cfpa", data, out, json)
+        }
+        Command::VpdLockStatus => {
+            let data = sp.vpd_lock_status_all().await?;
+
+            if json {
+                Ok(Output::Json(json!({ "vpd_lock_status": data })))
+            } else {
+                let mut out = vec![];
+                for b in data {
+                    out.push(format!("{b:x?}"));
+                }
+                Ok(Output::Lines(out))
+            }
         }
     }
 }
