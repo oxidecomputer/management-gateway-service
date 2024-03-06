@@ -200,7 +200,7 @@ pub(crate) fn expect_sp_state(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{SpStateV1, SpStateV2, VersionedSpState};
+    use crate::{SpStateV1, SpStateV2, SpStateV3, VersionedSpState};
     use std::net::Ipv6Addr;
 
     fn dummy_addr() -> SocketAddrV6 {
@@ -351,6 +351,24 @@ mod tests {
             panic!("mismatched value {v:?}");
         };
         assert_eq!(r, VersionedSpState::V2(state));
+
+        let state = SpStateV3 {
+            hubris_archive_id: [1, 2, 3, 4, 5, 6, 7, 8],
+            serial_number: [0; 32],
+            model: [0; 32],
+            revision: 123,
+            base_mac_address: [0; 6],
+            power_state: gateway_messages::PowerState::A0,
+        };
+        let v = expect_sp_state((
+            dummy_addr(),
+            SpResponse::SpStateV3(state),
+            vec![],
+        ));
+        let Ok(r) = v else {
+            panic!("mismatched value {v:?}");
+        };
+        assert_eq!(r, VersionedSpState::V3(state));
     }
 
     #[test]
