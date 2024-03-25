@@ -20,7 +20,7 @@ slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain.gi
 anyhow = "1.0"
 async-trait = "0.1"
 backoff = { version = "0.4.0", features = ["tokio"] }
-bitflags = "2.4.2"
+bitflags = "2.5.0"
 clap = { version = "4.5", features = ["derive"] }
 futures = "0.3.30"
 fxhash = "0.2.1"
