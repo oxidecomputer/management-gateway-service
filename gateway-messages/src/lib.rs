@@ -126,13 +126,32 @@ pub enum BadRequestReason {
     DeserializationError,
 }
 
-/// Image slot name for SwitchDefaultImage
+/// Image slot name for SwitchDefaultImage on component ROT
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum RotSlotId {
     A,
     B,
+}
+
+/// Image slot name for SwitchDefaultImage on component STAGE0
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum Stage0SlotId {
+    Stage0,
+    Stage0Next,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum ComponentSlot {
+    /// Hubris flash slot
+    Rot(RotSlotId),
+    /// Bootloader flash slot
+    Stage0(Stage0SlotId),
 }
 
 /// Duration for SwitchDefaultImage

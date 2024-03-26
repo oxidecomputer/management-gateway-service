@@ -430,6 +430,7 @@ enum RecvError {
 // we look up the `SingleSp` instance by the scope ID of the source of the
 // packet then send it an instance of this enum to handle.
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub(crate) enum SingleSpMessage {
     HostPhase2Request(HostPhase2Request),
     SerialConsole {
