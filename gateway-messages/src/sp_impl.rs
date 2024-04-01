@@ -35,6 +35,7 @@ use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
 use crate::SpResponse;
+use crate::SpSlotId;
 use crate::SpStateV2;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
@@ -43,6 +44,7 @@ use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
+use crate::WatchdogId;
 use crate::ROT_PAGE_SIZE;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
@@ -394,6 +396,18 @@ pub trait SpHandler {
 
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
+
+    fn enable_sp_slot_watchdog(
+        &mut self,
+        revert_to_slot: SpSlotId,
+        time_ms: u32,
+        id: WatchdogId,
+    ) -> Result<(), SpError>;
+
+    fn disable_sp_slot_watchdog(
+        &mut self,
+        id: WatchdogId,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -961,6 +975,14 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::VpdLockState)
         }
+        MgsRequest::EnableSpSlotWatchdog { revert_to_slot, time_ms, id } => {
+            handler
+                .enable_sp_slot_watchdog(revert_to_slot, time_ms, id)
+                .map(|()| SpResponse::EnableSpSlotWatchdogAck)
+        }
+        MgsRequest::DisableSpSlotWatchdog { id } => handler
+            .disable_sp_slot_watchdog(id)
+            .map(|()| SpResponse::DisableSpSlotWatchdogAck),
     };
 
     let response = match result {
@@ -1363,6 +1385,22 @@ mod tests {
             &mut self,
             _buf: &mut [u8],
         ) -> Result<usize, SpError> {
+            unimplemented!()
+        }
+
+        fn enable_sp_slot_watchdog(
+            &mut self,
+            _revert_to_slot: SpSlotId,
+            _time_ms: u32,
+            _id: WatchdogId,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn disable_sp_slot_watchdog(
+            &mut self,
+            _id: WatchdogId,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }

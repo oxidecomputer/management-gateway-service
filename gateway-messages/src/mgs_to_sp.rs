@@ -11,8 +11,10 @@ use crate::RotRequest;
 use crate::RotSlotId;
 use crate::SensorRequest;
 use crate::SpComponent;
+use crate::SpSlotId;
 use crate::SwitchDuration;
 use crate::UpdateId;
+use crate::WatchdogId;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
@@ -173,6 +175,18 @@ pub enum MgsRequest {
     /// Dump information about the lock state of the VPD (Vital Product Data)
     /// The values are serialized in the trailer of the packet
     VpdLockState,
+
+    /// Configure the RoT watchdog to reset the SP into the specified slot
+    EnableSpSlotWatchdog {
+        revert_to_slot: SpSlotId,
+        time_ms: u32,
+        id: WatchdogId,
+    },
+
+    /// Disable the RoT watchdog
+    DisableSpSlotWatchdog {
+        id: WatchdogId,
+    },
 }
 
 #[derive(

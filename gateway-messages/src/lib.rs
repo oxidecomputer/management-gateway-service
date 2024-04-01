@@ -66,7 +66,7 @@ pub const ROT_PAGE_SIZE: usize = 512;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 11;
+    pub const CURRENT: u32 = 12;
 }
 
 #[derive(
@@ -263,6 +263,33 @@ impl From<UpdateId> for uuid::Uuid {
     fn from(id: UpdateId) -> Self {
         Self::from_bytes(id.0)
     }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+#[repr(transparent)]
+pub struct WatchdogId(pub [u8; 16]);
+
+impl From<uuid::Uuid> for WatchdogId {
+    fn from(id: uuid::Uuid) -> Self {
+        Self(id.into_bytes())
+    }
+}
+
+impl From<WatchdogId> for uuid::Uuid {
+    fn from(id: WatchdogId) -> Self {
+        Self::from_bytes(id.0)
+    }
+}
+
+/// SP slot name for the slot watchdog
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum SpSlotId {
+    A,
+    B,
 }
 
 /// Identifier for a single component managed by an SP.
