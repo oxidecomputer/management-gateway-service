@@ -14,8 +14,10 @@
 use super::assert_serialized;
 use gateway_messages::MgsRequest;
 use gateway_messages::SerializedSize;
+use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::SpSlotId;
+use gateway_messages::WatchdogError;
 use gateway_messages::WatchdogId;
 
 #[test]
@@ -58,5 +60,20 @@ fn sp_slot_id() {
             SpSlotId::B => [1],
         };
         assert_serialized(&mut out, &serialized, &slot);
+    }
+}
+
+#[test]
+fn watchdog_error() {
+    let mut out = [0; SpResponse::MAX_SIZE];
+
+    for err in [WatchdogError::NotEnabled, WatchdogError::WrongId] {
+        // using a match to force exhaustive checking here
+        let serialized = match err {
+            WatchdogError::NotEnabled => [17, 35, 0],
+            WatchdogError::WrongId => [17, 35, 1],
+        };
+        let response = SpResponse::Error(SpError::Watchdog(err));
+        assert_serialized(&mut out, &serialized, &response);
     }
 }

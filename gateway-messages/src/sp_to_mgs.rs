@@ -573,6 +573,7 @@ pub enum SpError {
     Update(UpdateError),
     Sensor(SensorError),
     Vpd(VpdError),
+    Watchdog(WatchdogError),
 }
 
 impl fmt::Display for SpError {
@@ -684,6 +685,7 @@ impl fmt::Display for SpError {
             Self::Update(e) => write!(f, "update: {}", e),
             Self::Sensor(e) => write!(f, "sensor: {}", e),
             Self::Vpd(e) => write!(f, "vpd: {}", e),
+            Self::Watchdog(e) => write!(f, "watchdog: {}", e),
         }
     }
 }
@@ -848,7 +850,7 @@ pub enum SprotProtocolError {
     BadMessageType,
     /// Transfer size is outside of maximum and minimum lenghts for message type.
     BadMessageLength,
-    // We cannot assert chip select
+    /// We cannot assert chip select
     CannotAssertCSn,
     /// The request timed out
     Timeout,
@@ -1033,6 +1035,28 @@ impl fmt::Display for VpdError {
                 write!(f, "VPD is already locked, cannot lock again")
             }
             Self::TaskRestarted => write!(f, "task restarted"),
+        }
+    }
+}
+
+/// Watchdog errors encountered configuring the SP-RoT watchdog
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum WatchdogError {
+    /// The watchdog is not enabled and therefore cannot be disabled
+    NotEnabled,
+    /// The given ID does not match the ID of the watchdog
+    WrongId,
+}
+
+impl fmt::Display for WatchdogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NotEnabled => write!(f, "watchdog is not enabled"),
+            Self::WrongId => write!(f, "wrong watchdog ID"),
         }
     }
 }
