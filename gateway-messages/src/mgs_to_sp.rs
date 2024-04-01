@@ -11,7 +11,6 @@ use crate::RotRequest;
 use crate::RotSlotId;
 use crate::SensorRequest;
 use crate::SpComponent;
-use crate::SpSlotId;
 use crate::SwitchDuration;
 use crate::UpdateId;
 use crate::WatchdogId;
@@ -176,9 +175,8 @@ pub enum MgsRequest {
     /// The values are serialized in the trailer of the packet
     VpdLockState,
 
-    /// Configure the RoT watchdog to reset the SP into the specified slot
+    /// Configure the RoT watchdog to reset the SP into the inactive slot
     EnableSpSlotWatchdog {
-        revert_to_slot: SpSlotId,
         time_ms: u32,
         id: WatchdogId,
     },

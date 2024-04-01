@@ -283,15 +283,6 @@ impl From<WatchdogId> for uuid::Uuid {
     }
 }
 
-/// SP slot name for the slot watchdog
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub enum SpSlotId {
-    A,
-    B,
-}
-
 /// Identifier for a single component managed by an SP.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SerializedSize)]
 pub struct SpComponent {

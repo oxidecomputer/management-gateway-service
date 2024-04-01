@@ -35,7 +35,6 @@ use crate::SpComponent;
 use crate::SpError;
 use crate::SpPort;
 use crate::SpResponse;
-use crate::SpSlotId;
 use crate::SpStateV2;
 use crate::SpUpdatePrepare;
 use crate::StartupOptions;
@@ -399,7 +398,6 @@ pub trait SpHandler {
 
     fn enable_sp_slot_watchdog(
         &mut self,
-        revert_to_slot: SpSlotId,
         time_ms: u32,
         id: WatchdogId,
     ) -> Result<(), SpError>;
@@ -975,11 +973,9 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::VpdLockState)
         }
-        MgsRequest::EnableSpSlotWatchdog { revert_to_slot, time_ms, id } => {
-            handler
-                .enable_sp_slot_watchdog(revert_to_slot, time_ms, id)
-                .map(|()| SpResponse::EnableSpSlotWatchdogAck)
-        }
+        MgsRequest::EnableSpSlotWatchdog { time_ms, id } => handler
+            .enable_sp_slot_watchdog(time_ms, id)
+            .map(|()| SpResponse::EnableSpSlotWatchdogAck),
         MgsRequest::DisableSpSlotWatchdog { id } => handler
             .disable_sp_slot_watchdog(id)
             .map(|()| SpResponse::DisableSpSlotWatchdogAck),
@@ -1390,7 +1386,6 @@ mod tests {
 
         fn enable_sp_slot_watchdog(
             &mut self,
-            _revert_to_slot: SpSlotId,
             _time_ms: u32,
             _id: WatchdogId,
         ) -> Result<(), SpError> {

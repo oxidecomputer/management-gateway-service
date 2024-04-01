@@ -17,7 +17,6 @@ use gateway_messages::RotError;
 use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
-use gateway_messages::SpSlotId;
 use gateway_messages::WatchdogError;
 use gateway_messages::WatchdogId;
 
@@ -37,7 +36,6 @@ fn sp_response() {
 fn host_request() {
     let mut out = [0; MgsRequest::MAX_SIZE];
     let request = MgsRequest::EnableSpSlotWatchdog {
-        revert_to_slot: SpSlotId::A,
         time_ms: 0x12345,
         id: WatchdogId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
     };
@@ -48,20 +46,6 @@ fn host_request() {
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, // id
     ];
     assert_serialized(&mut out, &expected, &request);
-}
-
-#[test]
-fn sp_slot_id() {
-    let mut out = [0; SpSlotId::MAX_SIZE];
-
-    for slot in [SpSlotId::A, SpSlotId::B] {
-        // using a match to force exhaustive checking here
-        let serialized = match slot {
-            SpSlotId::A => [0],
-            SpSlotId::B => [1],
-        };
-        assert_serialized(&mut out, &serialized, &slot);
-    }
 }
 
 #[test]
