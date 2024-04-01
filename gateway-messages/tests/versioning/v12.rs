@@ -41,7 +41,6 @@ fn host_request() {
     };
     let expected = [
         42, // tag
-        0,  // slot ID
         0x45, 0x23, 0x01, 0x00, // time_ms
         1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, // id
     ];
