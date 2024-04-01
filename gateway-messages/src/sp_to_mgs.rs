@@ -1052,6 +1052,8 @@ pub enum WatchdogError {
     NotEnabled,
     /// The given ID does not match the ID of the watchdog
     WrongId,
+    /// Could not control the SP over SWD
+    SpCtrl,
 }
 
 impl fmt::Display for WatchdogError {
@@ -1059,6 +1061,7 @@ impl fmt::Display for WatchdogError {
         match self {
             Self::NotEnabled => write!(f, "watchdog is not enabled"),
             Self::WrongId => write!(f, "wrong watchdog ID"),
+            Self::SpCtrl => write!(f, "could not control SP over SWD"),
         }
     }
 }

@@ -73,6 +73,7 @@ fn watchdog_error() {
         let serialized = match err {
             WatchdogError::NotEnabled => [17, 35, 0],
             WatchdogError::WrongId => [17, 35, 1],
+            WatchdogError::SpCtrl => [17, 35, 2],
         };
         let response = SpResponse::Error(SpError::Watchdog(err));
         assert_serialized(&mut out, &serialized, &response);
@@ -88,6 +89,7 @@ fn rot_watchdog_error() {
         let serialized = match err {
             WatchdogError::NotEnabled => [5, 0],
             WatchdogError::WrongId => [5, 1],
+            WatchdogError::SpCtrl => [5, 2],
         };
         let response = RotError::Watchdog(err);
         assert_serialized(&mut out, &serialized, &response);
