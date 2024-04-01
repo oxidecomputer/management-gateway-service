@@ -944,6 +944,7 @@ pub enum RotError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
+    Watchdog(WatchdogError),
 }
 
 impl fmt::Display for RotError {
@@ -956,6 +957,7 @@ impl fmt::Display for RotError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
+            Self::Watchdog(e) => write!(f, "watchdog: {}", e),
         }
     }
 }
@@ -1043,7 +1045,7 @@ impl fmt::Display for VpdError {
 ///
 /// This value is wrapped by [`SpError`]
 #[derive(
-    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum WatchdogError {
     /// The watchdog is not enabled and therefore cannot be disabled
