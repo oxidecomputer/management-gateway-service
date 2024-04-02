@@ -1048,10 +1048,6 @@ impl fmt::Display for VpdError {
     Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum WatchdogError {
-    /// The watchdog is not enabled and therefore cannot be disabled
-    NotEnabled,
-    /// The given ID does not match the ID of the watchdog
-    WrongId,
     /// Could not control the SP over SWD
     SpCtrl,
 }
@@ -1059,8 +1055,6 @@ pub enum WatchdogError {
 impl fmt::Display for WatchdogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::NotEnabled => write!(f, "watchdog is not enabled"),
-            Self::WrongId => write!(f, "wrong watchdog ID"),
             Self::SpCtrl => write!(f, "could not control SP over SWD"),
         }
     }

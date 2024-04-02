@@ -43,7 +43,6 @@ use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
-use crate::WatchdogId;
 use crate::ROT_PAGE_SIZE;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
@@ -396,16 +395,9 @@ pub trait SpHandler {
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
 
-    fn enable_sp_slot_watchdog(
-        &mut self,
-        time_ms: u32,
-        id: WatchdogId,
-    ) -> Result<(), SpError>;
+    fn enable_sp_slot_watchdog(&mut self, time_ms: u32) -> Result<(), SpError>;
 
-    fn disable_sp_slot_watchdog(
-        &mut self,
-        id: WatchdogId,
-    ) -> Result<(), SpError>;
+    fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -973,11 +965,11 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::VpdLockState)
         }
-        MgsRequest::EnableSpSlotWatchdog { time_ms, id } => handler
-            .enable_sp_slot_watchdog(time_ms, id)
+        MgsRequest::EnableSpSlotWatchdog { time_ms } => handler
+            .enable_sp_slot_watchdog(time_ms)
             .map(|()| SpResponse::EnableSpSlotWatchdogAck),
-        MgsRequest::DisableSpSlotWatchdog { id } => handler
-            .disable_sp_slot_watchdog(id)
+        MgsRequest::DisableSpSlotWatchdog => handler
+            .disable_sp_slot_watchdog()
             .map(|()| SpResponse::DisableSpSlotWatchdogAck),
     };
 
@@ -1387,15 +1379,11 @@ mod tests {
         fn enable_sp_slot_watchdog(
             &mut self,
             _time_ms: u32,
-            _id: WatchdogId,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
-        fn disable_sp_slot_watchdog(
-            &mut self,
-            _id: WatchdogId,
-        ) -> Result<(), SpError> {
+        fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError> {
             unimplemented!()
         }
     }

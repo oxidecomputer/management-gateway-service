@@ -265,24 +265,6 @@ impl From<UpdateId> for uuid::Uuid {
     }
 }
 
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-#[repr(transparent)]
-pub struct WatchdogId(pub [u8; 16]);
-
-impl From<uuid::Uuid> for WatchdogId {
-    fn from(id: uuid::Uuid) -> Self {
-        Self(id.into_bytes())
-    }
-}
-
-impl From<WatchdogId> for uuid::Uuid {
-    fn from(id: WatchdogId) -> Self {
-        Self::from_bytes(id.0)
-    }
-}
-
 /// Identifier for a single component managed by an SP.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, SerializedSize)]
 pub struct SpComponent {

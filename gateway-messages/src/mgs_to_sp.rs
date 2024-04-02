@@ -13,7 +13,6 @@ use crate::SensorRequest;
 use crate::SpComponent;
 use crate::SwitchDuration;
 use crate::UpdateId;
-use crate::WatchdogId;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
@@ -178,13 +177,10 @@ pub enum MgsRequest {
     /// Configure the RoT watchdog to reset the SP into the inactive slot
     EnableSpSlotWatchdog {
         time_ms: u32,
-        id: WatchdogId,
     },
 
     /// Disable the RoT watchdog
-    DisableSpSlotWatchdog {
-        id: WatchdogId,
-    },
+    DisableSpSlotWatchdog,
 }
 
 #[derive(

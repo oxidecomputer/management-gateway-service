@@ -18,7 +18,6 @@ use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::WatchdogError;
-use gateway_messages::WatchdogId;
 
 #[test]
 fn sp_response() {
@@ -35,14 +34,16 @@ fn sp_response() {
 #[test]
 fn host_request() {
     let mut out = [0; MgsRequest::MAX_SIZE];
-    let request = MgsRequest::EnableSpSlotWatchdog {
-        time_ms: 0x12345,
-        id: WatchdogId([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]),
-    };
+    let request = MgsRequest::EnableSpSlotWatchdog { time_ms: 0x12345 };
     let expected = [
         42, // tag
         0x45, 0x23, 0x01, 0x00, // time_ms
-        1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, // id
+    ];
+    assert_serialized(&mut out, &expected, &request);
+
+    let request = MgsRequest::DisableSpSlotWatchdog;
+    let expected = [
+        43, // tag
     ];
     assert_serialized(&mut out, &expected, &request);
 }
@@ -51,30 +52,25 @@ fn host_request() {
 fn watchdog_error() {
     let mut out = [0; SpResponse::MAX_SIZE];
 
-    for err in [WatchdogError::NotEnabled, WatchdogError::WrongId] {
-        // using a match to force exhaustive checking here
-        let serialized = match err {
-            WatchdogError::NotEnabled => [17, 35, 0],
-            WatchdogError::WrongId => [17, 35, 1],
-            WatchdogError::SpCtrl => [17, 35, 2],
-        };
-        let response = SpResponse::Error(SpError::Watchdog(err));
-        assert_serialized(&mut out, &serialized, &response);
-    }
+    let err = WatchdogError::SpCtrl;
+    // using a match to force exhaustive checking here
+    let serialized = match err {
+        WatchdogError::SpCtrl => [17, 35, 0],
+    };
+    let response = SpResponse::Error(SpError::Watchdog(err));
+    assert_serialized(&mut out, &serialized, &response);
 }
 
 #[test]
 fn rot_watchdog_error() {
     let mut out = [0; RotError::MAX_SIZE];
 
-    for err in [WatchdogError::NotEnabled, WatchdogError::WrongId] {
-        // using a match to force exhaustive checking here
-        let serialized = match err {
-            WatchdogError::NotEnabled => [5, 0],
-            WatchdogError::WrongId => [5, 1],
-            WatchdogError::SpCtrl => [5, 2],
-        };
-        let response = RotError::Watchdog(err);
-        assert_serialized(&mut out, &serialized, &response);
-    }
+    let err = WatchdogError::SpCtrl;
+    // using a match to force exhaustive checking here
+    let serialized = match err {
+        WatchdogError::SpCtrl => [5, 0],
+    };
+    // TODO do we need both SpError::Watchdog and RotError::Watchdog?
+    let response = RotError::Watchdog(err);
+    assert_serialized(&mut out, &serialized, &response);
 }
