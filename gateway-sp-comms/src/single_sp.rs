@@ -779,7 +779,8 @@ impl SingleSp {
             let response =
                 self.rpc(MgsRequest::EnableSpSlotWatchdog { time_ms }).await;
             match response {
-                Ok(_) => {
+                Ok(v) => {
+                    expect_enable_sp_slot_watchdog_ack(v)?;
                     info!(self.log, "enabled reset watchdog");
                     true
                 }
