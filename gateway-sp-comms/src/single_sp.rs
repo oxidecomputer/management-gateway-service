@@ -21,6 +21,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
+use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentDetails;
@@ -751,11 +752,23 @@ impl SingleSp {
     ) -> Result<()> {
         let watchdog_enabled =
             if component == SpComponent::SP_ITSELF && !disable_watchdog {
+                // MGS protocol version in which watchdog messages were added
+                const MGS_WATCHDOG_VERSION: u32 = 12;
+
+                // Attempt to enable the watchdog timer.  We'll support older SP
+                // versions (by catching the specific version error), but if the
+                // SP version is new enough, the watchdog enable command must
+                // succeed.
                 let response = self
                     .rpc(MgsRequest::EnableSpSlotWatchdog { time_ms: 30_000 })
                     .await;
-                println!("got response {response:?}");
-                false
+                match response {
+                    Ok(_) => true,
+                    Err(CommunicationError::SpError(SpError::BadRequest(
+                        BadRequestReason::WrongVersion { sp, .. },
+                    ))) if sp < MGS_WATCHDOG_VERSION => false,
+                    Err(e) => return Err(e),
+                }
             } else {
                 false
             };
