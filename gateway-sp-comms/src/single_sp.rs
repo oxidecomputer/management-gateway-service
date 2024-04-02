@@ -762,30 +762,40 @@ impl SingleSp {
         let watchdog_enabled = if component == SpComponent::SP_ITSELF
             && !disable_watchdog
         {
-            // MGS protocol version in which watchdog messages were added
+            // MGS protocol version in which SP watchdog messages were added
             const MGS_WATCHDOG_VERSION: u32 = 12;
 
             // We'll set the watchdog timer to slightly longer than
-            // SP_RESET_TIME_ALLOWED; this means that if things fail, we'll
-            // reset **after** the MGS timeout expires, so we won't have a
-            // false-positive success.
+            // SP_RESET_TIME_ALLOWED; this means that if things fail, the
+            // watchdog will reset the SP **after** the MGS timeout expires, so
+            // we won't have a false-positive success in this function.
             let time_ms =
                 u32::try_from(SP_RESET_TIME_ALLOWED.as_millis()).unwrap() * 3
                     / 2;
 
             // Attempt to enable the watchdog timer.  We'll support older SP
-            // versions (by catching the specific version error), but if the
-            // SP version is new enough, the watchdog enable command must
-            // succeed.
-            info!(self.log, "enabling reset watchdog");
+            // versions (by catching the specific version error), but will bail
+            // out on all other errors.
             let response =
                 self.rpc(MgsRequest::EnableSpSlotWatchdog { time_ms }).await;
             match response {
-                Ok(_) => true,
+                Ok(_) => {
+                    info!(self.log, "enabled reset watchdog");
+                    true
+                }
                 Err(CommunicationError::SpError(SpError::BadRequest(
                     BadRequestReason::WrongVersion { sp, .. },
-                ))) if sp < MGS_WATCHDOG_VERSION => false,
-                Err(e) => return Err(e),
+                ))) if sp < MGS_WATCHDOG_VERSION => {
+                    warn!(
+                        self.log,
+                        "skipped reset watchdog because SP is too old"
+                    );
+                    false
+                }
+                Err(e) => {
+                    error!(self.log, "could not enable reset watchdog");
+                    return Err(e);
+                }
             }
         } else {
             false
