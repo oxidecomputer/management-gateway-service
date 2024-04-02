@@ -324,7 +324,11 @@ enum Command {
     },
 
     /// Instruct the SP to reset.
-    Reset,
+    Reset {
+        /// Disables the SP slot watchdog
+        #[clap(long)]
+        disable_watchdog: bool,
+    },
 
     /// Reset a component.
     ///
@@ -333,6 +337,9 @@ enum Command {
     ResetComponent {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
+        /// Disables any watchdogs associated with this component reset
+        #[clap(long)]
+        disable_watchdog: bool,
     },
 
     /// Controls the system LED
@@ -1139,10 +1146,14 @@ async fn run_command(
                 }
             }
         }
-        Command::Reset => {
+        Command::Reset { disable_watchdog } => {
             sp.reset_component_prepare(SpComponent::SP_ITSELF).await?;
             info!(log, "SP is prepared to reset");
-            sp.reset_component_trigger(SpComponent::SP_ITSELF).await?;
+            sp.reset_component_trigger(
+                SpComponent::SP_ITSELF,
+                disable_watchdog,
+            )
+            .await?;
             info!(log, "SP reset complete");
             if json {
                 Ok(Output::Json(json!({ "ack": "reset" })))
@@ -1151,10 +1162,10 @@ async fn run_command(
             }
         }
 
-        Command::ResetComponent { component } => {
+        Command::ResetComponent { component, disable_watchdog } => {
             sp.reset_component_prepare(component).await?;
             info!(log, "SP is prepared to reset component {component}",);
-            sp.reset_component_trigger(component).await?;
+            sp.reset_component_trigger(component, disable_watchdog).await?;
             info!(log, "SP reset component {component} complete");
             if json {
                 Ok(Output::Json(json!({ "ack": "reset" })))

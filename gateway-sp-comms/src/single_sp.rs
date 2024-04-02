@@ -740,10 +740,26 @@ impl SingleSp {
     /// Instruct the SP to reset a component.
     ///
     /// Only valid after a successful call to `reset_component_prepare()`.
+    ///
+    /// If `disable_watchdog` is `true`, then any watchdogs associated with the
+    /// reset are disabled.  Otherwise, watchdogs are enabled opportunistically
+    /// (depending on component and MGS protocol version).
     pub async fn reset_component_trigger(
         &self,
         component: SpComponent,
+        disable_watchdog: bool,
     ) -> Result<()> {
+        let watchdog_enabled =
+            if component == SpComponent::SP_ITSELF && !disable_watchdog {
+                let response = self
+                    .rpc(MgsRequest::EnableSpSlotWatchdog { time_ms: 30_000 })
+                    .await;
+                println!("got response {response:?}");
+                false
+            } else {
+                false
+            };
+
         // If we are resetting the SP itself, then reset trigger should
         // retry until we get back an error indicating the
         // SP wasn't expecting a reset trigger (because it has reset!).
@@ -770,7 +786,17 @@ impl SingleSp {
             }
             Err(CommunicationError::SpError(
                 SpError::ResetComponentTriggerWithoutPrepare,
-            )) if component == SpComponent::SP_ITSELF => Ok(()),
+            )) if component == SpComponent::SP_ITSELF => {
+                if watchdog_enabled {
+                    debug!(self.log, "disabling watchdog");
+                    // Disable watchdog here
+                    self.rpc(MgsRequest::DisableSpSlotWatchdog)
+                        .await
+                        .and_then(expect_disable_sp_slot_watchdog_ack)
+                } else {
+                    Ok(())
+                }
+            }
             Err(other) => Err(other),
         }
     }
