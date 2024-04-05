@@ -763,8 +763,14 @@ impl SingleSp {
         // MGS protocol version in which SP watchdog messages were added
         const MGS_WATCHDOG_VERSION: u32 = 12;
 
-        let use_watchdog =
-            component == SpComponent::SP_ITSELF && !disable_watchdog;
+        // If the SP has an update pending, then use the watchdog reset
+        let use_watchdog = component == SpComponent::SP_ITSELF
+            && !disable_watchdog
+            && matches!(
+                self.update_status(component).await?,
+                UpdateStatus::Complete(..)
+            );
+
         let reset_command = if use_watchdog {
             // We'll set the watchdog timer to slightly longer than
             // SP_RESET_TIME_ALLOWED; this means that if things fail, the
