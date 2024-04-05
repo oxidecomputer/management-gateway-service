@@ -395,7 +395,10 @@ pub trait SpHandler {
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
 
-    fn enable_sp_slot_watchdog(&mut self, time_ms: u32) -> Result<(), SpError>;
+    fn reset_with_watchdog(
+        &mut self,
+        time_ms: u32,
+    ) -> Result<core::convert::Infallible, SpError>;
 
     fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError>;
 }
@@ -965,9 +968,9 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::VpdLockState)
         }
-        MgsRequest::EnableSpSlotWatchdog { time_ms } => handler
-            .enable_sp_slot_watchdog(time_ms)
-            .map(|()| SpResponse::EnableSpSlotWatchdogAck),
+        MgsRequest::ResetWithWatchdog { time_ms } => handler
+            .reset_with_watchdog(time_ms)
+            .map(|_| unreachable!("reset function must diverge")),
         MgsRequest::DisableSpSlotWatchdog => handler
             .disable_sp_slot_watchdog()
             .map(|()| SpResponse::DisableSpSlotWatchdogAck),
@@ -1376,10 +1379,10 @@ mod tests {
             unimplemented!()
         }
 
-        fn enable_sp_slot_watchdog(
+        fn reset_with_watchdog(
             &mut self,
             _time_ms: u32,
-        ) -> Result<(), SpError> {
+        ) -> Result<core::convert::Infallible, SpError> {
             unimplemented!()
         }
 

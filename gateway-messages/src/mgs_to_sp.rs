@@ -174,12 +174,19 @@ pub enum MgsRequest {
     /// The values are serialized in the trailer of the packet
     VpdLockState,
 
-    /// Configure the RoT watchdog to reset the SP into the inactive slot
-    EnableSpSlotWatchdog {
+    /// Reset the SP after enabling the RoT watchdog
+    ///
+    /// This function is part of the SP reset sequence, and will return an error
+    /// if there is not a completed update in the SP.
+    ResetWithWatchdog {
         time_ms: u32,
     },
 
     /// Disable the RoT watchdog
+    ///
+    /// This function should be called after `ResetWithWatchdog`; if we can
+    /// communicate with the SP enough to call this function, then it's safe to
+    /// disable the watchdog (because the new image is working).
     DisableSpSlotWatchdog,
 }
 

@@ -22,19 +22,16 @@ use gateway_messages::WatchdogError;
 #[test]
 fn sp_response() {
     let mut out = [0; SpResponse::MAX_SIZE];
-    let response = SpResponse::EnableSpSlotWatchdogAck;
-    let expected = [42];
-    assert_serialized(&mut out, &expected, &response);
 
     let response = SpResponse::DisableSpSlotWatchdogAck;
-    let expected = [43];
+    let expected = [42];
     assert_serialized(&mut out, &expected, &response);
 }
 
 #[test]
 fn host_request() {
     let mut out = [0; MgsRequest::MAX_SIZE];
-    let request = MgsRequest::EnableSpSlotWatchdog { time_ms: 0x12345 };
+    let request = MgsRequest::ResetWithWatchdog { time_ms: 0x12345 };
     let expected = [
         42, // tag
         0x45, 0x23, 0x01, 0x00, // time_ms
@@ -52,13 +49,15 @@ fn host_request() {
 fn watchdog_error() {
     let mut out = [0; SpResponse::MAX_SIZE];
 
-    let err = WatchdogError::SpCtrl;
-    // using a match to force exhaustive checking here
-    let serialized = match err {
-        WatchdogError::SpCtrl => [17, 35, 0],
-    };
-    let response = SpResponse::Error(SpError::Watchdog(err));
-    assert_serialized(&mut out, &serialized, &response);
+    for err in [WatchdogError::SpCtrl, WatchdogError::NoCompletedUpdate] {
+        // using a match to force exhaustive checking here
+        let serialized = match err {
+            WatchdogError::SpCtrl => [17, 35, 0],
+            WatchdogError::NoCompletedUpdate => [17, 35, 1],
+        };
+        let response = SpResponse::Error(SpError::Watchdog(err));
+        assert_serialized(&mut out, &serialized, &response);
+    }
 }
 
 #[test]
@@ -69,6 +68,7 @@ fn rot_watchdog_error() {
     // using a match to force exhaustive checking here
     let serialized = match err {
         WatchdogError::SpCtrl => [5, 0],
+        WatchdogError::NoCompletedUpdate => [5, 1],
     };
     // TODO do we need both SpError::Watchdog and RotError::Watchdog?
     let response = RotError::Watchdog(err);

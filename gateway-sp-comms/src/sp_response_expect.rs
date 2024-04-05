@@ -116,7 +116,6 @@ expect_fn!(SwitchDefaultImageAck);
 expect_fn!(ComponentActionAck);
 expect_fn!(ReadSensor(resp) -> SensorResponse);
 expect_fn!(CurrentTime(time) -> u64);
-expect_fn!(EnableSpSlotWatchdogAck);
 expect_fn!(DisableSpSlotWatchdogAck);
 
 // Data-bearing responses

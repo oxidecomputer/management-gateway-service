@@ -129,7 +129,6 @@ pub enum SpResponse {
     /// The packet contains trailing lock information
     VpdLockState,
 
-    EnableSpSlotWatchdogAck,
     DisableSpSlotWatchdogAck,
 }
 
@@ -1050,11 +1049,16 @@ impl fmt::Display for VpdError {
 pub enum WatchdogError {
     /// Could not control the SP over SWD
     SpCtrl,
+    /// There is not a complete SP update in place
+    NoCompletedUpdate,
 }
 
 impl fmt::Display for WatchdogError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::NoCompletedUpdate => {
+                write!(f, "the SP does not have a completed update")
+            }
             Self::SpCtrl => write!(f, "could not control SP over SWD"),
         }
     }
