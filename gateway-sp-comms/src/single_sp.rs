@@ -1888,9 +1888,10 @@ impl<T: InnerSocket> Inner<T> {
             MessageKind::MgsRequest(MgsRequest::ResetComponentTrigger {
                 component,
             }) if *component == SpComponent::SP_ITSELF => calc_reset_attempts(),
-            MessageKind::MgsRequest(MgsRequest::ResetTrigger) => {
-                calc_reset_attempts()
-            }
+            MessageKind::MgsRequest(MgsRequest::ResetTrigger)
+            | MessageKind::MgsRequest(MgsRequest::ResetWithWatchdog {
+                ..
+            }) => calc_reset_attempts(),
             _ => self.max_attempts_per_rpc,
         };
 
