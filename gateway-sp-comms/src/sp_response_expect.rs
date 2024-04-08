@@ -117,6 +117,7 @@ expect_fn!(ComponentActionAck);
 expect_fn!(ReadSensor(resp) -> SensorResponse);
 expect_fn!(CurrentTime(time) -> u64);
 expect_fn!(DisableSpSlotWatchdogAck);
+expect_fn!(SpSlotWatchdogSupportedAck);
 
 // Data-bearing responses
 expect_data_fn!(BulkIgnitionState(page) -> TlvPage);

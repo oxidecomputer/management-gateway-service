@@ -26,6 +26,10 @@ fn sp_response() {
     let response = SpResponse::DisableSpSlotWatchdogAck;
     let expected = [42];
     assert_serialized(&mut out, &expected, &response);
+
+    let response = SpResponse::SpSlotWatchdogSupportedAck;
+    let expected = [43];
+    assert_serialized(&mut out, &expected, &response);
 }
 
 #[test]
@@ -41,6 +45,12 @@ fn host_request() {
     let request = MgsRequest::DisableSpSlotWatchdog;
     let expected = [
         43, // tag
+    ];
+    assert_serialized(&mut out, &expected, &request);
+
+    let request = MgsRequest::SpSlotWatchdogSupported;
+    let expected = [
+        44, // tag
     ];
     assert_serialized(&mut out, &expected, &request);
 }

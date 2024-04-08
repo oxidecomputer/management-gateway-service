@@ -188,6 +188,13 @@ pub enum MgsRequest {
     /// communicate with the SP enough to call this function, then it's safe to
     /// disable the watchdog (because the new image is working).
     DisableSpSlotWatchdog,
+
+    /// Checks whether the SP watchdog is supported
+    ///
+    /// It may be unsupported if the SP is running an older version of MGS (in
+    /// which case this message will fail to decode), or because there's a
+    /// debugger connected to the SP (preventing the RoT from controlling it).
+    SpSlotWatchdogSupported,
 }
 
 #[derive(

@@ -130,6 +130,7 @@ pub enum SpResponse {
     VpdLockState,
 
     DisableSpSlotWatchdogAck,
+    SpSlotWatchdogSupportedAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

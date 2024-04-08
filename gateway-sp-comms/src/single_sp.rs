@@ -48,7 +48,6 @@ use gateway_messages::SpResponse;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
-use gateway_messages::WatchdogError;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
 use gateway_messages::ROT_PAGE_SIZE;
 use serde::Serialize;
@@ -755,7 +754,6 @@ impl SingleSp {
     /// If `disable_watchdog` is `true`, then any watchdogs associated with the
     /// reset are disabled.  Otherwise, watchdogs are enabled opportunistically
     /// (depending on component and MGS protocol version).
-    #[async_recursion::async_recursion]
     pub async fn reset_component_trigger(
         &self,
         component: SpComponent,
@@ -765,12 +763,39 @@ impl SingleSp {
         const MGS_WATCHDOG_VERSION: u32 = 12;
 
         // If the SP has an update pending, then use the watchdog reset
-        let use_watchdog = component == SpComponent::SP_ITSELF
+        let mut use_watchdog = component == SpComponent::SP_ITSELF
             && !disable_watchdog
             && matches!(
                 self.update_status(component).await?,
                 UpdateStatus::Complete(..)
             );
+        if use_watchdog {
+            let response = self.rpc(MgsRequest::SpSlotWatchdogSupported).await;
+            match response {
+                Err(CommunicationError::SpError(SpError::BadRequest(
+                    BadRequestReason::WrongVersion { sp, .. },
+                ))) if sp < MGS_WATCHDOG_VERSION => {
+                    // If the SP firmware version is too old, then log an error
+                    // message and fall back to the non-watchdog reset command
+                    warn!(
+                        self.log,
+                        "cannot use reset watchdog; SP MGS version is too old"
+                    );
+                    use_watchdog = false;
+                }
+                Ok(v) => {
+                    expect_sp_slot_watchdog_supported_ack(v)?;
+                }
+                Err(e) => {
+                    warn!(
+                        self.log,
+                        "unexpected error when checking for watchdog support: \
+                         {e:?}"
+                    );
+                    return Err(e);
+                }
+            }
+        }
 
         let reset_command = if use_watchdog {
             // We'll set the watchdog timer to slightly longer than
@@ -809,34 +834,34 @@ impl SingleSp {
                     expect_reset_component_trigger_ack((addr, response, data))
                 }
             }
-            Err(CommunicationError::SpError(SpError::BadRequest(
-                BadRequestReason::WrongVersion { sp, .. },
-            ))) if sp < MGS_WATCHDOG_VERSION && use_watchdog => {
-                // If the SP firmware version is too old, then log an error
-                // message and fall back to the non-watchdog reset command
-                warn!(
-                    self.log,
-                    "cannot use reset watchdog; SP MGS version is too old"
-                );
-                return self.reset_component_trigger(component, true).await;
-            }
-            Err(CommunicationError::SpError(SpError::Watchdog(
-                WatchdogError::NoCompletedUpdate,
-            ))) if component == SpComponent::SP_ITSELF && use_watchdog => {
+            Err(CommunicationError::SpError(
+                SpError::ResetComponentTriggerWithoutPrepare,
+            )) if component == SpComponent::SP_ITSELF => {
                 // This means that the reset is complete and we've come back up.
                 // It's now time to disable the watchdog (if it was previously
                 // enabled).
                 info!(self.log, "disabling watchdog");
-                self.rpc(MgsRequest::DisableSpSlotWatchdog)
-                    .await
-                    .and_then(expect_disable_sp_slot_watchdog_ack)
-            }
-            Err(CommunicationError::SpError(
-                SpError::ResetComponentTriggerWithoutPrepare,
-            )) if component == SpComponent::SP_ITSELF && !use_watchdog => {
-                // This means that the reset is complete and we've come back up.
-                // Great job, everyone.
-                Ok(())
+                if use_watchdog {
+                    let r = self
+                        .rpc(MgsRequest::DisableSpSlotWatchdog)
+                        .await
+                        .and_then(expect_disable_sp_slot_watchdog_ack);
+                    if r.is_err() {
+                        error!(
+                            self.log,
+                            "watchdog could not be disabled; \
+                             the system may reboot momentarily!"
+                        );
+                        // disable the "watchdog may recover the system"
+                        // that would otherwise be printed below
+                        use_watchdog = false;
+                    }
+                    r
+                } else {
+                    // This means that the reset is complete and we've come back
+                    // up. Great job, everyone.
+                    Ok(())
+                }
             }
             Err(other) => Err(other),
         };

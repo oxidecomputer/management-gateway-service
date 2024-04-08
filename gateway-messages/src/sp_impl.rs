@@ -401,6 +401,7 @@ pub trait SpHandler {
     ) -> Result<core::convert::Infallible, SpError>;
 
     fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError>;
+    fn sp_slot_watchdog_supported(&mut self) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -974,6 +975,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::DisableSpSlotWatchdog => handler
             .disable_sp_slot_watchdog()
             .map(|()| SpResponse::DisableSpSlotWatchdogAck),
+        MgsRequest::SpSlotWatchdogSupported => handler
+            .sp_slot_watchdog_supported()
+            .map(|()| SpResponse::SpSlotWatchdogSupportedAck),
     };
 
     let response = match result {
@@ -1387,6 +1391,9 @@ mod tests {
         }
 
         fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError> {
+            unimplemented!()
+        }
+        fn sp_slot_watchdog_supported(&mut self) -> Result<(), SpError> {
             unimplemented!()
         }
     }
