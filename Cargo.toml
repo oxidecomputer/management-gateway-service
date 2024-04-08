@@ -52,7 +52,7 @@ tokio-util = { version = "0.7", features = ["compat"] }
 usdt = "0.5.0"
 uuid = { version = "1.8", default-features = false }
 version_check = "0.9.4"
-zerocopy = "0.6.6"
+zerocopy = "0.7.32"
 zip = { version = "0.6.6", default-features = false, features = ["deflate", "bzip2"] }
 
 gateway-messages.path = "gateway-messages"
