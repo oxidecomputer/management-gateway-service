@@ -13,7 +13,7 @@
 
 use super::assert_serialized;
 use gateway_messages::MgsRequest;
-use gateway_messages::RotError;
+use gateway_messages::RotWatchdogError;
 use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
@@ -59,28 +59,22 @@ fn host_request() {
 fn watchdog_error() {
     let mut out = [0; SpResponse::MAX_SIZE];
 
-    for err in [WatchdogError::SpCtrl, WatchdogError::NoCompletedUpdate] {
+    for err in [
+        WatchdogError::NoCompletedUpdate,
+        WatchdogError::Rot(RotWatchdogError::DongleDetected),
+        WatchdogError::Rot(RotWatchdogError::Other(123)),
+    ] {
         // using a match to force exhaustive checking here
         let serialized = match err {
-            WatchdogError::SpCtrl => [17, 35, 0],
-            WatchdogError::NoCompletedUpdate => [17, 35, 1],
+            WatchdogError::NoCompletedUpdate => [17, 35, 0].as_slice(),
+            WatchdogError::Rot(RotWatchdogError::DongleDetected) => {
+                &[17, 35, 1, 0]
+            }
+            WatchdogError::Rot(RotWatchdogError::Other(..)) => {
+                &[17, 35, 1, 1, 123, 0, 0, 0]
+            }
         };
         let response = SpResponse::Error(SpError::Watchdog(err));
-        assert_serialized(&mut out, &serialized, &response);
+        assert_serialized(&mut out, serialized, &response);
     }
-}
-
-#[test]
-fn rot_watchdog_error() {
-    let mut out = [0; RotError::MAX_SIZE];
-
-    let err = WatchdogError::SpCtrl;
-    // using a match to force exhaustive checking here
-    let serialized = match err {
-        WatchdogError::SpCtrl => [5, 0],
-        WatchdogError::NoCompletedUpdate => [5, 1],
-    };
-    // TODO do we need both SpError::Watchdog and RotError::Watchdog?
-    let response = RotError::Watchdog(err);
-    assert_serialized(&mut out, &serialized, &response);
 }

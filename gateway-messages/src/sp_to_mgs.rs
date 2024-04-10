@@ -1048,10 +1048,24 @@ impl fmt::Display for VpdError {
     Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum WatchdogError {
-    /// Could not control the SP over SWD
-    SpCtrl,
     /// There is not a complete SP update in place
     NoCompletedUpdate,
+    /// RoT returned an error
+    Rot(RotWatchdogError),
+}
+
+/// Watchdog errors encountered on the RoT side of the link
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum RotWatchdogError {
+    /// The programming dongle is plugged in
+    DongleDetected,
+
+    /// Raw error code
+    Other(u32),
 }
 
 impl fmt::Display for WatchdogError {
@@ -1060,7 +1074,18 @@ impl fmt::Display for WatchdogError {
             Self::NoCompletedUpdate => {
                 write!(f, "the SP does not have a completed update")
             }
-            Self::SpCtrl => write!(f, "could not control SP over SWD"),
+            Self::Rot(r) => write!(f, "RoT error: {r}"),
+        }
+    }
+}
+
+impl fmt::Display for RotWatchdogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DongleDetected => {
+                write!(f, "the SP programming dongle is connected")
+            }
+            Self::Other(r) => write!(f, "unknown error: {r}"),
         }
     }
 }
