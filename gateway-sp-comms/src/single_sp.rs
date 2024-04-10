@@ -21,6 +21,7 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
+use gateway_messages::version::WATCHDOG_VERSION;
 use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
@@ -759,9 +760,6 @@ impl SingleSp {
         component: SpComponent,
         disable_watchdog: bool,
     ) -> Result<()> {
-        // MGS protocol version in which SP watchdog messages were added
-        const MGS_WATCHDOG_VERSION: u32 = 12;
-
         // If the SP has an update pending, then use the watchdog reset
         let mut use_watchdog = component == SpComponent::SP_ITSELF
             && !disable_watchdog
@@ -774,7 +772,7 @@ impl SingleSp {
             match response {
                 Err(CommunicationError::SpError(SpError::BadRequest(
                     BadRequestReason::WrongVersion { sp, .. },
-                ))) if sp < MGS_WATCHDOG_VERSION => {
+                ))) if sp < WATCHDOG_VERSION => {
                     // If the SP firmware version is too old, then log an error
                     // message and fall back to the non-watchdog reset command
                     warn!(
