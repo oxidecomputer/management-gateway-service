@@ -395,7 +395,7 @@ pub trait SpHandler {
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
 
-    fn reset_component_with_rollback(
+    fn reset_component_with_watchdog(
         &mut self,
         component: SpComponent,
         time_ms: u32,
@@ -980,7 +980,7 @@ fn handle_mgs_request<H: SpHandler>(
             component,
             time_ms,
         } => handler
-            .reset_component_with_rollback(component, time_ms)
+            .reset_component_with_watchdog(component, time_ms)
             .map(|_| unreachable!("reset function must diverge")),
         MgsRequest::DisableComponentWatchdog { component } => handler
             .disable_component_watchdog(component)
@@ -1393,7 +1393,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn reset_component_with_rollback(
+        fn reset_component_with_watchdog(
             &mut self,
             _component: SpComponent,
             _time_ms: u32,
