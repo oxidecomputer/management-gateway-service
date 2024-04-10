@@ -15,6 +15,7 @@ use super::assert_serialized;
 use gateway_messages::MgsRequest;
 use gateway_messages::RotWatchdogError;
 use gateway_messages::SerializedSize;
+use gateway_messages::SpComponent;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::WatchdogError;
@@ -23,11 +24,11 @@ use gateway_messages::WatchdogError;
 fn sp_response() {
     let mut out = [0; SpResponse::MAX_SIZE];
 
-    let response = SpResponse::DisableSpSlotWatchdogAck;
+    let response = SpResponse::DisableComponentWatchdogAck;
     let expected = [42];
     assert_serialized(&mut out, &expected, &response);
 
-    let response = SpResponse::SpSlotWatchdogSupportedAck;
+    let response = SpResponse::ComponentWatchdogSupportedAck;
     let expected = [43];
     assert_serialized(&mut out, &expected, &response);
 }
@@ -35,22 +36,32 @@ fn sp_response() {
 #[test]
 fn host_request() {
     let mut out = [0; MgsRequest::MAX_SIZE];
-    let request = MgsRequest::ResetWithWatchdog { time_ms: 0x12345 };
+    let request = MgsRequest::ResetComponentTriggerWithWatchdog {
+        component: SpComponent::SP_ITSELF,
+        time_ms: 0x12345,
+    };
     let expected = [
         42, // tag
+        b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // component
         0x45, 0x23, 0x01, 0x00, // time_ms
     ];
     assert_serialized(&mut out, &expected, &request);
 
-    let request = MgsRequest::DisableSpSlotWatchdog;
+    let request = MgsRequest::DisableComponentWatchdog {
+        component: SpComponent::SP_ITSELF,
+    };
     let expected = [
         43, // tag
+        b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
     assert_serialized(&mut out, &expected, &request);
 
-    let request = MgsRequest::SpSlotWatchdogSupported;
+    let request = MgsRequest::ComponentWatchdogSupported {
+        component: SpComponent::SP_ITSELF,
+    };
     let expected = [
         44, // tag
+        b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
     assert_serialized(&mut out, &expected, &request);
 }

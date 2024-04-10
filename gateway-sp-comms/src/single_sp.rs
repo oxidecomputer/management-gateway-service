@@ -768,7 +768,9 @@ impl SingleSp {
                 UpdateStatus::Complete(..)
             );
         if use_watchdog {
-            let response = self.rpc(MgsRequest::SpSlotWatchdogSupported).await;
+            let response = self
+                .rpc(MgsRequest::ComponentWatchdogSupported { component })
+                .await;
             match response {
                 Err(CommunicationError::SpError(SpError::BadRequest(
                     BadRequestReason::WrongVersion { sp, .. },
@@ -782,7 +784,7 @@ impl SingleSp {
                     use_watchdog = false;
                 }
                 Ok(v) => {
-                    expect_sp_slot_watchdog_supported_ack(v)?;
+                    expect_component_watchdog_supported_ack(v)?;
                 }
                 Err(e) => {
                     warn!(
@@ -804,7 +806,7 @@ impl SingleSp {
                 u32::try_from(SP_RESET_TIME_ALLOWED.as_millis()).unwrap() * 3
                     / 2;
             info!(self.log, "using watchdog during reset");
-            MgsRequest::ResetWithWatchdog { time_ms }
+            MgsRequest::ResetComponentTriggerWithWatchdog { component, time_ms }
         } else {
             MgsRequest::ResetComponentTrigger { component }
         };
@@ -841,9 +843,9 @@ impl SingleSp {
                 info!(self.log, "disabling watchdog");
                 if use_watchdog {
                     let r = self
-                        .rpc(MgsRequest::DisableSpSlotWatchdog)
+                        .rpc(MgsRequest::DisableComponentWatchdog { component })
                         .await
-                        .and_then(expect_disable_sp_slot_watchdog_ack);
+                        .and_then(expect_disable_component_watchdog_ack);
                     if r.is_err() {
                         error!(
                             self.log,
@@ -1912,9 +1914,9 @@ impl<T: InnerSocket> Inner<T> {
                 component,
             }) if *component == SpComponent::SP_ITSELF => calc_reset_attempts(),
             MessageKind::MgsRequest(MgsRequest::ResetTrigger)
-            | MessageKind::MgsRequest(MgsRequest::ResetWithWatchdog {
-                ..
-            }) => calc_reset_attempts(),
+            | MessageKind::MgsRequest(
+                MgsRequest::ResetComponentTriggerWithWatchdog { .. },
+            ) => calc_reset_attempts(),
             _ => self.max_attempts_per_rpc,
         };
 

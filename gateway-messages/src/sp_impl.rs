@@ -395,13 +395,20 @@ pub trait SpHandler {
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
 
-    fn reset_with_watchdog(
+    fn reset_component_with_rollback(
         &mut self,
+        component: SpComponent,
         time_ms: u32,
     ) -> Result<core::convert::Infallible, SpError>;
 
-    fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError>;
-    fn sp_slot_watchdog_supported(&mut self) -> Result<(), SpError>;
+    fn disable_component_watchdog(
+        &mut self,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+    fn component_watchdog_supported(
+        &mut self,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -969,15 +976,18 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::VpdLockState)
         }
-        MgsRequest::ResetWithWatchdog { time_ms } => handler
-            .reset_with_watchdog(time_ms)
+        MgsRequest::ResetComponentTriggerWithWatchdog {
+            component,
+            time_ms,
+        } => handler
+            .reset_component_with_rollback(component, time_ms)
             .map(|_| unreachable!("reset function must diverge")),
-        MgsRequest::DisableSpSlotWatchdog => handler
-            .disable_sp_slot_watchdog()
-            .map(|()| SpResponse::DisableSpSlotWatchdogAck),
-        MgsRequest::SpSlotWatchdogSupported => handler
-            .sp_slot_watchdog_supported()
-            .map(|()| SpResponse::SpSlotWatchdogSupportedAck),
+        MgsRequest::DisableComponentWatchdog { component } => handler
+            .disable_component_watchdog(component)
+            .map(|()| SpResponse::DisableComponentWatchdogAck),
+        MgsRequest::ComponentWatchdogSupported { component } => handler
+            .component_watchdog_supported(component)
+            .map(|()| SpResponse::ComponentWatchdogSupportedAck),
     };
 
     let response = match result {
@@ -1383,17 +1393,24 @@ mod tests {
             unimplemented!()
         }
 
-        fn reset_with_watchdog(
+        fn reset_component_with_rollback(
             &mut self,
+            _component: SpComponent,
             _time_ms: u32,
         ) -> Result<core::convert::Infallible, SpError> {
             unimplemented!()
         }
 
-        fn disable_sp_slot_watchdog(&mut self) -> Result<(), SpError> {
+        fn disable_component_watchdog(
+            &mut self,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
-        fn sp_slot_watchdog_supported(&mut self) -> Result<(), SpError> {
+        fn component_watchdog_supported(
+            &mut self,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }

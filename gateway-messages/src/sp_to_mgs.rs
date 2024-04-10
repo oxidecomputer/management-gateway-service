@@ -129,8 +129,8 @@ pub enum SpResponse {
     /// The packet contains trailing lock information
     VpdLockState,
 
-    DisableSpSlotWatchdogAck,
-    SpSlotWatchdogSupportedAck,
+    DisableComponentWatchdogAck,
+    ComponentWatchdogSupportedAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
