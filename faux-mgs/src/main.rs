@@ -325,7 +325,7 @@ enum Command {
 
     /// Instruct the SP to reset.
     Reset {
-        /// Disables the SP slot watchdog
+        /// Reset without the automatic safety rollback watchdog
         #[clap(long)]
         disable_watchdog: bool,
     },
@@ -337,7 +337,7 @@ enum Command {
     ResetComponent {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
-        /// Disables any watchdogs associated with this component reset
+        /// Reset without the automatic safety rollback watchdog (if applicable)
         #[clap(long)]
         disable_watchdog: bool,
     },
