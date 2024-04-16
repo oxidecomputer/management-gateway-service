@@ -875,7 +875,7 @@ impl SingleSp {
                 ))) if sp < WATCHDOG_VERSION => {
                     error!(
                         self.log,
-                        "cannot disable watchdog (new image is too old);
+                        "cannot disable watchdog (new image is too old); \
                          the system may reboot momentarily!"
                     );
                 }
