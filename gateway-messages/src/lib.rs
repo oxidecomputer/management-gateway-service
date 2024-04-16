@@ -66,7 +66,10 @@ pub const ROT_PAGE_SIZE: usize = 512;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 11;
+    pub const CURRENT: u32 = 12;
+
+    /// MGS protocol version in which SP watchdog messages were added
+    pub const WATCHDOG_VERSION: u32 = 12;
 }
 
 #[derive(

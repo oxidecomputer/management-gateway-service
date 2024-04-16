@@ -36,7 +36,7 @@ fn host_request() {
 
 #[test]
 fn vpd_protocol_errors() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
+    let mut out = [0; SpResponse::MAX_SIZE];
 
     for (error, serialized) in [
         (VpdError::InvalidDevice, &[0]),

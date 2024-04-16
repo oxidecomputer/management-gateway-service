@@ -128,6 +128,9 @@ pub enum SpResponse {
     ReadRot(RotResponse),
     /// The packet contains trailing lock information
     VpdLockState,
+
+    DisableComponentWatchdogAck,
+    ComponentWatchdogSupportedAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -570,6 +573,7 @@ pub enum SpError {
     Update(UpdateError),
     Sensor(SensorError),
     Vpd(VpdError),
+    Watchdog(WatchdogError),
 }
 
 impl fmt::Display for SpError {
@@ -681,6 +685,7 @@ impl fmt::Display for SpError {
             Self::Update(e) => write!(f, "update: {}", e),
             Self::Sensor(e) => write!(f, "sensor: {}", e),
             Self::Vpd(e) => write!(f, "vpd: {}", e),
+            Self::Watchdog(e) => write!(f, "watchdog: {}", e),
         }
     }
 }
@@ -845,7 +850,7 @@ pub enum SprotProtocolError {
     BadMessageType,
     /// Transfer size is outside of maximum and minimum lenghts for message type.
     BadMessageLength,
-    // We cannot assert chip select
+    /// We cannot assert chip select
     CannotAssertCSn,
     /// The request timed out
     Timeout,
@@ -939,6 +944,7 @@ pub enum RotError {
     Spi(SpiError),
     Sprockets(SprocketsError),
     Update(UpdateError),
+    Watchdog(WatchdogError),
 }
 
 impl fmt::Display for RotError {
@@ -951,6 +957,7 @@ impl fmt::Display for RotError {
             Self::Spi(e) => write!(f, "spi: {}", e),
             Self::Sprockets(e) => write!(f, "sprockets: {}", e),
             Self::Update(e) => write!(f, "update: {}", e),
+            Self::Watchdog(e) => write!(f, "watchdog: {}", e),
         }
     }
 }
@@ -1030,6 +1037,55 @@ impl fmt::Display for VpdError {
                 write!(f, "VPD is already locked, cannot lock again")
             }
             Self::TaskRestarted => write!(f, "task restarted"),
+        }
+    }
+}
+
+/// Watchdog errors encountered configuring the SP-RoT watchdog
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum WatchdogError {
+    /// There is not a complete SP update in place
+    NoCompletedUpdate,
+    /// RoT returned an error
+    Rot(RotWatchdogError),
+}
+
+/// Watchdog errors encountered on the RoT side of the link
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum RotWatchdogError {
+    /// The programming dongle is plugged in
+    DongleDetected,
+
+    /// Raw error code
+    Other(u32),
+}
+
+impl fmt::Display for WatchdogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::NoCompletedUpdate => {
+                write!(f, "the SP does not have a completed update")
+            }
+            Self::Rot(r) => write!(f, "RoT error: {r}"),
+        }
+    }
+}
+
+impl fmt::Display for RotWatchdogError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::DongleDetected => {
+                write!(f, "the SP programming dongle is connected")
+            }
+            Self::Other(r) => write!(f, "unknown error: {r}"),
         }
     }
 }

@@ -173,6 +173,37 @@ pub enum MgsRequest {
     /// Dump information about the lock state of the VPD (Vital Product Data)
     /// The values are serialized in the trailer of the packet
     VpdLockState,
+
+    /// Reset the given component after enabling its fail-safe watchdog
+    ///
+    /// Right now, the only valid target for this command is `SP_ITSELF`.
+    /// The command will return an error if no update is staged, because
+    /// rollback is meaningless in that situation.
+    ResetComponentTriggerWithWatchdog {
+        component: SpComponent,
+        time_ms: u32,
+    },
+
+    /// Disable the rollback watchdog for the given component
+    ///
+    /// Right now, the only valid component for this command is `SP_ITSELF`.
+    ///
+    /// This should be called after `ResetComponentTriggerWithWatchdog`; if we
+    /// can communicate with the SP enough to call this function, then it's safe
+    /// to disable the watchdog (because the new image is working).
+    DisableComponentWatchdog {
+        component: SpComponent,
+    },
+
+    /// Checks whether a rollback watchdog is supported
+    ///
+    /// It may be unsupported if the SP is running an older version of MGS (in
+    /// which case this message will fail to decode), or because there's a
+    /// debugger connected to the SP (preventing the RoT from controlling it);
+    /// both of these cases will return an error instead of an ack.
+    ComponentWatchdogSupported {
+        component: SpComponent,
+    },
 }
 
 #[derive(

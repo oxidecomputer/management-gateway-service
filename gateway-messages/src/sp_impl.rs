@@ -394,6 +394,24 @@ pub trait SpHandler {
 
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
+
+    // On success, this method will return unless the reset
+    // affects the SP_ITSELF.
+    fn reset_component_trigger_with_watchdog(
+        &mut self,
+        component: SpComponent,
+        time_ms: u32,
+    ) -> Result<(), SpError>;
+
+    fn disable_component_watchdog(
+        &mut self,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
+
+    fn component_watchdog_supported(
+        &mut self,
+        component: SpComponent,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -961,6 +979,18 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::VpdLockState)
         }
+        MgsRequest::ResetComponentTriggerWithWatchdog {
+            component,
+            time_ms,
+        } => handler
+            .reset_component_trigger_with_watchdog(component, time_ms)
+            .map(|()| SpResponse::ResetComponentTriggerAck),
+        MgsRequest::DisableComponentWatchdog { component } => handler
+            .disable_component_watchdog(component)
+            .map(|()| SpResponse::DisableComponentWatchdogAck),
+        MgsRequest::ComponentWatchdogSupported { component } => handler
+            .component_watchdog_supported(component)
+            .map(|()| SpResponse::ComponentWatchdogSupportedAck),
     };
 
     let response = match result {
@@ -1363,6 +1393,27 @@ mod tests {
             &mut self,
             _buf: &mut [u8],
         ) -> Result<usize, SpError> {
+            unimplemented!()
+        }
+
+        fn reset_component_trigger_with_watchdog(
+            &mut self,
+            _component: SpComponent,
+            _time_ms: u32,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn disable_component_watchdog(
+            &mut self,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+        fn component_watchdog_supported(
+            &mut self,
+            _component: SpComponent,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }

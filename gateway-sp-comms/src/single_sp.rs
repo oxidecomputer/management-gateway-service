@@ -21,6 +21,8 @@ use gateway_messages::ignition::LinkEvents;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
+use gateway_messages::version::WATCHDOG_VERSION;
+use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentDetails;
@@ -98,6 +100,15 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 // this should be plenty of buffer. If it needs to increase in the future, that
 // will require an MGS update.
 const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
+
+// We allow our client to specify the max RPC attempts and the
+// per-attempt timeout; however, it's very easy to set a timeout that is
+// too low for the "reset the SP" request, especially if the SP being
+// reset is a sidecar (which means it won't be able to respond until it
+// brings the management network back online). We will override the max
+// attempt count for only that message to ensure we give SPs ample time
+// to reset.
+const SP_RESET_TIME_ALLOWED: Duration = Duration::from_secs(30);
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
@@ -740,10 +751,78 @@ impl SingleSp {
     /// Instruct the SP to reset a component.
     ///
     /// Only valid after a successful call to `reset_component_prepare()`.
+    ///
+    /// If `disable_watchdog` is `true`, then any watchdogs associated with the
+    /// reset are disabled.  Otherwise, watchdogs are enabled opportunistically
+    /// (depending on component and MGS protocol version).
     pub async fn reset_component_trigger(
         &self,
         component: SpComponent,
+        disable_watchdog: bool,
     ) -> Result<()> {
+        // If the SP has an update pending, then try to use the watchdog reset
+        let mut use_watchdog = !disable_watchdog
+            && matches!(
+                self.update_status(component).await?,
+                UpdateStatus::Complete(..)
+            );
+        if use_watchdog {
+            let response = self
+                .rpc(MgsRequest::ComponentWatchdogSupported { component })
+                .await;
+            match response {
+                Ok(v) => {
+                    expect_component_watchdog_supported_ack(v)?;
+                }
+                Err(CommunicationError::SpError(
+                    SpError::RequestUnsupportedForComponent,
+                )) => {
+                    // If the component doesn't support the watchdog (i.e. it's
+                    // not the SP itself), then that's fine and we'll disable
+                    // the watchdog.
+                    info!(
+                        self.log,
+                        "cannot use reset watchdog; \
+                         not supported for {component}"
+                    );
+                    use_watchdog = false;
+                }
+                Err(CommunicationError::SpError(SpError::BadRequest(
+                    BadRequestReason::WrongVersion { sp, .. },
+                ))) if sp < WATCHDOG_VERSION => {
+                    // If the SP firmware version is too old, then log an error
+                    // message and fall back to the non-watchdog reset command
+                    warn!(
+                        self.log,
+                        "cannot use reset watchdog; SP MGS version is too old"
+                    );
+                    use_watchdog = false;
+                }
+                Err(e) => {
+                    warn!(
+                        self.log,
+                        "unexpected error when checking for watchdog support: \
+                         {e:?}"
+                    );
+                    return Err(e);
+                }
+            }
+        }
+
+        let reset_command = if use_watchdog {
+            // We'll set the watchdog timer to slightly longer than
+            // SP_RESET_TIME_ALLOWED; this means that if things fail, the
+            // watchdog will reset the SP **after** the MGS timeout expires, so
+            // we won't have a false-positive success in this function.
+            let time_ms =
+                u32::try_from(SP_RESET_TIME_ALLOWED.as_millis()).unwrap() * 3
+                    / 2;
+            info!(self.log, "using watchdog during reset");
+            MgsRequest::ResetComponentTriggerWithWatchdog { component, time_ms }
+        } else {
+            MgsRequest::ResetComponentTrigger { component }
+        };
+
         // If we are resetting the SP itself, then reset trigger should
         // retry until we get back an error indicating the
         // SP wasn't expecting a reset trigger (because it has reset!).
@@ -752,9 +831,8 @@ impl SingleSp {
         // response because the RoT was reset or because the message got
         // dropped. TODO: have this code and/or SP check a boot nonce or other
         // information to verify that the RoT did reset.
-        let response =
-            self.rpc(MgsRequest::ResetComponentTrigger { component }).await;
-        match response {
+        let response = self.rpc(reset_command).await;
+        let mut r = match response {
             Ok((addr, response, data)) => {
                 if component == SpComponent::SP_ITSELF {
                     // Reset trigger should retry until we get back an error
@@ -772,7 +850,45 @@ impl SingleSp {
                 SpError::ResetComponentTriggerWithoutPrepare,
             )) if component == SpComponent::SP_ITSELF => Ok(()),
             Err(other) => Err(other),
+        };
+
+        // If the watchdog was set up, perform teardown and/or logging
+        if use_watchdog {
+            match r {
+                Ok(()) => {
+                    // Reset completed successfully, so disable the watchdog
+                    info!(self.log, "disabling watchdog");
+                    r = self
+                        .rpc(MgsRequest::DisableComponentWatchdog { component })
+                        .await
+                        .and_then(expect_disable_component_watchdog_ack);
+                    if r.is_err() {
+                        error!(
+                            self.log,
+                            "watchdog could not be disabled; \
+                             the system may reboot momentarily!"
+                        );
+                    }
+                }
+                Err(CommunicationError::SpError(SpError::BadRequest(
+                    BadRequestReason::WrongVersion { sp, .. },
+                ))) if sp < WATCHDOG_VERSION => {
+                    error!(
+                        self.log,
+                        "cannot disable watchdog (new image is too old); \
+                         the system may reboot momentarily!"
+                    );
+                }
+                Err(..) => {
+                    warn!(
+                        self.log,
+                        "reset failed; watchdog may recover the system"
+                    );
+                }
+            }
         }
+
+        r
     }
 
     pub async fn component_action(
@@ -1772,15 +1888,6 @@ impl<T: InnerSocket> Inner<T> {
         kind: MgsRequest,
         our_trailing_data: Option<&mut Cursor<Vec<u8>>>,
     ) -> Result<(SocketAddrV6, SpResponse, Vec<u8>)> {
-        // We allow our client to specify the max RPC attempts and the
-        // per-attempt timeout; however, it's very easy to set a timeout that is
-        // too low for the "reset the SP" request, especially if the SP being
-        // reset is a sidecar (which means it won't be able to respond until it
-        // brings the management network back online). We will override the max
-        // attempt count for only that message to ensure we give SPs ample time
-        // to reset.
-        const SP_RESET_TIME_ALLOWED: Duration = Duration::from_secs(30);
-
         // Build and serialize our request once.
         self.message_id += 1;
         let request = Message {
@@ -1826,9 +1933,10 @@ impl<T: InnerSocket> Inner<T> {
             MessageKind::MgsRequest(MgsRequest::ResetComponentTrigger {
                 component,
             }) if *component == SpComponent::SP_ITSELF => calc_reset_attempts(),
-            MessageKind::MgsRequest(MgsRequest::ResetTrigger) => {
-                calc_reset_attempts()
-            }
+            MessageKind::MgsRequest(
+                MgsRequest::ResetTrigger
+                | MgsRequest::ResetComponentTriggerWithWatchdog { .. },
+            ) => calc_reset_attempts(),
             _ => self.max_attempts_per_rpc,
         };
 
