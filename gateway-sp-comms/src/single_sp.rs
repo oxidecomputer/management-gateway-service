@@ -854,25 +854,37 @@ impl SingleSp {
 
         // If the watchdog was set up, perform teardown and/or logging
         if use_watchdog {
-            if r.is_ok() {
-                // Reset completed successfully, so disable the watchdog
-                info!(self.log, "disabling watchdog");
-                r = self
-                    .rpc(MgsRequest::DisableComponentWatchdog { component })
-                    .await
-                    .and_then(expect_disable_component_watchdog_ack);
-                if r.is_err() {
+            match r {
+                Ok(()) => {
+                    // Reset completed successfully, so disable the watchdog
+                    info!(self.log, "disabling watchdog");
+                    r = self
+                        .rpc(MgsRequest::DisableComponentWatchdog { component })
+                        .await
+                        .and_then(expect_disable_component_watchdog_ack);
+                    if r.is_err() {
+                        error!(
+                            self.log,
+                            "watchdog could not be disabled; \
+                             the system may reboot momentarily!"
+                        );
+                    }
+                }
+                Err(CommunicationError::SpError(SpError::BadRequest(
+                    BadRequestReason::WrongVersion { sp, .. },
+                ))) if sp < WATCHDOG_VERSION => {
                     error!(
                         self.log,
-                        "watchdog could not be disabled; \
+                        "cannot disable watchdog (new image is too old);
                          the system may reboot momentarily!"
                     );
                 }
-            } else {
-                warn!(
-                    self.log,
-                    "reset failed; watchdog may recover the system"
-                );
+                Err(..) => {
+                    warn!(
+                        self.log,
+                        "reset failed; watchdog may recover the system"
+                    );
+                }
             }
         }
 
