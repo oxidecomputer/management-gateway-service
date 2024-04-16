@@ -760,9 +760,8 @@ impl SingleSp {
         component: SpComponent,
         disable_watchdog: bool,
     ) -> Result<()> {
-        // If the SP has an update pending, then use the watchdog reset
-        let mut use_watchdog = component == SpComponent::SP_ITSELF
-            && !disable_watchdog
+        // If the SP has an update pending, then try to use the watchdog reset
+        let mut use_watchdog = !disable_watchdog
             && matches!(
                 self.update_status(component).await?,
                 UpdateStatus::Complete(..)
@@ -772,6 +771,22 @@ impl SingleSp {
                 .rpc(MgsRequest::ComponentWatchdogSupported { component })
                 .await;
             match response {
+                Ok(v) => {
+                    expect_component_watchdog_supported_ack(v)?;
+                }
+                Err(CommunicationError::SpError(
+                    SpError::RequestUnsupportedForComponent,
+                )) => {
+                    // If the component doesn't support the watchdog (i.e. it's
+                    // not the SP itself), then that's fine and we'll disable
+                    // the watchdog.
+                    info!(
+                        self.log,
+                        "cannot use reset watchdog; \
+                         not supported for {component}"
+                    );
+                    use_watchdog = false;
+                }
                 Err(CommunicationError::SpError(SpError::BadRequest(
                     BadRequestReason::WrongVersion { sp, .. },
                 ))) if sp < WATCHDOG_VERSION => {
@@ -782,9 +797,6 @@ impl SingleSp {
                         "cannot use reset watchdog; SP MGS version is too old"
                     );
                     use_watchdog = false;
-                }
-                Ok(v) => {
-                    expect_component_watchdog_supported_ack(v)?;
                 }
                 Err(e) => {
                     warn!(
@@ -820,7 +832,7 @@ impl SingleSp {
         // dropped. TODO: have this code and/or SP check a boot nonce or other
         // information to verify that the RoT did reset.
         let response = self.rpc(reset_command).await;
-        let r = match response {
+        let mut r = match response {
             Ok((addr, response, data)) => {
                 if component == SpComponent::SP_ITSELF {
                     // Reset trigger should retry until we get back an error
@@ -836,38 +848,34 @@ impl SingleSp {
             }
             Err(CommunicationError::SpError(
                 SpError::ResetComponentTriggerWithoutPrepare,
-            )) if component == SpComponent::SP_ITSELF => {
-                // This means that the reset is complete and we've come back up.
-                // It's now time to disable the watchdog (if it was previously
-                // enabled).
-                info!(self.log, "disabling watchdog");
-                if use_watchdog {
-                    let r = self
-                        .rpc(MgsRequest::DisableComponentWatchdog { component })
-                        .await
-                        .and_then(expect_disable_component_watchdog_ack);
-                    if r.is_err() {
-                        error!(
-                            self.log,
-                            "watchdog could not be disabled; \
-                             the system may reboot momentarily!"
-                        );
-                        // disable the "watchdog may recover the system"
-                        // that would otherwise be printed below
-                        use_watchdog = false;
-                    }
-                    r
-                } else {
-                    // This means that the reset is complete and we've come back
-                    // up. Great job, everyone.
-                    Ok(())
-                }
-            }
+            )) if component == SpComponent::SP_ITSELF => Ok(()),
             Err(other) => Err(other),
         };
-        if r.is_err() && use_watchdog {
-            info!(self.log, "reset failed; watchdog may recover the system");
+
+        // If the watchdog was set up, perform teardown and/or logging
+        if use_watchdog {
+            if r.is_ok() {
+                // Reset completed successfully, so disable the watchdog
+                info!(self.log, "disabling watchdog");
+                r = self
+                    .rpc(MgsRequest::DisableComponentWatchdog { component })
+                    .await
+                    .and_then(expect_disable_component_watchdog_ack);
+                if r.is_err() {
+                    error!(
+                        self.log,
+                        "watchdog could not be disabled; \
+                         the system may reboot momentarily!"
+                    );
+                }
+            } else {
+                warn!(
+                    self.log,
+                    "reset failed; watchdog may recover the system"
+                );
+            }
         }
+
         r
     }
 
@@ -1913,9 +1921,9 @@ impl<T: InnerSocket> Inner<T> {
             MessageKind::MgsRequest(MgsRequest::ResetComponentTrigger {
                 component,
             }) if *component == SpComponent::SP_ITSELF => calc_reset_attempts(),
-            MessageKind::MgsRequest(MgsRequest::ResetTrigger)
-            | MessageKind::MgsRequest(
-                MgsRequest::ResetComponentTriggerWithWatchdog { .. },
+            MessageKind::MgsRequest(
+                MgsRequest::ResetTrigger
+                | MgsRequest::ResetComponentTriggerWithWatchdog { .. },
             ) => calc_reset_attempts(),
             _ => self.max_attempts_per_rpc,
         };

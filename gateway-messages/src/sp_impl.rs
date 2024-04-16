@@ -395,16 +395,19 @@ pub trait SpHandler {
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
         -> Result<usize, SpError>;
 
+    // On success, this method will return unless the reset
+    // affects the SP_ITSELF.
     fn reset_component_trigger_with_watchdog(
         &mut self,
         component: SpComponent,
         time_ms: u32,
-    ) -> Result<core::convert::Infallible, SpError>;
+    ) -> Result<(), SpError>;
 
     fn disable_component_watchdog(
         &mut self,
         component: SpComponent,
     ) -> Result<(), SpError>;
+
     fn component_watchdog_supported(
         &mut self,
         component: SpComponent,
@@ -981,7 +984,7 @@ fn handle_mgs_request<H: SpHandler>(
             time_ms,
         } => handler
             .reset_component_trigger_with_watchdog(component, time_ms)
-            .map(|_| unreachable!("reset function must diverge")),
+            .map(|()| SpResponse::ResetComponentTriggerAck),
         MgsRequest::DisableComponentWatchdog { component } => handler
             .disable_component_watchdog(component)
             .map(|()| SpResponse::DisableComponentWatchdogAck),
@@ -1397,7 +1400,7 @@ mod tests {
             &mut self,
             _component: SpComponent,
             _time_ms: u32,
-        ) -> Result<core::convert::Infallible, SpError> {
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
 
