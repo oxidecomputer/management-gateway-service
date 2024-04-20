@@ -295,13 +295,21 @@ impl<'a> fmt::Display for RotBootStateDisplay<'a> {
         write!(f, "active: {:?}, ", s.active)?;
         match s.slot_a {
             Some(details) => {
-                write!(f, "slot_a: Some(RotImageDetails{{ {} }}), ", &RotImageDetailsDisplay(&details))?;
+                write!(
+                    f,
+                    "slot_a: Some(RotImageDetails{{ {} }}), ",
+                    &RotImageDetailsDisplay(&details)
+                )?;
             }
             None => write!(f, "None, ")?,
         };
         match s.slot_b {
             Some(details) => {
-                write!(f, "slot_b: Some(RotImageDetails{{ {} }}), ", &RotImageDetailsDisplay(&details))?;
+                write!(
+                    f,
+                    "slot_b: Some(RotImageDetails{{ {} }}), ",
+                    &RotImageDetailsDisplay(&details)
+                )?;
             }
             None => write!(f, "None, ")?,
         };
@@ -542,7 +550,7 @@ impl<'a> fmt::Display for RotStateV3Display<'a> {
 ///
 /// MGS will always need to handle SP and RoT version skew during update as
 /// well as being exposed to spares loaded with SP and RoT images that are
-/// newer than the running MGS version. 
+/// newer than the running MGS version.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
@@ -561,15 +569,15 @@ impl<'a> fmt::Display for RotBootInfoDisplay<'a> {
         write!(f, " RotBootInfo {{")?;
         match self.0 {
             RotBootInfo::V1(rotstate) => {
-                write!(f, " V1({})", &RotStateDisplay(&rotstate))?;
+                write!(f, " V1({})", &RotStateDisplay(rotstate))?;
             }
             // Use a helper on V2 to display a human readable FWID
             RotBootInfo::V2(rotstate) => {
-                write!(f, " V2({})", &RotStateV2Display(&rotstate))?;
+                write!(f, " V2({})", &RotStateV2Display(rotstate))?;
             }
             // Use helper on V3 to display a human readable FWID
             RotBootInfo::V3(rotstate) => {
-                write!(f, " V3({})", &RotStateV3Display(&rotstate))?;
+                write!(f, " V3({})", &RotStateV3Display(rotstate))?;
             }
         }
         writeln!(f, "}}")?;

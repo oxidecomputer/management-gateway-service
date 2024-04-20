@@ -23,6 +23,8 @@ tokio.workspace = true
 tokio-stream.workspace = true
 tokio-util.workspace = true
 uuid = { workspace = true, features = ["std", "v4"] }
+rhai = "*"
 
 gateway-messages = { workspace = true, features = ["std"] }
 gateway-sp-comms.workspace = true
+async-recursion = "1.1.0"

@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use async_recursion::async_recursion;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -19,9 +20,9 @@ use gateway_messages::ComponentAction;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::PowerState;
-use gateway_messages::SpComponent;
 use gateway_messages::RotBootInfoDisplay;
 use gateway_messages::RotStateV2Display;
+use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
@@ -33,7 +34,9 @@ use gateway_sp_comms::SpComponentDetails;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
+use rhai::{Engine, Scope};
 use serde_json::json;
+use serde_json::Value;
 use slog::info;
 use slog::o;
 use slog::warn;
@@ -102,6 +105,13 @@ struct Args {
     #[clap(long, default_value = "2000")]
     per_attempt_timeout_millis: u64,
 
+    #[clap(subcommand)]
+    command: Command,
+}
+
+/// Command line program that can send MGS messages to a single SP.
+#[derive(Parser, Debug)]
+struct RhaiArgs {
     #[clap(subcommand)]
     command: Command,
 }
@@ -352,6 +362,15 @@ enum Command {
         /// Reset without the automatic safety rollback watchdog (if applicable)
         #[clap(long)]
         disable_watchdog: bool,
+    },
+
+    /// Run a Rhai script within faux-mgs
+    Rhai {
+        /// Path to Rhia script
+        script: PathBuf,
+        /// Additional arguments passed to Rhia scripe
+        #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
+        script_args: Vec<String>,
     },
 
     /// Controls the system LED
@@ -699,7 +718,7 @@ async fn main() -> Result<()> {
     let maxwidth = sps.iter().map(|sp| sp.interface().len()).max().unwrap_or(0);
 
     let mut all_results = sps
-        .into_iter()
+        .iter()
         .map(|sp| {
             let interface = sp.interface().to_string();
             run_command(
@@ -756,7 +775,7 @@ async fn main() -> Result<()> {
 }
 
 async fn run_command(
-    sp: SingleSp,
+    sp: &SingleSp,
     command: Command,
     json: bool,
     log: Logger,
@@ -881,7 +900,10 @@ async fn run_command(
                     lines.push(format!("power state: {:?}", state.power_state));
                     match state.rot {
                         Ok(rotstate) => {
-                            lines.push(format!("{}", &RotStateV2Display(&rotstate)));
+                            lines.push(format!(
+                                "{}",
+                                &RotStateV2Display(&rotstate)
+                            ));
                         }
                         Err(err) => lines.push(format!("RoT state: {:?}", err)),
                     }
@@ -1099,7 +1121,7 @@ async fn run_command(
             let data = fs::read(&image).with_context(|| {
                 format!("failed to read {}", image.display())
             })?;
-            update(&log, &sp, component, slot, data).await.with_context(
+            update(log, &sp, component, slot, data).await.with_context(
                 || {
                     format!(
                         "updating {} slot {} to {} failed",
@@ -1235,6 +1257,9 @@ async fn run_command(
             } else {
                 Ok(Output::Lines(vec!["reset complete".to_string()]))
             }
+        }
+        Command::Rhai { script, script_args } => {
+            interpreter(&sp, log, script, script_args).await
         }
         Command::SendHostNmi => {
             sp.send_host_nmi().await?;
@@ -1377,6 +1402,66 @@ async fn run_command(
     }
 }
 
+#[async_recursion]
+async fn interpreter(
+    sp: &SingleSp,
+    log: Logger,
+    script: PathBuf,
+    script_args: Vec<String>,
+) -> Result<Output> {
+    let (tx_script, rx_main) = std::sync::mpsc::channel::<Value>();
+    let (tx_main, rx_script) = std::sync::mpsc::channel::<Value>();
+    let handle = std::thread::spawn(move || {
+        let mut engine = Engine::new();
+        let program = fs::read_to_string(&script)
+            .with_context(|| format!("failed to read {}", script.display()))
+            .unwrap();
+        engine
+            .register_fn("faux_mgs_put", move || -> Value {
+                rx_script.recv().unwrap().clone()
+            })
+            .register_fn("faux_mgs_get", move |v: Value| {
+                tx_script.send(v.clone()).unwrap()
+            });
+        let ast = engine.compile(program).unwrap();
+        let mut scope = Scope::new();
+        scope.push("args", script_args);
+        // TODO call main with args
+        // TODO return value of main should be mappable to Output or Err
+        match engine.call_fn::<i64>(&mut scope, &ast, "main", ()) {
+            Ok(foo) => Ok(Output::Json(json!({"exit": foo}))),
+            Err(err) => Err(anyhow!("{err}")),
+        }
+    });
+    loop {
+        let command_args = match rx_main
+            .recv()
+            .with_context(|| anyhow!("Cannot read from rhia script"))?
+            .as_array()
+        {
+            Some(arr) => {
+                let v: Vec<String> =
+                    arr.iter().map(|v| format!("{v}")).collect();
+                v
+            }
+            None => Err(anyhow!("invalid request from Rhai script"))?,
+        };
+        let args = RhaiArgs::parse_from(command_args);
+        if let Ok(Output::Json(json)) =
+            run_command(sp, args.command, true, log.clone()).await
+        {
+            let obj = json.as_object().unwrap().clone();
+            tx_main.send(obj.into())?
+        } else {
+            break;
+        }
+    }
+    match handle.join() {
+        Ok(result) => result,
+        Err(err) => Err(anyhow!("{:?}", err)),
+    }
+}
+
 fn handle_cxpa(
     name: &str,
     data: [u8; ROT_PAGE_SIZE],
@@ -1401,7 +1486,7 @@ fn handle_cxpa(
 }
 
 async fn update(
-    log: &Logger,
+    log: Logger,
     sp: &SingleSp,
     component: SpComponent,
     slot: u16,
@@ -1546,6 +1631,7 @@ async fn populate_phase2_images(
     Ok(())
 }
 
+#[derive(Clone)]
 enum Output {
     Json(serde_json::Value),
     Lines(Vec<String>),

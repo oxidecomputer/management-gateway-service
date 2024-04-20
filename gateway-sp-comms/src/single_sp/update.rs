@@ -45,7 +45,7 @@ pub(super) async fn start_sp_update(
 
     let sp_image = archive.image.to_binary()?;
     let sp_image_size =
-    sp_image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
+        sp_image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
 
     // Sanity check on `hubtools`: Prior to using hubtools, we would manually
     // extract `img/final.bin` from the archive (which is a zip file); we're now
@@ -73,10 +73,10 @@ pub(super) async fn start_sp_update(
     // In the future, we could use `ReadComponentCaboose` here instead, but
     // `ReadCaboose` is older (and thus more widely compatible with SP images).
     let sp_board =
-    super::rpc(cmds_tx, MgsRequest::ReadCaboose { key: *b"BORD" }, None)
-        .await
-        .result
-        .and_then(expect_caboose_value)?;
+        super::rpc(cmds_tx, MgsRequest::ReadCaboose { key: *b"BORD" }, None)
+            .await
+            .result
+            .and_then(expect_caboose_value)?;
     if archive_board != sp_board {
         return Err(UpdateError::BoardMismatch {
             sp: String::from_utf8_lossy(&sp_board).to_string(),
@@ -103,12 +103,12 @@ pub(super) async fn start_sp_update(
     };
 
     info!(
-        log, "starting SP update";
-    "id" => %update_id,
-    "aux_flash_chck" => ?aux_flash_chck,
-    "aux_flash_size" => aux_flash_size,
-    "sp_image_size" => sp_image_size,
-);
+            log, "starting SP update";
+        "id" => %update_id,
+        "aux_flash_chck" => ?aux_flash_chck,
+        "aux_flash_size" => aux_flash_size,
+        "sp_image_size" => sp_image_size,
+    );
     super::rpc(
         cmds_tx,
         MgsRequest::SpUpdatePrepare(SpUpdatePrepare {
@@ -119,9 +119,9 @@ pub(super) async fn start_sp_update(
         }),
         None,
     )
-        .await
-        .result
-        .and_then(expect_sp_update_prepare_ack)?;
+    .await
+    .result
+    .and_then(expect_sp_update_prepare_ack)?;
 
     tokio::spawn(drive_sp_update(
         cmds_tx.clone(),
@@ -153,24 +153,24 @@ async fn drive_sp_update(
         aux_image.is_some(),
         &log,
     )
-        .await
-        {
-            Ok(sp_matched_chck) => {
-                info!(
+    .await
+    {
+        Ok(sp_matched_chck) => {
+            info!(
                     log, "update preparation complete";
                 "update_id" => %update_id,
             );
-                sp_matched_chck
-            }
-            Err(message) => {
-                error!(
+            sp_matched_chck
+        }
+        Err(message) => {
+            error!(
                     log, "update preparation failed";
                 "err" => message,
                 "update_id" => %update_id,
             );
-                return;
-            }
-        };
+            return;
+        }
+    };
 
     // Send the aux flash image, if necessary.
     if !sp_matched_chck {
@@ -185,20 +185,20 @@ async fn drive_sp_update(
             data,
             &log,
         )
-            .await
-            {
-                Ok(()) => {
-                    info!(log, "aux flash update complete"; "id" => %update_id);
-                }
-                Err(err) => {
-                    error!(
+        .await
+        {
+            Ok(()) => {
+                info!(log, "aux flash update complete"; "id" => %update_id);
+            }
+            Err(err) => {
+                error!(
                         log, "aux flash update failed";
                     "id" => %update_id,
                     err,
                 );
-                    return;
-                }
+                return;
             }
+        }
     }
 
     // Deliver the SP image.
@@ -209,19 +209,19 @@ async fn drive_sp_update(
         sp_image,
         &log,
     )
-        .await
-        {
-            Ok(()) => {
-                info!(log, "update complete"; "id" => %update_id);
-            }
-            Err(err) => {
-                error!(
+    .await
+    {
+        Ok(()) => {
+            info!(log, "update complete"; "id" => %update_id);
+        }
+        Err(err) => {
+            error!(
                     log, "update failed";
                 "id" => %update_id,
                 err,
             );
-            }
         }
+    }
 }
 
 fn read_auxi_check_from_tlvc(data: &[u8]) -> Result<[u8; 32], UpdateError> {
@@ -280,9 +280,12 @@ fn bootleby_from_old_style_archive(
                     let mut rot_image = vec![];
                     match file.read_to_end(&mut rot_image) {
                         Ok(_) => {
-                            debug!(log, "using bootleby.bin from old-style archive");
-                            return Ok(rot_image)
-                        },
+                            debug!(
+                                log,
+                                "using bootleby.bin from old-style archive"
+                            );
+                            return Ok(rot_image);
+                        }
                         Err(err) => {
                             error!(log, "cannot access bootleby.bin from zip file index {i}: {err}");
                             break;
@@ -290,10 +293,12 @@ fn bootleby_from_old_style_archive(
                     }
                 }
             }
-            Err(err) => error!(log, "cannot access zip archive at index {i}: {err}"),
+            Err(err) => {
+                error!(log, "cannot access zip archive at index {i}: {err}")
+            }
         }
     }
-    return Err(UpdateError::ImageNotFound);
+    Err(UpdateError::ImageNotFound)
 }
 
 /// Start an update to the RoT.
@@ -388,7 +393,7 @@ pub(super) async fn start_rot_update(
     };
 
     start_component_update(cmds_tx, component, update_id, slot, rot_image, log)
-    .await
+        .await
 }
 
 /// Start an update to a component of the SP.
@@ -404,14 +409,14 @@ pub(super) async fn start_component_update(
     log: &Logger,
 ) -> Result<(), UpdateError> {
     let total_size =
-    image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
+        image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
 
     info!(
-        log, "starting update";
-    "component" => component.as_str(),
-    "id" => %update_id,
-    "total_size" => total_size,
-);
+            log, "starting update";
+        "component" => component.as_str(),
+        "id" => %update_id,
+        "total_size" => total_size,
+    );
     super::rpc(
         cmds_tx,
         MgsRequest::ComponentUpdatePrepare(ComponentUpdatePrepare {
@@ -422,9 +427,9 @@ pub(super) async fn start_component_update(
         }),
         None,
     )
-        .await
-        .result
-        .and_then(expect_component_update_prepare_ack)?;
+    .await
+    .result
+    .and_then(expect_component_update_prepare_ack)?;
 
     tokio::spawn(drive_component_update(
         cmds_tx.clone(),
@@ -451,38 +456,38 @@ async fn drive_component_update(
     // Wait until the SP has finished preparing for this update.
     match poll_until_update_prep_complete(&cmds_tx, component, id, false, &log)
         .await
-        {
-            Ok(_) => {
-                info!(
+    {
+        Ok(_) => {
+            info!(
                     log, "update preparation complete";
                 "update_id" => %update_id,
             );
-            }
-            Err(message) => {
-                error!(
+        }
+        Err(message) => {
+            error!(
                     log, "update preparation failed";
                 "err" => message,
                 "update_id" => %update_id,
             );
-                return;
-            }
+            return;
         }
+    }
 
     // Deliver the update in chunks.
     match send_update_in_chunks(&cmds_tx, component, update_id, image, &log)
         .await
-        {
-            Ok(()) => {
-                info!(log, "update complete"; "id" => %update_id);
-            }
-            Err(err) => {
-                error!(
+    {
+        Ok(()) => {
+            info!(log, "update complete"; "id" => %update_id);
+        }
+        Err(err) => {
+            error!(
                     log, "update failed";
                 "id" => %update_id,
                 err,
             );
-            }
         }
+    }
 }
 
 /// Poll an SP until it indicates that preparation for update identified by `id`
@@ -556,18 +561,18 @@ async fn poll_until_update_prep_complete(
                 found_match,
                 ..
             } => {
-                    if sp_id == id && update_has_aux_image {
-                        return Ok(found_match);
-                    }
-                    // Else: fall through to returning an error.
+                if sp_id == id && update_has_aux_image {
+                    return Ok(found_match);
                 }
+                // Else: fall through to returning an error.
+            }
             UpdateStatus::None
-                | UpdateStatus::Complete(_)
-                | UpdateStatus::Failed { .. }
-                | UpdateStatus::RotError { .. }
-                | UpdateStatus::Aborted(_) => {
-                    // Fall through to returning an error below.
-                }
+            | UpdateStatus::Complete(_)
+            | UpdateStatus::Failed { .. }
+            | UpdateStatus::RotError { .. }
+            | UpdateStatus::Aborted(_) => {
+                // Fall through to returning an error below.
+            }
         }
 
         return Err(format!("update preparation failed; status = {status:?}"));
@@ -599,10 +604,10 @@ async fn send_update_in_chunks(
     while !CursorExt::is_empty(&image) {
         let prior_pos = image.position();
         debug!(
-            log, "sending update chunk";
-        "id" => %update_id,
-        "offset" => offset,
-    );
+                log, "sending update chunk";
+            "id" => %update_id,
+            "offset" => offset,
+        );
 
         image = send_single_update_chunk(cmds_tx, component, id, offset, image)
             .await?;
