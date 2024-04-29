@@ -28,6 +28,7 @@ pub use gateway_messages;
 pub use gateway_messages::SpComponent;
 pub use gateway_messages::SpStateV1;
 pub use gateway_messages::SpStateV2;
+pub use gateway_messages::SpStateV3;
 pub use host_phase2::HostPhase2ImageError;
 pub use host_phase2::HostPhase2Provider;
 pub use host_phase2::InMemoryHostPhase2Provider;
@@ -70,4 +71,5 @@ pub struct SwitchPortConfig {
 pub enum VersionedSpState {
     V1(SpStateV1),
     V2(SpStateV2),
+    V3(SpStateV3),
 }

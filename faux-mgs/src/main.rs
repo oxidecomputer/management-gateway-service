@@ -19,6 +19,7 @@ use gateway_messages::ComponentAction;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::PowerState;
+use gateway_messages::RotBootInfo;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
 use gateway_messages::UpdateId;
@@ -178,6 +179,16 @@ enum Command {
     },
 
     /// Get or set the active slot of a component (e.g., `host-boot-flash`).
+    ///
+    /// Except for component "stage0", setting the active slot can be
+    /// viewed as an atomic operation.
+    ///
+    /// Setting "stage0" slot 1 as the active slot initiates a copy from
+    /// slot 1 to slot 0 if the contents of slot 1 still match those seen
+    /// at last RoT reset and the contents are properly signed.
+    ///
+    /// Power failures during the copy can disable the RoT. Only one stage0
+    /// update should be in process in a rack at any time.
     ComponentActiveSlot {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
@@ -373,6 +384,14 @@ enum Command {
 
     /// Reads the lock status of any VPD in the system
     VpdLockStatus,
+
+    /// Read the RoT's boot-time information.
+    RotBootInfo {
+        /// Return highest version of RotBootInfo less then or equal to our
+        /// highest known version.
+        #[clap(long, short, default_value_t = RotBootInfo::HIGHEST_KNOWN_VERSION)]
+        version: u8,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -827,9 +846,12 @@ async fn run_command(
                     ));
                     lines.push(format!("hubris version: {:?}", state.version));
                     lines.push(format!("power state: {:?}", state.power_state));
-
-                    // TODO: pretty print RoT state?
-                    lines.push(format!("RoT state: {:?}", state.rot));
+                    match state.rot {
+                        Ok(rot) => {
+                            lines.push(format!("rot: Ok({})", rot.display()))
+                        }
+                        Err(err) => lines.push(format!("rot: Err({})", err)),
+                    }
                     Ok(Output::Lines(lines))
                 }
                 VersionedSpState::V2(state) => {
@@ -857,10 +879,50 @@ async fn run_command(
                             .join(":")
                     ));
                     lines.push(format!("power state: {:?}", state.power_state));
-                    // TODO: pretty print RoT state?
-                    lines.push(format!("RoT state: {:?}", state.rot));
+                    match state.rot {
+                        Ok(rot) => lines.push(format!("rot: Ok({})", rot)),
+                        Err(err) => lines.push(format!("rot: Err({})", err)),
+                    }
                     Ok(Output::Lines(lines))
                 }
+                VersionedSpState::V3(state) => {
+                    lines.push(format!(
+                        "hubris archive: {}",
+                        hex::encode(state.hubris_archive_id)
+                    ));
+
+                    lines.push(format!(
+                        "serial number: {}",
+                        zero_padded_to_str(state.serial_number)
+                    ));
+                    lines.push(format!(
+                        "model: {}",
+                        zero_padded_to_str(state.model)
+                    ));
+                    lines.push(format!("revision: {}", state.revision));
+                    lines.push(format!(
+                        "base MAC address: {}",
+                        state
+                            .base_mac_address
+                            .iter()
+                            .map(|b| format!("{b:02x}"))
+                            .collect::<Vec<_>>()
+                            .join(":")
+                    ));
+                    lines.push(format!("power state: {:?}", state.power_state));
+                    Ok(Output::Lines(lines))
+                }
+            }
+        }
+        Command::RotBootInfo { version } => {
+            let rot_state = sp.rot_state(version).await?;
+            info!(log, "{rot_state:x?}");
+            if json {
+                Ok(Output::Json(serde_json::to_value(rot_state).unwrap()))
+            } else {
+                let mut lines = Vec::new();
+                lines.push(format!("{}", rot_state.display()));
+                Ok(Output::Lines(lines))
             }
         }
         Command::Ignition { target } => {

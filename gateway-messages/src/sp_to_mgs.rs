@@ -131,6 +131,9 @@ pub enum SpResponse {
 
     DisableComponentWatchdogAck,
     ComponentWatchdogSupportedAck,
+
+    SpStateV3(SpStateV3),
+    RotBootInfo(RotBootInfo),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -165,6 +168,38 @@ pub struct DiscoverResponse {
 pub struct ImageVersion {
     pub epoch: u32,
     pub version: u32,
+}
+
+#[derive(
+    Debug, Copy, Clone, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub enum ImageError {
+    /// Image has not been sanity checked (internal use)
+    Unchecked = 1,
+    /// First page of image is erased.
+    FirstPageErased,
+    /// Some pages in the image are erased.
+    PartiallyProgrammed,
+    /// The NXP image offset + length caused a wrapping add.
+    InvalidLength,
+    /// The header flash page is erased.
+    HeaderNotProgrammed,
+    /// A bootloader image is too short.
+    BootloaderTooSmall,
+    /// A required ImageHeader is missing.
+    BadMagic,
+    /// The image size in ImageHeader is unreasonable.
+    HeaderImageSize,
+    /// total_image_length in ImageHeader is not properly aligned.
+    UnalignedLength,
+    /// Some NXP image types are not supported.
+    UnsupportedType,
+    /// Wrong format reset vector.
+    ResetVectorNotThumb2,
+    /// Reset vector points outside of image execution range.
+    ResetVector,
+    /// Signature check on image failed.
+    Signature,
 }
 
 /// This is quasi-deprecated in that it will only be returned by SPs with images
@@ -203,11 +238,72 @@ pub struct SpStateV2 {
 }
 
 #[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct SpStateV3 {
+    pub hubris_archive_id: [u8; 8],
+    // Serial and revision are only 11 bytes in practice; we have plenty of room
+    // so we'll leave the fields wider in case we grow it in the future. The
+    // values are 0-padded.
+    pub serial_number: [u8; 32],
+    pub model: [u8; 32],
+    pub revision: u32,
+    pub base_mac_address: [u8; 6],
+    pub power_state: PowerState,
+}
+
+type Digest256 = [u8; 32];
+
+trait HexDisplayableArray {
+    // fn display(&self) -> fmt::Display;
+    fn display(&self) -> HexStringDisplay;
+}
+
+impl HexDisplayableArray for Digest256 {
+    fn display(&self) -> HexStringDisplay<'_> {
+        HexStringDisplay(&self[..])
+    }
+}
+
+struct HexStringDisplay<'a>(&'a [u8]);
+
+impl<'a> fmt::Display for HexStringDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "\"")?;
+        for b in self.0.iter() {
+            write!(f, "{:02x}", b)?;
+        }
+        write!(f, "\"")?;
+        Ok(())
+    }
+}
+
+#[derive(
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
 )]
 pub struct RotImageDetails {
-    pub digest: [u8; 32],
+    pub digest: Digest256,
     pub version: ImageVersion,
+}
+
+impl RotImageDetails {
+    pub fn display(&self) -> RotImageDetailsDisplay<'_> {
+        RotImageDetailsDisplay(self)
+    }
+}
+
+/// This class exists for faux-mgs to nicely display the Firmware ID (FWID).
+#[derive(Clone, Debug)]
+#[must_use = "this struct does nothing unless displayed"]
+pub struct RotImageDetailsDisplay<'a>(pub &'a RotImageDetails);
+
+impl<'a> fmt::Display for RotImageDetailsDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0;
+        writeln!(f, "digest: {}, ", s.digest.display())?;
+        writeln!(f, "version: {:?}, ", s.version)?;
+        Ok(())
+    }
 }
 
 /// The boot time details dumped by Stage0 into Hubris on the RoT
@@ -218,6 +314,47 @@ pub struct RotBootState {
     pub active: RotSlotId,
     pub slot_a: Option<RotImageDetails>,
     pub slot_b: Option<RotImageDetails>,
+}
+
+impl RotBootState {
+    pub fn display(&self) -> RotBootStateDisplay<'_> {
+        RotBootStateDisplay(self)
+    }
+}
+
+/// This class exists for faux-mgs to nicely display the Firmware ID (FWID).
+#[derive(Clone, Debug)]
+#[must_use = "this struct does nothing unless displayed"]
+pub struct RotBootStateDisplay<'a>(pub &'a RotBootState);
+
+impl<'a> fmt::Display for RotBootStateDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0;
+        writeln!(f, "active: {:?}, ", s.active)?;
+        write!(f, "slot_a: ")?;
+        match s.slot_a {
+            Some(details) => {
+                writeln!(
+                    f,
+                    "Some(RotImageDetails{{ {} }}),",
+                    &RotImageDetailsDisplay(&details)
+                )?;
+            }
+            None => writeln!(f, "None,")?,
+        };
+        write!(f, "slot_b: ")?;
+        match s.slot_b {
+            Some(details) => {
+                writeln!(
+                    f,
+                    "Some(RotImageDetails{{ {} }}),",
+                    &RotImageDetailsDisplay(&details)
+                )?;
+            }
+            None => writeln!(f, "None,")?,
+        };
+        Ok(())
+    }
 }
 
 #[derive(
@@ -232,6 +369,29 @@ pub struct RotUpdateDetails {
 )]
 pub struct RotState {
     pub rot_updates: RotUpdateDetails,
+}
+
+impl RotState {
+    pub fn display(&self) -> RotStateDisplay<'_> {
+        RotStateDisplay(self)
+    }
+}
+
+/// This class exists for faux-mgs to nicely display the Firmware ID (FWID).
+#[derive(Clone, Debug)]
+#[must_use = "this struct does nothing unless displayed"]
+pub struct RotStateDisplay<'a>(pub &'a RotState);
+
+impl<'a> fmt::Display for RotStateDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0.rot_updates.boot_state;
+        writeln!(
+            f,
+            "RotState {{ rot_updates: RotUpdateDetails {{ boot_state: RotBootState {{ {} }} }} }}",
+            &RotBootStateDisplay(&s)
+        )?;
+        Ok(())
+    }
 }
 
 #[derive(
@@ -256,6 +416,233 @@ pub struct RotStateV2 {
     pub slot_a_sha3_256_digest: Option<[u8; 32]>,
     /// Sha3-256 Digest of Slot B in Flash
     pub slot_b_sha3_256_digest: Option<[u8; 32]>,
+}
+
+impl RotStateV2 {
+    pub fn display(&self) -> RotStateV2Display<'_> {
+        RotStateV2Display(self)
+    }
+}
+
+/// This class exists for faux-mgs to nicely display the Firmware ID (FWID).
+#[derive(Clone, Debug)]
+#[must_use = "this struct does nothing unless displayed"]
+pub struct RotStateV2Display<'a>(pub &'a RotStateV2);
+
+impl<'a> fmt::Display for RotStateV2Display<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0;
+        writeln!(f, "RotStateV2 {{")?;
+        writeln!(f, "active: {:?}, ", s.active)?;
+        writeln!(
+            f,
+            "persistent_boot_preference: {:?}, ",
+            s.persistent_boot_preference
+        )?;
+        writeln!(
+            f,
+            "pending_persistent_boot_preference: {:?}, ",
+            s.pending_persistent_boot_preference
+        )?;
+        writeln!(
+            f,
+            "transient_boot_preference: {:?}, ",
+            s.transient_boot_preference
+        )?;
+        write!(f, "slot_a_sha3_256_digest: ")?;
+        match s.slot_a_sha3_256_digest {
+            Some(digest) => {
+                writeln!(f, "Some({}), ", digest.display())?;
+            }
+            None => writeln!(f, "None, ")?,
+        };
+        write!(f, "slot_b_sha3_256_digest: ")?;
+        match s.slot_b_sha3_256_digest {
+            Some(digest) => {
+                writeln!(f, "Some({}), ", digest.display())?;
+            }
+            None => writeln!(f, "None, ")?,
+        };
+        writeln!(f, "}}")?;
+        Ok(())
+    }
+}
+
+impl fmt::Display for RotStateV2 {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "{}", &RotStateV2Display(self))?;
+        Ok(())
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum Fwid {
+    Sha3_256(Digest256),
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct RotStateV3 {
+    /// The slot of the currently running image
+    pub active: RotSlotId,
+    /// The persistent boot preference written into the current authoritative
+    /// CFPA page (ping or pong).
+    pub persistent_boot_preference: RotSlotId,
+    /// The persistent boot preference written into the CFPA scratch page that
+    /// will become the persistent boot preference in the authoritative CFPA
+    /// page upon reboot, unless CFPA update of the authoritative page fails for
+    /// some reason.
+    pub pending_persistent_boot_preference: Option<RotSlotId>,
+    /// Override persistent preference selection for a single boot
+    ///
+    /// This corresponds to a magic ram value that is cleared by bootleby
+    pub transient_boot_preference: Option<RotSlotId>,
+    /// Sha3-256 Digest of Slot A in Flash
+    pub slot_a_fwid: Fwid,
+    /// Sha3-256 Digest of Slot B in Flash
+    pub slot_b_fwid: Fwid,
+    /// Sha3-256 Digest of Bootloader in Flash at boot time
+    pub stage0_fwid: Fwid,
+    /// Sha3-256 Digest of Staged Bootloader in Flash at boot time
+    pub stage0next_fwid: Fwid,
+
+    /// Flash Slot A status at last RoT reset
+    pub slot_a_status: Result<(), ImageError>,
+    /// Slot B status at last RoT reset
+    pub slot_b_status: Result<(), ImageError>,
+    /// Stage0 (bootloader) status at last RoT reset
+    pub stage0_status: Result<(), ImageError>,
+    /// Stage0Next status at last RoT reset
+    pub stage0next_status: Result<(), ImageError>,
+}
+
+impl RotStateV3 {
+    pub fn display(&self) -> RotStateV3Display<'_> {
+        RotStateV3Display(self)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[must_use = "this struct does nothing unless displayed"]
+pub struct RotStateV3Display<'a>(pub &'a RotStateV3);
+
+impl<'a> fmt::Display for RotStateV3Display<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = self.0;
+        writeln!(f, "RotStateV3 {{")?;
+        writeln!(f, "active: {:?}, ", s.active)?;
+        writeln!(
+            f,
+            "persistent_boot_preference: {:?}, ",
+            s.persistent_boot_preference
+        )?;
+        writeln!(
+            f,
+            "pending_persistent_boot_preference: {:?}, ",
+            s.pending_persistent_boot_preference
+        )?;
+        writeln!(
+            f,
+            "transient_boot_preference: {:?}, ",
+            s.transient_boot_preference
+        )?;
+        match s.slot_a_fwid {
+            Fwid::Sha3_256(digest) => writeln!(
+                f,
+                "slot_a_fwid: Fwid::Sha3_256({}), ",
+                digest.display()
+            )?,
+        }
+        match s.slot_b_fwid {
+            Fwid::Sha3_256(digest) => writeln!(
+                f,
+                "slot_b_fwid: Fwid::Sha3_256({}), ",
+                digest.display()
+            )?,
+        }
+        match s.stage0_fwid {
+            Fwid::Sha3_256(digest) => writeln!(
+                f,
+                "stage0_fwid: Fwid::Sha3_256({}), ",
+                digest.display()
+            )?,
+        }
+        match s.stage0next_fwid {
+            Fwid::Sha3_256(digest) => writeln!(
+                f,
+                "stage0next_fwid: Fwid::Sha3_256({}), ",
+                digest.display()
+            )?,
+        }
+        writeln!(f, "slot_a_status: {:?}, ", s.slot_a_status)?;
+        writeln!(f, "slot_b_status: {:?}, ", s.slot_b_status)?;
+        writeln!(f, "stage0_status: {:?}, ", s.stage0_status)?;
+        writeln!(f, "stage0next_status: {:?} ", s.stage0next_status)?;
+        write!(f, "}}")?;
+        Ok(())
+    }
+}
+
+/// `rot_boot_info` and versioned_rot_boot_info` are used to
+/// implement backward/forward compatible Hubris update flows.
+///
+/// The end goal is to flush out old images from the customer base
+/// and spares so that the older APIs can be deprecated and removed.
+///
+/// A to-be-implemented rollback-protection feature will keep old
+/// versions from being reintroduced.
+/// [Issue 222](https://github.com/oxidecomputer/management-gateway-service/issues/222)
+///
+/// Until then, the management-gateway-service needs to continue to
+/// handle old versions of SP and RoT firmware update flows.
+///
+/// MGS will always need to handle SP and RoT version skew during update as
+/// well as being exposed to spares loaded with SP and RoT images that are
+/// newer than the running MGS version.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum RotBootInfo {
+    V1(RotState),
+    V2(RotStateV2),
+    V3(RotStateV3),
+}
+
+impl RotBootInfo {
+    /// update HIGHEST_KNOWN_VERSION when the next RotBootInfo variant is added.
+    pub const HIGHEST_KNOWN_VERSION: u8 = 3;
+
+    pub fn display(&self) -> RotBootInfoDisplay<'_> {
+        RotBootInfoDisplay(self)
+    }
+}
+
+#[derive(Clone, Debug)]
+#[must_use = "this struct does nothing unless displayed"]
+pub struct RotBootInfoDisplay<'a>(pub &'a RotBootInfo);
+
+impl<'a> fmt::Display for RotBootInfoDisplay<'a> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, " RotBootInfo {{")?;
+        match self.0 {
+            RotBootInfo::V1(rotstate) => {
+                write!(f, " V1({})", &RotStateDisplay(rotstate))?;
+            }
+            // Use a helper on V2 to display a human readable FWID
+            RotBootInfo::V2(rotstate) => {
+                write!(f, " V2({})", &RotStateV2Display(rotstate))?;
+            }
+            // Use helper on V3 to display a human readable FWID
+            RotBootInfo::V3(rotstate) => {
+                write!(f, " V3({})", &RotStateV3Display(rotstate))?;
+            }
+        }
+        writeln!(f, "}}")?;
+        Ok(())
+    }
 }
 
 /// Metadata describing a single page (out of a larger list) of TLV-encoded
@@ -755,6 +1142,13 @@ pub enum UpdateError {
     Unknown(u32),
 
     MissingHandoffData,
+    BlockOutOfOrder,
+    InvalidComponent,
+    InvalidSlotIdForOperation,
+    InvalidArchive,
+    ImageMismatch,
+    SignatureNotValidated,
+    VersionNotSupported,
 }
 
 impl fmt::Display for UpdateError {
@@ -792,6 +1186,27 @@ impl fmt::Display for UpdateError {
             Self::Unknown(code) => write!(f, "unknown error (code {})", code),
             Self::MissingHandoffData => {
                 write!(f, "boot data not handed off to hubris kernel")
+            }
+            Self::BlockOutOfOrder => {
+                write!(f, "update blocks delivered out of order")
+            }
+            Self::InvalidSlotIdForOperation => {
+                write!(f, "specified SlotId is not supported for operation")
+            }
+            Self::InvalidArchive => {
+                write!(f, "invalid archive")
+            }
+            Self::ImageMismatch => {
+                write!(f, "image does not match")
+            }
+            Self::SignatureNotValidated => {
+                write!(f, "image not present or signature not valid")
+            }
+            Self::VersionNotSupported => {
+                write!(f, "RoT boot info version is not supported")
+            }
+            Self::InvalidComponent => {
+                write!(f, "invalid component for operation")
             }
         }
     }

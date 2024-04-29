@@ -66,7 +66,7 @@ pub const ROT_PAGE_SIZE: usize = 512;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 12;
+    pub const CURRENT: u32 = 13;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;
@@ -129,7 +129,7 @@ pub enum BadRequestReason {
     DeserializationError,
 }
 
-/// Image slot name for SwitchDefaultImage
+/// Image slot name for SwitchDefaultImage on component ROT
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
