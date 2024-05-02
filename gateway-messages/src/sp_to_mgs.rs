@@ -1233,6 +1233,7 @@ pub enum UpdateError {
     ImageMismatch,
     SignatureNotValidated,
     VersionNotSupported,
+    RollbackProtection,
 }
 
 impl fmt::Display for UpdateError {
@@ -1291,6 +1292,9 @@ impl fmt::Display for UpdateError {
             }
             Self::InvalidComponent => {
                 write!(f, "invalid component for operation")
+            }
+            Self::RollbackProtection => {
+                write!(f, "invalid epoch compared to active image")
             }
         }
     }
