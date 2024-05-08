@@ -1306,6 +1306,17 @@ async fn run_command(
                         v.unwrap()
                     );
                 }
+                (SpComponent::STAGE0, Some("A" | "a" | "0")) => 0,
+                (SpComponent::STAGE0, Some("B" | "b" | "1")) => 1,
+                (SpComponent::STAGE0, None) => {
+                    bail!("must provide slot ('A' or 'B') for Stage0")
+                }
+                (SpComponent::STAGE0, v) => {
+                    bail!(
+                        "invalid slot '{}' for Stage0, must be 'A' or 'B'",
+                        v.unwrap()
+                    );
+                }
                 (c, _) => {
                     bail!("invalid component {c} for caboose")
                 }
