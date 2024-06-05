@@ -590,14 +590,11 @@ impl SingleSp {
         // SP updates are special (`image` is a hubris archive and may include
         // an aux flash image in addition to the SP image).
         if component == SpComponent::SP_ITSELF {
-            if slot != 0 {
-                // We know the SP only has one possible slot, so fail fast if
-                // the caller requested a slot other than 0.
-                return Err(UpdateError::Communication(
-                    CommunicationError::SpError(
-                        SpError::InvalidSlotForComponent,
-                    ),
-                ));
+            if slot != 1 {
+                // This used to be a hard error if we were specifor if we were specifying slot
+                // 0 but this is now just a warning so we can transition to Slot 0 => Active,
+                // Slot 1 => Inactive
+                warn!(self.log, "Expected slot to be 1 for update, was {slot}");
             }
             start_sp_update(&self.cmds_tx, update_id, image, self.log()).await
         } else if matches!(component, SpComponent::ROT | SpComponent::STAGE0) {

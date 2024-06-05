@@ -24,6 +24,9 @@ pub use hubpack::{deserialize, serialize, SerializedSize};
 pub use mgs_to_sp::*;
 pub use sp_to_mgs::*;
 
+pub const SP_ACTIVE_FIRMWARE_SLOT: u16 = 0;
+pub const SP_INACTIVE_FIRMWARE_SLOT: u16 = 1;
+
 /// The SP should detach an attached serial console client if it has not heard
 /// from it in this long (based on the assumption that it has gone away without
 /// sending an explicit detach).
