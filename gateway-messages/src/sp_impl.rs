@@ -10,6 +10,7 @@ use crate::tlv;
 use crate::version;
 use crate::BadRequestReason;
 use crate::ComponentAction;
+use crate::ComponentActionResponse;
 use crate::ComponentDetails;
 use crate::ComponentUpdatePrepare;
 use crate::DeviceCapabilities;
@@ -85,123 +86,114 @@ impl From<DeviceDescription<'_>> for DeviceDescriptionHeader {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoundsChecked(pub u32);
 
+/// Helper type to identify the sender of a message
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub struct Sender {
+    /// Address of the sender
+    pub addr: SocketAddrV6,
+    /// SP port on which the packet was received
+    pub port: SpPort,
+    /// VLAN tag associated with the received packet
+    ///
+    /// This is often one-to-one equivalent to `port`; however, on Sidecar,
+    /// multiple VLANs are mapped to `SpPort::One`.
+    pub vid: u16,
+}
+
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
     type BulkIgnitionLinkEventsIter: Iterator<Item = LinkEvents>;
 
-    fn discover(
+    /// Checks whether we will answer messages from the given sender
+    ///
+    /// This may vary depending on message type and whether the sender's VID is
+    /// trusted.
+    fn is_request_trusted(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<DiscoverResponse, SpError>;
+        kind: &MgsRequest,
+        sender: Sender,
+    ) -> Result<(), SpError>;
+
+    fn is_response_trusted(
+        &mut self,
+        kind: &MgsResponse,
+        sender: Sender,
+    ) -> bool;
+
+    fn discover(&mut self, sender: Sender)
+        -> Result<DiscoverResponse, SpError>;
 
     fn num_ignition_ports(&mut self) -> Result<u32, SpError>;
-
-    fn ignition_state(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-        target: u8,
-    ) -> Result<IgnitionState, SpError>;
+    fn ignition_state(&mut self, target: u8) -> Result<IgnitionState, SpError>;
 
     fn bulk_ignition_state(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         offset: u32,
     ) -> Result<Self::BulkIgnitionStateIter, SpError>;
 
     fn ignition_link_events(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         target: u8,
     ) -> Result<LinkEvents, SpError>;
 
     fn bulk_ignition_link_events(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         offset: u32,
     ) -> Result<Self::BulkIgnitionLinkEventsIter, SpError>;
 
     /// If `target` is `None`, clear link events for all targets.
     fn clear_ignition_link_events(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         target: Option<u8>,
         transceiver_select: Option<ignition::TransceiverSelect>,
     ) -> Result<(), SpError>;
 
     fn ignition_command(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         target: u8,
         command: IgnitionCommand,
     ) -> Result<(), SpError>;
 
-    fn sp_state(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<SpStateV2, SpError>;
+    fn sp_state(&mut self) -> Result<SpStateV2, SpError>;
 
     fn sp_update_prepare(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         update: SpUpdatePrepare,
     ) -> Result<(), SpError>;
 
     fn component_update_prepare(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         update: ComponentUpdatePrepare,
     ) -> Result<(), SpError>;
 
     fn update_chunk(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         chunk: UpdateChunk,
         data: &[u8],
     ) -> Result<(), SpError>;
 
     fn update_status(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
     ) -> Result<UpdateStatus, SpError>;
 
     fn update_abort(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
         id: UpdateId,
     ) -> Result<(), SpError>;
 
-    fn power_state(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<PowerState, SpError>;
+    fn power_state(&mut self) -> Result<PowerState, SpError>;
 
     fn set_power_state(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
+        sender: Sender,
         power_state: PowerState,
     ) -> Result<(), SpError>;
 
     fn serial_console_attach(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
+        sender: Sender,
         component: SpComponent,
     ) -> Result<(), SpError>;
 
@@ -210,32 +202,22 @@ pub trait SpHandler {
     /// ingested (either by writing to the console or by buffering to write it).
     fn serial_console_write(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
+        sender: Sender,
         offset: u64,
         data: &[u8],
     ) -> Result<u64, SpError>;
 
-    fn serial_console_detach(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<(), SpError>;
+    fn serial_console_detach(&mut self, sender: Sender) -> Result<(), SpError>;
 
     fn serial_console_keepalive(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
+        sender: Sender,
     ) -> Result<(), SpError>;
 
-    fn serial_console_break(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<(), SpError>;
+    fn serial_console_break(&mut self, sender: Sender) -> Result<(), SpError>;
 
     /// Number of devices returned in the inventory of this SP.
-    fn num_devices(&mut self, sender: SocketAddrV6, port: SpPort) -> u32;
+    fn num_devices(&mut self) -> u32;
 
     /// Get the description for the given device.
     ///
@@ -259,8 +241,6 @@ pub trait SpHandler {
     /// component.
     fn num_component_details(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
     ) -> Result<u32, SpError>;
 
@@ -283,22 +263,16 @@ pub trait SpHandler {
 
     fn component_clear_status(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
     ) -> Result<(), SpError>;
 
     fn component_get_active_slot(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
     ) -> Result<u16, SpError>;
 
     fn component_set_active_slot(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
         slot: u16,
         persist: bool,
@@ -306,52 +280,33 @@ pub trait SpHandler {
 
     fn component_action(
         &mut self,
-        sender: SocketAddrV6,
+        sender: Sender,
         component: SpComponent,
         action: ComponentAction,
-    ) -> Result<(), SpError>;
+    ) -> Result<ComponentActionResponse, SpError>;
 
-    fn get_startup_options(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<StartupOptions, SpError>;
+    fn get_startup_options(&mut self) -> Result<StartupOptions, SpError>;
 
     fn set_startup_options(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         startup_options: StartupOptions,
     ) -> Result<(), SpError>;
 
-    fn mgs_response_error(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-        message_id: u32,
-        err: MgsError,
-    );
+    fn mgs_response_error(&mut self, message_id: u32, err: MgsError);
 
     fn mgs_response_host_phase2_data(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
+        sender: Sender,
         message_id: u32,
         hash: [u8; 32],
         offset: u64,
         data: &[u8],
     );
 
-    fn send_host_nmi(
-        &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
-    ) -> Result<(), SpError>;
+    fn send_host_nmi(&mut self) -> Result<(), SpError>;
 
     fn set_ipcc_key_lookup_value(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         key: u8,
         value: &[u8],
     ) -> Result<(), SpError>;
@@ -366,8 +321,6 @@ pub trait SpHandler {
 
     fn reset_component_prepare(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
     ) -> Result<(), SpError>;
 
@@ -375,8 +328,6 @@ pub trait SpHandler {
     // affects the SP_ITSELF.
     fn reset_component_trigger(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         component: SpComponent,
     ) -> Result<(), SpError>;
 
@@ -416,8 +367,6 @@ pub trait SpHandler {
 
     fn versioned_rot_boot_info(
         &mut self,
-        sender: SocketAddrV6,
-        port: SpPort,
         version: u8,
     ) -> Result<RotBootInfo, SpError>;
 }
@@ -434,8 +383,7 @@ pub trait SpHandler {
 /// message does not warrant a response, `out` remains unchanged and `None` is
 /// returned.
 pub fn handle_message<H: SpHandler>(
-    sender: SocketAddrV6,
-    port: SpPort,
+    sender: Sender,
     data: &[u8],
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
@@ -447,7 +395,6 @@ pub fn handle_message<H: SpHandler>(
             ReadHeaderResult::Ok { header, remaining_data } => {
                 let (response, outgoing_trailing_data) = handle_message_impl(
                     sender,
-                    port,
                     header,
                     remaining_data,
                     handler,
@@ -636,8 +583,7 @@ fn read_request_header(data: &[u8]) -> ReadHeaderResult<'_> {
 /// and our caller is responsible for handling that generation. Otherwise,
 /// returns `(_, None)`.
 fn handle_message_impl<H: SpHandler>(
-    sender: SocketAddrV6,
-    port: SpPort,
+    sender: Sender,
     header: Header,
     request_kind_data: &[u8],
     handler: &mut H,
@@ -647,7 +593,6 @@ fn handle_message_impl<H: SpHandler>(
         Ok((MessageKind::MgsRequest(kind), leftover)) => {
             Some(handle_mgs_request(
                 sender,
-                port,
                 handler,
                 kind,
                 leftover,
@@ -657,7 +602,6 @@ fn handle_message_impl<H: SpHandler>(
         Ok((MessageKind::MgsResponse(kind), leftover)) => {
             handle_mgs_response(
                 sender,
-                port,
                 header.message_id,
                 handler,
                 kind,
@@ -697,27 +641,31 @@ fn handle_message_impl<H: SpHandler>(
 }
 
 fn handle_mgs_response<H: SpHandler>(
-    sender: SocketAddrV6,
-    port: SpPort,
+    sender: Sender,
     message_id: u32,
     handler: &mut H,
     kind: MgsResponse,
     leftover: &[u8],
 ) {
+    // Check whether this message is trusted, bailing out early if that's not
+    // the case.  The logic of message trust is implemented by the SpHandler,
+    // and will typically check message type and sender VLAN.
+    if !handler.is_response_trusted(&kind, sender) {
+        // The handler function should log an error itself
+        return;
+    }
+
     match kind {
-        MgsResponse::Error(err) => {
-            handler.mgs_response_error(sender, port, message_id, err)
-        }
+        MgsResponse::Error(err) => handler.mgs_response_error(message_id, err),
         MgsResponse::HostPhase2Data { hash, offset } => handler
             .mgs_response_host_phase2_data(
-                sender, port, message_id, hash, offset, leftover,
+                sender, message_id, hash, offset, leftover,
             ),
     }
 }
 
 fn handle_mgs_request<H: SpHandler>(
-    sender: SocketAddrV6,
-    port: SpPort,
+    sender: Sender,
     handler: &mut H,
     kind: MgsRequest,
     leftover: &[u8],
@@ -743,6 +691,13 @@ fn handle_mgs_request<H: SpHandler>(
         }
     };
 
+    // Check whether this message is trusted, bailing out early if that's not
+    // the case.  The logic of message trust is implemented by the SpHandler,
+    // and will typically check message type and sender VLAN.
+    if let Err(e) = handler.is_request_trusted(&kind, sender) {
+        return (SpResponse::Error(e), None);
+    }
+
     // Call out to handler to provide response.
     //
     // The vast majority of response kinds do not need to pack additional
@@ -753,15 +708,15 @@ fn handle_mgs_request<H: SpHandler>(
     let mut outgoing_trailing_data = None;
     let result = match kind {
         MgsRequest::Discover => {
-            handler.discover(sender, port).map(SpResponse::Discover)
+            handler.discover(sender).map(SpResponse::Discover)
         }
-        MgsRequest::IgnitionState { target } => handler
-            .ignition_state(sender, port, target)
-            .map(SpResponse::IgnitionState),
+        MgsRequest::IgnitionState { target } => {
+            handler.ignition_state(target).map(SpResponse::IgnitionState)
+        }
         MgsRequest::BulkIgnitionState { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
                 let offset = u32::min(offset, port_count);
-                let iter = handler.bulk_ignition_state(sender, port, offset)?;
+                let iter = handler.bulk_ignition_state(offset)?;
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::BulkIgnitionState(iter));
                 Ok(SpResponse::BulkIgnitionState(TlvPage {
@@ -771,13 +726,12 @@ fn handle_mgs_request<H: SpHandler>(
             })
         }
         MgsRequest::IgnitionLinkEvents { target } => handler
-            .ignition_link_events(sender, port, target)
+            .ignition_link_events(target)
             .map(SpResponse::IgnitionLinkEvents),
         MgsRequest::BulkIgnitionLinkEvents { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
                 let offset = u32::min(offset, port_count);
-                let iter =
-                    handler.bulk_ignition_link_events(sender, port, offset)?;
+                let iter = handler.bulk_ignition_link_events(offset)?;
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter));
                 Ok(SpResponse::BulkIgnitionLinkEvents(TlvPage {
@@ -788,66 +742,59 @@ fn handle_mgs_request<H: SpHandler>(
         }
         MgsRequest::ClearIgnitionLinkEvents { target, transceiver_select } => {
             handler
-                .clear_ignition_link_events(
-                    sender,
-                    port,
-                    target,
-                    transceiver_select,
-                )
+                .clear_ignition_link_events(target, transceiver_select)
                 .map(|()| SpResponse::ClearIgnitionLinkEventsAck)
         }
         MgsRequest::IgnitionCommand { target, command } => handler
-            .ignition_command(sender, port, target, command)
+            .ignition_command(target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
-        MgsRequest::SpState => {
-            handler.sp_state(sender, port).map(SpResponse::SpStateV2)
-        }
+        MgsRequest::SpState => handler.sp_state().map(SpResponse::SpStateV2),
         MgsRequest::SpUpdatePrepare(update) => handler
-            .sp_update_prepare(sender, port, update)
+            .sp_update_prepare(update)
             .map(|()| SpResponse::SpUpdatePrepareAck),
         MgsRequest::ComponentUpdatePrepare(update) => handler
-            .component_update_prepare(sender, port, update)
+            .component_update_prepare(update)
             .map(|()| SpResponse::ComponentUpdatePrepareAck),
         MgsRequest::UpdateChunk(chunk) => handler
-            .update_chunk(sender, port, chunk, trailing_data)
+            .update_chunk(chunk, trailing_data)
             .map(|()| SpResponse::UpdateChunkAck),
-        MgsRequest::UpdateStatus(component) => handler
-            .update_status(sender, port, component)
-            .map(SpResponse::UpdateStatus),
+        MgsRequest::UpdateStatus(component) => {
+            handler.update_status(component).map(SpResponse::UpdateStatus)
+        }
         MgsRequest::UpdateAbort { component, id } => handler
-            .update_abort(sender, port, component, id)
+            .update_abort(component, id)
             .map(|()| SpResponse::UpdateAbortAck),
         MgsRequest::SerialConsoleAttach(component) => handler
-            .serial_console_attach(sender, port, component)
+            .serial_console_attach(sender, component)
             .map(|()| SpResponse::SerialConsoleAttachAck),
         MgsRequest::SerialConsoleWrite { offset } => handler
-            .serial_console_write(sender, port, offset, trailing_data)
+            .serial_console_write(sender, offset, trailing_data)
             .map(|n| SpResponse::SerialConsoleWriteAck {
                 furthest_ingested_offset: n,
             }),
         MgsRequest::SerialConsoleDetach => handler
-            .serial_console_detach(sender, port)
+            .serial_console_detach(sender)
             .map(|()| SpResponse::SerialConsoleDetachAck),
         MgsRequest::SerialConsoleKeepAlive => handler
-            .serial_console_keepalive(sender, port)
+            .serial_console_keepalive(sender)
             .map(|()| SpResponse::SerialConsoleKeepAliveAck),
         MgsRequest::SerialConsoleBreak => handler
-            .serial_console_break(sender, port)
+            .serial_console_break(sender)
             .map(|()| SpResponse::SerialConsoleBreakAck),
         MgsRequest::GetPowerState => {
-            handler.power_state(sender, port).map(SpResponse::PowerState)
+            handler.power_state().map(SpResponse::PowerState)
         }
         MgsRequest::SetPowerState(power_state) => handler
-            .set_power_state(sender, port, power_state)
+            .set_power_state(sender, power_state)
             .map(|()| SpResponse::SetPowerStateAck),
         MgsRequest::ResetPrepare => handler
-            .reset_component_prepare(sender, port, SpComponent::SP_ITSELF)
+            .reset_component_prepare(SpComponent::SP_ITSELF)
             .map(|()| SpResponse::ResetPrepareAck),
         MgsRequest::ResetTrigger => handler
-            .reset_component_trigger(sender, port, SpComponent::SP_ITSELF)
+            .reset_component_trigger(SpComponent::SP_ITSELF)
             .map(|()| SpResponse::ResetComponentTriggerAck),
         MgsRequest::Inventory { device_index } => {
-            let total_devices = handler.num_devices(sender, port);
+            let total_devices = handler.num_devices();
             // If a caller asks for an index past our end, clamp it.
             let device_index = u32::min(device_index, total_devices);
             // We need to pack TLV-encoded device descriptions as our outgoing
@@ -862,15 +809,14 @@ fn handle_mgs_request<H: SpHandler>(
                 total: total_devices,
             }))
         }
-        MgsRequest::GetStartupOptions => handler
-            .get_startup_options(sender, port)
-            .map(SpResponse::StartupOptions),
+        MgsRequest::GetStartupOptions => {
+            handler.get_startup_options().map(SpResponse::StartupOptions)
+        }
         MgsRequest::SetStartupOptions(startup_options) => handler
-            .set_startup_options(sender, port, startup_options)
+            .set_startup_options(startup_options)
             .map(|()| SpResponse::SetStartupOptionsAck),
-        MgsRequest::ComponentDetails { component, offset } => handler
-            .num_component_details(sender, port, component)
-            .map(|total_items| {
+        MgsRequest::ComponentDetails { component, offset } => {
+            handler.num_component_details(component).map(|total_items| {
                 // If a caller asks for an index past our end, clamp it.
                 let offset = u32::min(offset, total_items);
                 // We need to pack TLV-encoded component details as our
@@ -885,29 +831,30 @@ fn handle_mgs_request<H: SpHandler>(
                     offset,
                     total: total_items,
                 })
-            }),
+            })
+        }
         MgsRequest::ComponentClearStatus(component) => handler
-            .component_clear_status(sender, port, component)
+            .component_clear_status(component)
             .map(|()| SpResponse::ComponentClearStatusAck),
         MgsRequest::ComponentGetActiveSlot(component) => handler
-            .component_get_active_slot(sender, port, component)
+            .component_get_active_slot(component)
             .map(SpResponse::ComponentActiveSlot),
         MgsRequest::ComponentSetActiveSlot { component, slot } => handler
-            .component_set_active_slot(sender, port, component, slot, false)
+            .component_set_active_slot(component, slot, false)
             .map(|()| SpResponse::ComponentSetActiveSlotAck),
         MgsRequest::ComponentSetAndPersistActiveSlot { component, slot } => {
             handler
-                .component_set_active_slot(sender, port, component, slot, true)
+                .component_set_active_slot(component, slot, true)
                 .map(|()| SpResponse::ComponentSetAndPersistActiveSlotAck)
         }
-        MgsRequest::SendHostNmi => handler
-            .send_host_nmi(sender, port)
-            .map(|()| SpResponse::SendHostNmiAck),
+        MgsRequest::SendHostNmi => {
+            handler.send_host_nmi().map(|()| SpResponse::SendHostNmiAck)
+        }
         MgsRequest::SetIpccKeyLookupValue { key } => handler
-            .set_ipcc_key_lookup_value(sender, port, key, trailing_data)
+            .set_ipcc_key_lookup_value(key, trailing_data)
             .map(|()| SpResponse::SetIpccKeyLookupValueAck),
         MgsRequest::ResetComponentPrepare { component } => handler
-            .reset_component_prepare(sender, port, component)
+            .reset_component_prepare(component)
             .map(|()| SpResponse::ResetComponentPrepareAck),
         MgsRequest::ResetComponentTrigger { component } => {
             // Until further implementations are done, only the RoT
@@ -919,7 +866,7 @@ fn handle_mgs_request<H: SpHandler>(
             // In a case where the SP is reset, not some sub-component, there
             // would be no response.
             handler
-                .reset_component_trigger(sender, port, component)
+                .reset_component_trigger(component)
                 .map(|()| SpResponse::ResetComponentTriggerAck)
         }
         MgsRequest::SwitchDefaultImage { component, slot, duration } => {
@@ -932,14 +879,15 @@ fn handle_mgs_request<H: SpHandler>(
                 SwitchDuration::Forever => true,
             };
             handler
-                .component_set_active_slot(
-                    sender, port, component, slot, persist,
-                )
+                .component_set_active_slot(component, slot, persist)
                 .map(|()| SpResponse::SwitchDefaultImageAck)
         }
         MgsRequest::ComponentAction { component, action } => handler
             .component_action(sender, component, action)
-            .map(|()| SpResponse::ComponentActionAck),
+            .map(|a| match a {
+                ComponentActionResponse::Ack => SpResponse::ComponentActionAck,
+                r => SpResponse::ComponentAction(r),
+            }),
         MgsRequest::ReadCaboose { key }
         | MgsRequest::ReadComponentCaboose { key, .. } => {
             let (component, slot) = if let MgsRequest::ReadComponentCaboose {
@@ -1000,7 +948,7 @@ fn handle_mgs_request<H: SpHandler>(
             .component_watchdog_supported(component)
             .map(|()| SpResponse::ComponentWatchdogSupportedAck),
         MgsRequest::VersionedRotBootInfo { version } => {
-            let r = handler.versioned_rot_boot_info(sender, port, version);
+            let r = handler.versioned_rot_boot_info(version);
             r.map(SpResponse::RotBootInfo)
         }
     };
@@ -1048,12 +996,29 @@ mod tests {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
 
+        fn is_request_trusted(
+            &mut self,
+            _kind: &MgsRequest,
+            _sender: Sender,
+        ) -> Result<(), SpError> {
+            // Trust everyone!
+            Ok(())
+        }
+
+        fn is_response_trusted(
+            &mut self,
+            _kind: &MgsResponse,
+            _sender: Sender,
+        ) -> bool {
+            // Trust everyone!
+            true
+        }
+
         fn discover(
             &mut self,
-            _sender: SocketAddrV6,
-            port: SpPort,
+            sender: Sender,
         ) -> Result<DiscoverResponse, SpError> {
-            Ok(DiscoverResponse { sp_port: port })
+            Ok(DiscoverResponse { sp_port: sender.port })
         }
 
         fn num_ignition_ports(&mut self) -> Result<u32, SpError> {
@@ -1062,8 +1027,6 @@ mod tests {
 
         fn ignition_state(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _target: u8,
         ) -> Result<IgnitionState, SpError> {
             unimplemented!()
@@ -1071,8 +1034,6 @@ mod tests {
 
         fn bulk_ignition_state(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _offset: u32,
         ) -> Result<Self::BulkIgnitionStateIter, SpError> {
             unimplemented!()
@@ -1080,8 +1041,6 @@ mod tests {
 
         fn bulk_ignition_link_events(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _offset: u32,
         ) -> Result<Self::BulkIgnitionLinkEventsIter, SpError> {
             unimplemented!()
@@ -1089,8 +1048,6 @@ mod tests {
 
         fn ignition_link_events(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _target: u8,
         ) -> Result<LinkEvents, SpError> {
             unimplemented!()
@@ -1098,8 +1055,6 @@ mod tests {
 
         fn clear_ignition_link_events(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _target: Option<u8>,
             _transceiver_select: Option<ignition::TransceiverSelect>,
         ) -> Result<(), SpError> {
@@ -1108,26 +1063,18 @@ mod tests {
 
         fn ignition_command(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _target: u8,
             _command: IgnitionCommand,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
-        fn sp_state(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<SpStateV2, SpError> {
+        fn sp_state(&mut self) -> Result<SpStateV2, SpError> {
             unimplemented!()
         }
 
         fn sp_update_prepare(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _update: SpUpdatePrepare,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1135,8 +1082,6 @@ mod tests {
 
         fn component_update_prepare(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _update: ComponentUpdatePrepare,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1144,8 +1089,6 @@ mod tests {
 
         fn update_chunk(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _chunk: UpdateChunk,
             _data: &[u8],
         ) -> Result<(), SpError> {
@@ -1154,8 +1097,6 @@ mod tests {
 
         fn update_status(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
         ) -> Result<UpdateStatus, SpError> {
             unimplemented!()
@@ -1163,26 +1104,19 @@ mod tests {
 
         fn update_abort(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
             _id: UpdateId,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
-        fn power_state(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<PowerState, SpError> {
+        fn power_state(&mut self) -> Result<PowerState, SpError> {
             unimplemented!()
         }
 
         fn set_power_state(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
             _power_state: PowerState,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1190,8 +1124,7 @@ mod tests {
 
         fn serial_console_attach(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
             _component: SpComponent,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1199,8 +1132,7 @@ mod tests {
 
         fn serial_console_write(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
             _offset: u64,
             _data: &[u8],
         ) -> Result<u64, SpError> {
@@ -1209,29 +1141,26 @@ mod tests {
 
         fn serial_console_detach(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn serial_console_keepalive(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn serial_console_break(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
-        fn num_devices(&mut self, _sender: SocketAddrV6, _port: SpPort) -> u32 {
+        fn num_devices(&mut self) -> u32 {
             unimplemented!()
         }
 
@@ -1244,8 +1173,6 @@ mod tests {
 
         fn num_component_details(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
         ) -> Result<u32, SpError> {
             unimplemented!()
@@ -1261,44 +1188,29 @@ mod tests {
 
         fn component_clear_status(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
-        fn get_startup_options(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<StartupOptions, SpError> {
+        fn get_startup_options(&mut self) -> Result<StartupOptions, SpError> {
             unimplemented!()
         }
 
         fn set_startup_options(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _startup_options: StartupOptions,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
-        fn mgs_response_error(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-            _message_id: u32,
-            _err: MgsError,
-        ) {
+        fn mgs_response_error(&mut self, _message_id: u32, _err: MgsError) {
             unimplemented!()
         }
 
         fn mgs_response_host_phase2_data(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
+            _sender: Sender,
             _message_id: u32,
             _hash: [u8; 32],
             _offset: u64,
@@ -1309,8 +1221,6 @@ mod tests {
 
         fn component_get_active_slot(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
         ) -> Result<u16, SpError> {
             unimplemented!()
@@ -1318,8 +1228,6 @@ mod tests {
 
         fn component_set_active_slot(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
             _slot: u16,
             _persist: bool,
@@ -1329,25 +1237,19 @@ mod tests {
 
         fn component_action(
             &mut self,
-            _sender: SocketAddrV6,
+            _sender: Sender,
             _component: SpComponent,
             _action: ComponentAction,
-        ) -> Result<(), SpError> {
+        ) -> Result<ComponentActionResponse, SpError> {
             unimplemented!()
         }
 
-        fn send_host_nmi(
-            &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
-        ) -> Result<(), SpError> {
+        fn send_host_nmi(&mut self) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn set_ipcc_key_lookup_value(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _key: u8,
             _value: &[u8],
         ) -> Result<(), SpError> {
@@ -1356,8 +1258,6 @@ mod tests {
 
         fn reset_component_prepare(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1365,8 +1265,6 @@ mod tests {
 
         fn reset_component_trigger(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _component: SpComponent,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1431,8 +1329,6 @@ mod tests {
 
         fn versioned_rot_boot_info(
             &mut self,
-            _sender: SocketAddrV6,
-            _port: SpPort,
             _version: u8,
         ) -> Result<RotBootInfo, SpError> {
             unimplemented!()
@@ -1457,14 +1353,14 @@ mod tests {
         let m = crate::serialize(&mut req_buf, &msg).unwrap();
 
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
-        let n = handle_message(
-            any_socket_addr_v6(),
-            SpPort::One,
-            &req_buf[..m],
-            &mut FakeHandler,
-            &mut buf,
-        )
-        .unwrap();
+        let sender = Sender {
+            addr: any_socket_addr_v6(),
+            port: SpPort::One,
+            vid: 0x301,
+        };
+        let n =
+            handle_message(sender, &req_buf[..m], &mut FakeHandler, &mut buf)
+                .unwrap();
 
         let (resp, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
         resp
@@ -1539,25 +1435,20 @@ mod tests {
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
 
         // ... but only the first 3 bytes (incomplete version field)
-        let n = handle_message(
-            any_socket_addr_v6(),
-            SpPort::One,
-            &req_buf[..3],
-            &mut FakeHandler,
-            &mut buf,
-        )
-        .unwrap();
+        let sender = Sender {
+            addr: any_socket_addr_v6(),
+            port: SpPort::One,
+            vid: 0x301,
+        };
+        let n =
+            handle_message(sender, &req_buf[..3], &mut FakeHandler, &mut buf)
+                .unwrap();
         let (resp1, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
 
         // ... or only the first 7 bytes (incomplete request ID field)
-        let n = handle_message(
-            any_socket_addr_v6(),
-            SpPort::One,
-            &req_buf[..7],
-            &mut FakeHandler,
-            &mut buf,
-        )
-        .unwrap();
+        let n =
+            handle_message(sender, &req_buf[..7], &mut FakeHandler, &mut buf)
+                .unwrap();
         let (resp2, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
 
         assert_eq!(resp1, resp2);

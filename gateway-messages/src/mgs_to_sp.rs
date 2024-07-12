@@ -280,6 +280,7 @@ pub struct ComponentUpdatePrepare {
 )]
 pub enum ComponentAction {
     Led(LedComponentAction),
+    Monorail(MonorailComponentAction),
 }
 
 /// Actions for LED components, i.e. components with `IS_LED` set
@@ -290,6 +291,45 @@ pub enum LedComponentAction {
     TurnOn,
     TurnOff,
     Blink,
+}
+
+/// Actions for the Monorail switch
+#[derive(
+    Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
+)]
+pub enum MonorailComponentAction {
+    /// Request an `UnlockChallenge`
+    ///
+    /// The SP will reply with the weakest challenge that it will accept, and
+    /// will store that challenge locally (to prevent replay attacks)
+    RequestChallenge,
+
+    /// Unlock the management network, allowing access from the tech port
+    Unlock {
+        challenge: UnlockChallenge,
+        response: UnlockResponse,
+        time_sec: u32,
+    },
+
+    /// Relock the management network
+    Lock,
+}
+
+/// Actions for the Monorail switch
+#[derive(
+    Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
+)]
+pub enum UnlockChallenge {
+    /// Unlock given an [UnlockResponse::Trivial]
+    Trivial,
+}
+
+/// Actions for the Monorail switch
+#[derive(
+    Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
+)]
+pub enum UnlockResponse {
+    Trivial,
 }
 
 #[derive(

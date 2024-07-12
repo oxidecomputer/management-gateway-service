@@ -5,6 +5,7 @@
 use crate::error::CommunicationError;
 use crate::VersionedSpState;
 use gateway_messages::ignition::LinkEvents;
+use gateway_messages::ComponentActionResponse;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
@@ -115,6 +116,7 @@ expect_fn!(ResetComponentPrepareAck);
 expect_fn!(ResetComponentTriggerAck);
 expect_fn!(SwitchDefaultImageAck);
 expect_fn!(ComponentActionAck);
+expect_fn!(ComponentAction(resp) -> ComponentActionResponse);
 expect_fn!(ReadSensor(resp) -> SensorResponse);
 expect_fn!(CurrentTime(time) -> u64);
 expect_fn!(DisableComponentWatchdogAck);

@@ -16,12 +16,17 @@ use futures::FutureExt;
 use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::ComponentAction;
+use gateway_messages::ComponentActionResponse;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
+use gateway_messages::MonorailComponentAction;
+use gateway_messages::MonorailComponentActionResponse;
 use gateway_messages::PowerState;
 use gateway_messages::RotBootInfo;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
+use gateway_messages::UnlockChallenge;
+use gateway_messages::UnlockResponse;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_messages::ROT_PAGE_SIZE;
@@ -392,6 +397,12 @@ enum Command {
         #[clap(long, short, default_value_t = RotBootInfo::HIGHEST_KNOWN_VERSION)]
         version: u8,
     },
+
+    /// Control the management network switch
+    Monorail {
+        #[clap(subcommand)]
+        cmd: MonorailCommand,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -402,6 +413,18 @@ enum LedCommand {
     Off,
     /// Enables blinking
     Blink,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum MonorailCommand {
+    /// Unlock the technician port, allowing access to other SPs
+    Unlock {
+        /// How long to unlock for
+        time_sec: u32,
+    },
+
+    /// Lock the technician port
+    Lock,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -1284,6 +1307,27 @@ async fn run_command(
                 Ok(Output::Lines(vec!["done".to_string()]))
             }
         }
+        Command::Monorail { cmd } => {
+            match cmd {
+                MonorailCommand::Lock => {
+                    sp.component_action(
+                        SpComponent::MONORAIL,
+                        ComponentAction::Monorail(
+                            MonorailComponentAction::Lock,
+                        ),
+                    )
+                    .await?
+                }
+                MonorailCommand::Unlock { time_sec } => {
+                    monorail_unlock(&log, &sp, time_sec).await?;
+                }
+            }
+            if json {
+                Ok(Output::Json(json!({ "ack": "monorail" })))
+            } else {
+                Ok(Output::Lines(vec!["done".to_string()]))
+            }
+        }
         Command::ReadComponentCaboose { component, slot, key } => {
             let slot = match (component, slot.as_deref()) {
                 (SpComponent::SP_ITSELF, Some("active" | "0") | None) => 0,
@@ -1385,6 +1429,44 @@ async fn run_command(
             }
         }
     }
+}
+
+async fn monorail_unlock(
+    log: &Logger,
+    sp: &SingleSp,
+    time_sec: u32,
+) -> Result<()> {
+    let r = sp
+        .component_action_with_response(
+            SpComponent::MONORAIL,
+            ComponentAction::Monorail(
+                MonorailComponentAction::RequestChallenge,
+            ),
+        )
+        .await?;
+
+    let ComponentActionResponse::Monorail(
+        MonorailComponentActionResponse::RequestChallenge(challenge),
+    ) = r
+    else {
+        bail!("unexpected response: {r:?}");
+    };
+    info!(log, "received challenge {challenge:?}");
+
+    let response = match challenge {
+        UnlockChallenge::Trivial => UnlockResponse::Trivial,
+    };
+    sp.component_action(
+        SpComponent::MONORAIL,
+        ComponentAction::Monorail(MonorailComponentAction::Unlock {
+            challenge,
+            response,
+            time_sec,
+        }),
+    )
+    .await?;
+
+    Ok(())
 }
 
 fn handle_cxpa(
