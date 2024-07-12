@@ -12,6 +12,7 @@ use crate::RotSlotId;
 use crate::SensorResponse;
 use crate::SpComponent;
 use crate::StartupOptions;
+use crate::UnlockChallenge;
 use crate::UpdateId;
 use bitflags::bitflags;
 use core::fmt;
@@ -134,6 +135,9 @@ pub enum SpResponse {
 
     SpStateV3(SpStateV3),
     RotBootInfo(RotBootInfo),
+
+    /// Response to a data-bearing component action
+    ComponentAction(ComponentActionResponse),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -703,6 +707,21 @@ impl ComponentDetails {
     }
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum ComponentActionResponse {
+    Ack,
+    Monorail(MonorailComponentActionResponse),
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum MonorailComponentActionResponse {
+    RequestChallenge(UnlockChallenge),
+}
+
 /// Header for the description of a single device.
 ///
 /// Always packed into a [`tlv`] triple containing:
@@ -961,6 +980,7 @@ pub enum SpError {
     Sensor(SensorError),
     Vpd(VpdError),
     Watchdog(WatchdogError),
+    Monorail(MonorailError),
 }
 
 impl fmt::Display for SpError {
@@ -1073,6 +1093,7 @@ impl fmt::Display for SpError {
             Self::Sensor(e) => write!(f, "sensor: {}", e),
             Self::Vpd(e) => write!(f, "vpd: {}", e),
             Self::Watchdog(e) => write!(f, "watchdog: {}", e),
+            Self::Monorail(e) => write!(f, "monorail: {}", e),
         }
     }
 }
@@ -1502,5 +1523,40 @@ impl fmt::Display for RotWatchdogError {
             }
             Self::Other(r) => write!(f, "unknown error: {r}"),
         }
+    }
+}
+
+/// Errors encountered interacting with the Monorail switch
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum MonorailError {
+    UnlockAuthFailed,
+    UnlockFailed,
+    LockFailed,
+    ManagementNetworkLocked,
+    InvalidVLAN,
+    GetChallengeFailed,
+    TimeIsTooLong,
+    ChallengeExpired,
+    AlreadyTrusted,
+}
+
+impl fmt::Display for MonorailError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::UnlockAuthFailed => "failed to unlock (bad authentication)",
+            Self::UnlockFailed => "failed to unlock (internal error)",
+            Self::LockFailed => "failed to lock (internal error)",
+            Self::ManagementNetworkLocked => "management network is locked",
+            Self::InvalidVLAN => "received invalid VLAN tag",
+            Self::GetChallengeFailed => "could not create challenge",
+            Self::TimeIsTooLong => "unlock time is too long",
+            Self::ChallengeExpired => "challenge has expired",
+            Self::AlreadyTrusted => "the source port is already trusted",
+        };
+        write!(f, "{s}")
     }
 }

@@ -18,6 +18,7 @@ mod v10;
 mod v11;
 mod v12;
 mod v13;
+mod v14;
 
 pub fn assert_serialized(
     out: &mut [u8],
@@ -25,5 +26,11 @@ pub fn assert_serialized(
     item: &(impl Serialize + std::fmt::Debug),
 ) {
     let n = gateway_messages::serialize(out, item).unwrap();
+    assert_eq!(
+        n,
+        expected.len(),
+        "bad serialization size: expected {}, got {n}",
+        expected.len()
+    );
     assert_eq!(expected, &out[..n], "incorrect serialization of {item:?}");
 }
