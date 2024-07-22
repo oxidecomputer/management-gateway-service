@@ -45,7 +45,7 @@ static_assertions = "1.1.0"
 strum_macros = "0.25"
 string_cache = "0.8.7"
 termios = "0.3"
-thiserror = "1.0.61"
+thiserror = "1.0.63"
 tokio = { version = "1.29", features = ["full"] }
 tokio-stream = { version = "0.1", features = ["fs"] }
 tokio-util = { version = "0.7", features = ["compat"] }
