@@ -24,12 +24,12 @@
 #:
 #: [[publish]]
 #: from_output = "/out/omicron-faux-mgs.tar.gz"
-#: series = "bins"
+#: series = "image"
 #: name = "omicron-faux-mgs.tar.gz"
 #:
 #: [[publish]]
 #: from_output = "/out/omicron-faux-mgs.tar.gz.sha256.txt"
-#: series = "bins"
+#: series = "image"
 #: name = "omicron-faux-mgs.tar.gz.sha256.txt"
 #:
 
