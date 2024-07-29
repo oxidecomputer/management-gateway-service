@@ -320,8 +320,8 @@ pub enum MonorailComponentAction {
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
 pub enum UnlockChallenge {
-    /// Unlock given an [UnlockResponse::Trivial]
-    Trivial,
+    /// Unlock given an [UnlockResponse::Trivial] with the same timestamp
+    Trivial { timestamp: u64 },
 }
 
 /// Actions for the Monorail switch
@@ -329,7 +329,7 @@ pub enum UnlockChallenge {
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
 pub enum UnlockResponse {
-    Trivial,
+    Trivial { timestamp: u64 },
 }
 
 #[derive(
