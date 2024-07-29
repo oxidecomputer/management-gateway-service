@@ -1454,7 +1454,9 @@ async fn monorail_unlock(
     info!(log, "received challenge {challenge:?}");
 
     let response = match challenge {
-        UnlockChallenge::Trivial => UnlockResponse::Trivial,
+        UnlockChallenge::Trivial { timestamp } => {
+            UnlockResponse::Trivial { timestamp }
+        }
     };
     sp.component_action(
         SpComponent::MONORAIL,

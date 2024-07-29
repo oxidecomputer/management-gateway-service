@@ -39,15 +39,17 @@ fn monorail_component_action() {
     assert_serialized(&mut out, &expected, &action);
 
     let action = ComponentAction::Monorail(MonorailComponentAction::Unlock {
-        challenge: UnlockChallenge::Trivial,
-        response: UnlockResponse::Trivial,
+        challenge: UnlockChallenge::Trivial { timestamp: 0x1234 },
+        response: UnlockResponse::Trivial { timestamp: 0x4567 },
         time_sec: 0x1234,
     });
     let expected = vec![
         1, // ComponentAction::Monorail
         1, // MonorailComponentAction::Unlock
         0, // UnlockChallenge::Trivial
+        0x34, 0x12, 0, 0, 0, 0, 0, 0, // timestamp
         0, // UnlockResponse::Trivial
+        0x67, 0x45, 0, 0, 0, 0, 0, 0, // timestamp
         0x34, 0x12, 0, 0, // time_s
     ];
     assert_serialized(&mut out, &expected, &action);
@@ -72,7 +74,7 @@ fn component_action_response() {
 
     let r = SpResponse::ComponentAction(ComponentActionResponse::Monorail(
         MonorailComponentActionResponse::RequestChallenge(
-            UnlockChallenge::Trivial,
+            UnlockChallenge::Trivial { timestamp: 0x4455 },
         ),
     ));
     let expected = vec![
@@ -80,6 +82,7 @@ fn component_action_response() {
         1,  // Ack
         0,  // RequestChallenge
         0,  // Trivial
+        0x55, 0x44, 0, 0, 0, 0, 0, 0, // timestamp
     ];
     assert_serialized(&mut out, &expected, &r);
 }
@@ -104,9 +107,8 @@ fn monorail_error() {
     {
         let err = SpError::Monorail(*e);
 
-        #[rustfmt::skip]
         let expected = vec![
-            36, // Monorail
+            36,      // Monorail
             i as u8, // error code
         ];
         assert_serialized(&mut out, &expected, &err);
