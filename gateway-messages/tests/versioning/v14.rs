@@ -48,7 +48,6 @@ fn monorail_component_action() {
         1, // MonorailComponentAction::Unlock
         0, // UnlockChallenge::Trivial
         0, // UnlockResponse::Trivial
-        0x34, 0x12, 0, 0, // time_s
     ];
     assert_serialized(&mut out, &expected, &action);
 
@@ -103,10 +102,8 @@ fn monorail_error() {
     .enumerate()
     {
         let err = SpError::Monorail(*e);
-
-        #[rustfmt::skip]
         let expected = vec![
-            36, // Monorail
+            36,      // Monorail
             i as u8, // error code
         ];
         assert_serialized(&mut out, &expected, &err);

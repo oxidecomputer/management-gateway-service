@@ -16,6 +16,7 @@ use crate::UpdateId;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_big_array::BigArray;
 
 #[derive(
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
@@ -320,8 +321,10 @@ pub enum MonorailComponentAction {
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
 pub enum UnlockChallenge {
-    /// Unlock given an [UnlockResponse::Trivial]
+    /// Return [UnlockResponse::Trivial]
     Trivial,
+    /// Hash and sign the given data with a key that the SP trusts
+    EcdsaSha2Nistp256([u8; 32]),
 }
 
 /// Actions for the Monorail switch
@@ -329,7 +332,19 @@ pub enum UnlockChallenge {
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
 pub enum UnlockResponse {
+    /// Unlocks [UnlockChallenge::Trivial]
     Trivial,
+
+    /// Here's your signature!
+    EcdsaSha2Nistp256 {
+        /// SEC1 encoding of the corresponding public key
+        #[serde(with = "BigArray")]
+        key: [u8; 65],
+
+        /// Signature data, as an (x, y) tuple (32 bytes each)
+        #[serde(with = "BigArray")]
+        signature: [u8; 64],
+    },
 }
 
 #[derive(
