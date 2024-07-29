@@ -38,6 +38,7 @@ use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
 use serde_json::json;
+use slog::debug;
 use slog::info;
 use slog::o;
 use slog::warn;
@@ -421,6 +422,10 @@ enum MonorailCommand {
     Unlock {
         /// How long to unlock for
         time_sec: u32,
+
+        /// Path to private key for SSH signing challenge
+        #[clap(long)]
+        key: Option<PathBuf>,
     },
 
     /// Lock the technician port
@@ -1318,8 +1323,8 @@ async fn run_command(
                     )
                     .await?
                 }
-                MonorailCommand::Unlock { time_sec } => {
-                    monorail_unlock(&log, &sp, time_sec).await?;
+                MonorailCommand::Unlock { time_sec, key } => {
+                    monorail_unlock(&log, &sp, time_sec, key).await?;
                 }
             }
             if json {
@@ -1435,6 +1440,7 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
+    key: Option<PathBuf>,
 ) -> Result<()> {
     let r = sp
         .component_action_with_response(
@@ -1456,6 +1462,58 @@ async fn monorail_unlock(
     let response = match challenge {
         UnlockChallenge::Trivial { timestamp } => {
             UnlockResponse::Trivial { timestamp }
+        }
+        UnlockChallenge::EcdsaSha2Nistp256(data) => {
+            let Some(priv_path) = key else {
+                bail!("need --key for ECDSA challenge");
+            };
+
+            debug!(log, "loading private key from {priv_path:?}");
+            let priv_key = ssh_key::PrivateKey::read_openssh_file(&priv_path)
+                .with_context(|| {
+                "failed to read private key at {priv_path}"
+            })?;
+            if priv_key.algorithm()
+                != (ssh_key::Algorithm::Ecdsa {
+                    curve: ssh_key::EcdsaCurve::NistP256,
+                })
+            {
+                bail!("invalid algorithm {:?}", priv_key.algorithm());
+            }
+
+            let signed = priv_key.sign(
+                "monorail-unlock",
+                ssh_key::HashAlg::Sha256,
+                &data,
+            )?;
+            debug!(log, "got signature {signed:?}");
+
+            let key_bytes =
+                signed.public_key().ecdsa().unwrap().as_sec1_bytes();
+            assert_eq!(key_bytes.len(), 65, "invalid key length");
+            let mut key = [0u8; 65];
+            key.copy_from_slice(key_bytes);
+
+            // Signature bytes are encoded per
+            // https://datatracker.ietf.org/doc/html/rfc5656#section-3.1.2
+            //
+            // They are a pair of `mpint` values, per
+            // https://datatracker.ietf.org/doc/html/rfc4251
+            //
+            // Each one is either 32 bytes or 33 bytes with a leading zero, so
+            // we'll awkwardly allow for both cases.
+            let sig_bytes = signed.signature_bytes();
+            let mut signature = [0u8; 64];
+            let start = match sig_bytes[3] {
+                32 => 4,
+                33 => 5,
+                i => bail!("invalid length {i}"),
+            };
+            signature[0..32].copy_from_slice(&sig_bytes[start..][..32]);
+            let tail = sig_bytes.len() - 32;
+            signature[32..64].copy_from_slice(&sig_bytes[tail..][..32]);
+
+            UnlockResponse::EcdsaSha2Nistp256 { key, signature }
         }
     };
     sp.component_action(

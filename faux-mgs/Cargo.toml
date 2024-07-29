@@ -18,6 +18,7 @@ sha2.workspace = true
 slog.workspace = true
 slog-async.workspace = true
 slog-term.workspace = true
+ssh-key.workspace = true
 termios.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
