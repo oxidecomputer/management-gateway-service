@@ -25,6 +25,7 @@ use gateway_messages::version::WATCHDOG_VERSION;
 use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
+use gateway_messages::ComponentActionResponse;
 use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
@@ -35,6 +36,7 @@ use gateway_messages::IgnitionState;
 use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
+use gateway_messages::MonorailError;
 use gateway_messages::PowerState;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotRequest;
@@ -841,6 +843,11 @@ impl SingleSp {
         // If we are resetting the SP itself, then reset trigger should
         // retry until we get back an error indicating the
         // SP wasn't expecting a reset trigger (because it has reset!).
+        //
+        // On Sidecar, we will instead get a message back indicating that the
+        // management network is locked (if we're updating the SP from a
+        // temporarily-unlocked tech port).
+        //
         // If we are resetting the RoT, the SP will send an ack.
         // When resetting the RoT, the SP SpRot client will either timeout on a
         // response because the RoT was reset or because the message got
@@ -862,7 +869,8 @@ impl SingleSp {
                 }
             }
             Err(CommunicationError::SpError(
-                SpError::ResetComponentTriggerWithoutPrepare,
+                SpError::ResetComponentTriggerWithoutPrepare
+                | SpError::Monorail(MonorailError::ManagementNetworkLocked),
             )) if component == SpComponent::SP_ITSELF => Ok(()),
             Err(other) => Err(other),
         };
@@ -914,6 +922,16 @@ impl SingleSp {
         self.rpc(MgsRequest::ComponentAction { component, action })
             .await
             .and_then(expect_component_action_ack)
+    }
+
+    pub async fn component_action_with_response(
+        &self,
+        component: SpComponent,
+        action: ComponentAction,
+    ) -> Result<ComponentActionResponse> {
+        self.rpc(MgsRequest::ComponentAction { component, action })
+            .await
+            .and_then(expect_component_action)
     }
 
     pub async fn read_component_caboose(
