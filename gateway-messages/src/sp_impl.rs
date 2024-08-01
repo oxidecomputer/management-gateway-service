@@ -88,21 +88,22 @@ pub struct BoundsChecked(pub u32);
 
 /// Helper type to identify the sender of a message
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Sender {
+pub struct Sender<V> {
     /// Address of the sender
     pub addr: SocketAddrV6,
     /// SP port on which the packet was received
     pub port: SpPort,
-    /// VLAN tag associated with the received packet
+    /// VLAN id associated with the received packet
     ///
     /// This is often one-to-one equivalent to `port`; however, on Sidecar,
     /// multiple VLANs are mapped to `SpPort::One`.
-    pub vid: u16,
+    pub vid: V,
 }
 
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
     type BulkIgnitionLinkEventsIter: Iterator<Item = LinkEvents>;
+    type VLanId: Copy + Clone;
 
     /// Checks whether we will answer messages from the given sender
     ///
@@ -111,17 +112,19 @@ pub trait SpHandler {
     fn is_request_trusted(
         &mut self,
         kind: &MgsRequest,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
     ) -> Result<(), SpError>;
 
     fn is_response_trusted(
         &mut self,
         kind: &MgsResponse,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
     ) -> bool;
 
-    fn discover(&mut self, sender: Sender)
-        -> Result<DiscoverResponse, SpError>;
+    fn discover(
+        &mut self,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<DiscoverResponse, SpError>;
 
     fn num_ignition_ports(&mut self) -> Result<u32, SpError>;
     fn ignition_state(&mut self, target: u8) -> Result<IgnitionState, SpError>;
@@ -187,13 +190,13 @@ pub trait SpHandler {
 
     fn set_power_state(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         power_state: PowerState,
     ) -> Result<(), SpError>;
 
     fn serial_console_attach(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         component: SpComponent,
     ) -> Result<(), SpError>;
 
@@ -202,19 +205,25 @@ pub trait SpHandler {
     /// ingested (either by writing to the console or by buffering to write it).
     fn serial_console_write(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         offset: u64,
         data: &[u8],
     ) -> Result<u64, SpError>;
 
-    fn serial_console_detach(&mut self, sender: Sender) -> Result<(), SpError>;
+    fn serial_console_detach(
+        &mut self,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<(), SpError>;
 
     fn serial_console_keepalive(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
     ) -> Result<(), SpError>;
 
-    fn serial_console_break(&mut self, sender: Sender) -> Result<(), SpError>;
+    fn serial_console_break(
+        &mut self,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<(), SpError>;
 
     /// Number of devices returned in the inventory of this SP.
     fn num_devices(&mut self) -> u32;
@@ -280,7 +289,7 @@ pub trait SpHandler {
 
     fn component_action(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         component: SpComponent,
         action: ComponentAction,
     ) -> Result<ComponentActionResponse, SpError>;
@@ -296,7 +305,7 @@ pub trait SpHandler {
 
     fn mgs_response_host_phase2_data(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         message_id: u32,
         hash: [u8; 32],
         offset: u64,
@@ -383,7 +392,7 @@ pub trait SpHandler {
 /// message does not warrant a response, `out` remains unchanged and `None` is
 /// returned.
 pub fn handle_message<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     data: &[u8],
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
@@ -583,7 +592,7 @@ fn read_request_header(data: &[u8]) -> ReadHeaderResult<'_> {
 /// and our caller is responsible for handling that generation. Otherwise,
 /// returns `(_, None)`.
 fn handle_message_impl<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     header: Header,
     request_kind_data: &[u8],
     handler: &mut H,
@@ -641,7 +650,7 @@ fn handle_message_impl<H: SpHandler>(
 }
 
 fn handle_mgs_response<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     message_id: u32,
     handler: &mut H,
     kind: MgsResponse,
@@ -665,7 +674,7 @@ fn handle_mgs_response<H: SpHandler>(
 }
 
 fn handle_mgs_request<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     handler: &mut H,
     kind: MgsRequest,
     leftover: &[u8],
@@ -995,11 +1004,12 @@ mod tests {
     impl SpHandler for FakeHandler {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
+        type VLanId = u16;
 
         fn is_request_trusted(
             &mut self,
             _kind: &MgsRequest,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             // Trust everyone!
             Ok(())
@@ -1008,7 +1018,7 @@ mod tests {
         fn is_response_trusted(
             &mut self,
             _kind: &MgsResponse,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> bool {
             // Trust everyone!
             true
@@ -1016,7 +1026,7 @@ mod tests {
 
         fn discover(
             &mut self,
-            sender: Sender,
+            sender: Sender<Self::VLanId>,
         ) -> Result<DiscoverResponse, SpError> {
             Ok(DiscoverResponse { sp_port: sender.port })
         }
@@ -1116,7 +1126,7 @@ mod tests {
 
         fn set_power_state(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _power_state: PowerState,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1124,7 +1134,7 @@ mod tests {
 
         fn serial_console_attach(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _component: SpComponent,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1132,7 +1142,7 @@ mod tests {
 
         fn serial_console_write(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _offset: u64,
             _data: &[u8],
         ) -> Result<u64, SpError> {
@@ -1141,21 +1151,21 @@ mod tests {
 
         fn serial_console_detach(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn serial_console_keepalive(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn serial_console_break(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
@@ -1210,7 +1220,7 @@ mod tests {
 
         fn mgs_response_host_phase2_data(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _message_id: u32,
             _hash: [u8; 32],
             _offset: u64,
@@ -1237,7 +1247,7 @@ mod tests {
 
         fn component_action(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _component: SpComponent,
             _action: ComponentAction,
         ) -> Result<ComponentActionResponse, SpError> {
