@@ -91,19 +91,20 @@ pub struct BoundsChecked(pub u32);
 pub struct Sender<V> {
     /// Address of the sender
     pub addr: SocketAddrV6,
-    /// SP port on which the packet was received
-    pub port: SpPort,
+
     /// VLAN id associated with the received packet
     ///
-    /// This is often one-to-one equivalent to `port`; however, on Sidecar,
-    /// multiple VLANs are mapped to `SpPort::One`.
+    /// When used in [`SpHandler`], this type must be convertible to an
+    /// [`SpPort`].  On Gimlet, there's a one-to-one mapping from VLAN id to SP
+    /// port; on Sidecar, there's a many-to-one mapping, because multiple VLANs
+    /// arrive on `SpPort::One`.
     pub vid: V,
 }
 
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
     type BulkIgnitionLinkEventsIter: Iterator<Item = LinkEvents>;
-    type VLanId: Copy + Clone;
+    type VLanId: Copy + Clone + Into<SpPort>;
 
     /// Checks whether we will answer messages from the given sender
     ///
@@ -999,12 +1000,21 @@ mod tests {
 
     struct FakeHandler;
 
+    #[derive(Copy, Clone)]
+    struct FakeVLanId;
+
+    impl From<FakeVLanId> for SpPort {
+        fn from(_: FakeVLanId) -> SpPort {
+            SpPort::One
+        }
+    }
+
     // Only implements `discover()`; all other methods are left as
     // `unimplemented!()` since no tests are intended to call them.
     impl SpHandler for FakeHandler {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
-        type VLanId = u16;
+        type VLanId = FakeVLanId;
 
         fn is_request_trusted(
             &mut self,
@@ -1028,7 +1038,7 @@ mod tests {
             &mut self,
             sender: Sender<Self::VLanId>,
         ) -> Result<DiscoverResponse, SpError> {
-            Ok(DiscoverResponse { sp_port: sender.port })
+            Ok(DiscoverResponse { sp_port: sender.vid.into() })
         }
 
         fn num_ignition_ports(&mut self) -> Result<u32, SpError> {
@@ -1363,11 +1373,7 @@ mod tests {
         let m = crate::serialize(&mut req_buf, &msg).unwrap();
 
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
-        let sender = Sender {
-            addr: any_socket_addr_v6(),
-            port: SpPort::One,
-            vid: 0x301,
-        };
+        let sender = Sender { addr: any_socket_addr_v6(), vid: FakeVLanId };
         let n =
             handle_message(sender, &req_buf[..m], &mut FakeHandler, &mut buf)
                 .unwrap();
@@ -1445,11 +1451,7 @@ mod tests {
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
 
         // ... but only the first 3 bytes (incomplete version field)
-        let sender = Sender {
-            addr: any_socket_addr_v6(),
-            port: SpPort::One,
-            vid: 0x301,
-        };
+        let sender = Sender { addr: any_socket_addr_v6(), vid: FakeVLanId };
         let n =
             handle_message(sender, &req_buf[..3], &mut FakeHandler, &mut buf)
                 .unwrap();
