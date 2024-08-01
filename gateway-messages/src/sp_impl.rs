@@ -35,7 +35,6 @@ use crate::SensorResponse;
 use crate::SerializedSize;
 use crate::SpComponent;
 use crate::SpError;
-use crate::SpPort;
 use crate::SpResponse;
 use crate::SpStateV2;
 use crate::SpUpdatePrepare;
@@ -94,17 +93,20 @@ pub struct Sender<V> {
 
     /// VLAN id associated with the received packet
     ///
-    /// When used in [`SpHandler`], this type must be convertible to an
-    /// [`SpPort`].  On Gimlet, there's a one-to-one mapping from VLAN id to SP
-    /// port; on Sidecar, there's a many-to-one mapping, because multiple VLANs
-    /// arrive on `SpPort::One`.
+    /// The [`SpHandler`] gets to provide a type here, because each build has
+    /// its own `VLanId` type (typically generated from the manifest at build
+    /// time).
+    ///
+    /// On Gimlet, there's a one-to-one mapping from VLAN id to SP port; on
+    /// Sidecar, there's a many-to-one mapping, because multiple VLANs arrive on
+    /// `SpPort::One`.
     pub vid: V,
 }
 
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
     type BulkIgnitionLinkEventsIter: Iterator<Item = LinkEvents>;
-    type VLanId: Copy + Clone + Into<SpPort>;
+    type VLanId: Copy + Clone;
 
     /// Checks whether we will answer messages from the given sender
     ///
@@ -996,25 +998,17 @@ enum OutgoingTrailingData<H: SpHandler> {
 mod tests {
     use super::*;
     use crate::SerializedSize;
+    use crate::SpPort;
     use serde::Serialize;
 
     struct FakeHandler;
-
-    #[derive(Copy, Clone)]
-    struct FakeVLanId;
-
-    impl From<FakeVLanId> for SpPort {
-        fn from(_: FakeVLanId) -> SpPort {
-            SpPort::One
-        }
-    }
 
     // Only implements `discover()`; all other methods are left as
     // `unimplemented!()` since no tests are intended to call them.
     impl SpHandler for FakeHandler {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
-        type VLanId = FakeVLanId;
+        type VLanId = u16;
 
         fn is_request_trusted(
             &mut self,
@@ -1036,9 +1030,9 @@ mod tests {
 
         fn discover(
             &mut self,
-            sender: Sender<Self::VLanId>,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<DiscoverResponse, SpError> {
-            Ok(DiscoverResponse { sp_port: sender.vid.into() })
+            Ok(DiscoverResponse { sp_port: SpPort::One })
         }
 
         fn num_ignition_ports(&mut self) -> Result<u32, SpError> {
@@ -1373,7 +1367,7 @@ mod tests {
         let m = crate::serialize(&mut req_buf, &msg).unwrap();
 
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
-        let sender = Sender { addr: any_socket_addr_v6(), vid: FakeVLanId };
+        let sender = Sender { addr: any_socket_addr_v6(), vid: 0x301 };
         let n =
             handle_message(sender, &req_buf[..m], &mut FakeHandler, &mut buf)
                 .unwrap();
@@ -1451,7 +1445,7 @@ mod tests {
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
 
         // ... but only the first 3 bytes (incomplete version field)
-        let sender = Sender { addr: any_socket_addr_v6(), vid: FakeVLanId };
+        let sender = Sender { addr: any_socket_addr_v6(), vid: 0x301 };
         let n =
             handle_message(sender, &req_buf[..3], &mut FakeHandler, &mut buf)
                 .unwrap();
