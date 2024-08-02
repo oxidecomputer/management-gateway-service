@@ -110,13 +110,15 @@ pub trait SpHandler {
 
     /// Checks whether we will answer messages from the given sender
     ///
+    /// Returns the same message if we'll allow it, or an error otherwise
+    ///
     /// This may vary depending on message type and whether the sender's VID is
     /// trusted.
-    fn is_request_trusted(
+    fn ensure_request_trusted(
         &mut self,
-        kind: &MgsRequest,
+        kind: MgsRequest,
         sender: Sender<Self::VLanId>,
-    ) -> Result<(), SpError>;
+    ) -> Result<MgsRequest, SpError>;
 
     fn is_response_trusted(
         &mut self,
@@ -706,9 +708,10 @@ fn handle_mgs_request<H: SpHandler>(
     // Check whether this message is trusted, bailing out early if that's not
     // the case.  The logic of message trust is implemented by the SpHandler,
     // and will typically check message type and sender VLAN.
-    if let Err(e) = handler.is_request_trusted(&kind, sender) {
-        return (SpResponse::Error(e), None);
-    }
+    let kind = match handler.ensure_request_trusted(kind, sender) {
+        Ok(k) => k,
+        Err(e) => return (SpResponse::Error(e), None),
+    };
 
     // Call out to handler to provide response.
     //
@@ -1010,13 +1013,13 @@ mod tests {
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
         type VLanId = u16;
 
-        fn is_request_trusted(
+        fn ensure_request_trusted(
             &mut self,
-            _kind: &MgsRequest,
+            kind: MgsRequest,
             _sender: Sender<Self::VLanId>,
-        ) -> Result<(), SpError> {
+        ) -> Result<MgsRequest, SpError> {
             // Trust everyone!
-            Ok(())
+            Ok(kind)
         }
 
         fn is_response_trusted(
