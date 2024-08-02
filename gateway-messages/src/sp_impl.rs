@@ -35,7 +35,6 @@ use crate::SensorResponse;
 use crate::SerializedSize;
 use crate::SpComponent;
 use crate::SpError;
-use crate::SpPort;
 use crate::SpResponse;
 use crate::SpStateV2;
 use crate::SpUpdatePrepare;
@@ -88,40 +87,52 @@ pub struct BoundsChecked(pub u32);
 
 /// Helper type to identify the sender of a message
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub struct Sender {
+pub struct Sender<V> {
     /// Address of the sender
     pub addr: SocketAddrV6,
-    /// SP port on which the packet was received
-    pub port: SpPort,
-    /// VLAN tag associated with the received packet
+
+    /// VLAN id associated with the received packet
     ///
-    /// This is often one-to-one equivalent to `port`; however, on Sidecar,
-    /// multiple VLANs are mapped to `SpPort::One`.
-    pub vid: u16,
+    /// The [`SpHandler`] gets to provide a type here, because each build has
+    /// its own `VLanId` type (typically generated from the manifest at build
+    /// time).
+    ///
+    /// On Gimlet, there's a one-to-one mapping from VLAN id to SP port; on
+    /// Sidecar, there's a many-to-one mapping, because multiple VLANs arrive on
+    /// `SpPort::One`.
+    pub vid: V,
 }
 
 pub trait SpHandler {
     type BulkIgnitionStateIter: Iterator<Item = IgnitionState>;
     type BulkIgnitionLinkEventsIter: Iterator<Item = LinkEvents>;
+    type VLanId: Copy + Clone;
 
     /// Checks whether we will answer messages from the given sender
     ///
+    /// Returns the same message if we'll allow it, or an error otherwise
+    ///
     /// This may vary depending on message type and whether the sender's VID is
     /// trusted.
-    fn is_request_trusted(
+    fn ensure_request_trusted(
         &mut self,
-        kind: &MgsRequest,
-        sender: Sender,
-    ) -> Result<(), SpError>;
+        kind: MgsRequest,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<MgsRequest, SpError>;
 
-    fn is_response_trusted(
+    /// Checks whether the given response should be sent
+    ///
+    /// Returns the response if it's allowed, or `None` otherwise
+    fn ensure_response_trusted(
         &mut self,
-        kind: &MgsResponse,
-        sender: Sender,
-    ) -> bool;
+        kind: MgsResponse,
+        sender: Sender<Self::VLanId>,
+    ) -> Option<MgsResponse>;
 
-    fn discover(&mut self, sender: Sender)
-        -> Result<DiscoverResponse, SpError>;
+    fn discover(
+        &mut self,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<DiscoverResponse, SpError>;
 
     fn num_ignition_ports(&mut self) -> Result<u32, SpError>;
     fn ignition_state(&mut self, target: u8) -> Result<IgnitionState, SpError>;
@@ -187,13 +198,13 @@ pub trait SpHandler {
 
     fn set_power_state(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         power_state: PowerState,
     ) -> Result<(), SpError>;
 
     fn serial_console_attach(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         component: SpComponent,
     ) -> Result<(), SpError>;
 
@@ -202,19 +213,25 @@ pub trait SpHandler {
     /// ingested (either by writing to the console or by buffering to write it).
     fn serial_console_write(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         offset: u64,
         data: &[u8],
     ) -> Result<u64, SpError>;
 
-    fn serial_console_detach(&mut self, sender: Sender) -> Result<(), SpError>;
+    fn serial_console_detach(
+        &mut self,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<(), SpError>;
 
     fn serial_console_keepalive(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
     ) -> Result<(), SpError>;
 
-    fn serial_console_break(&mut self, sender: Sender) -> Result<(), SpError>;
+    fn serial_console_break(
+        &mut self,
+        sender: Sender<Self::VLanId>,
+    ) -> Result<(), SpError>;
 
     /// Number of devices returned in the inventory of this SP.
     fn num_devices(&mut self) -> u32;
@@ -280,7 +297,7 @@ pub trait SpHandler {
 
     fn component_action(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         component: SpComponent,
         action: ComponentAction,
     ) -> Result<ComponentActionResponse, SpError>;
@@ -296,7 +313,7 @@ pub trait SpHandler {
 
     fn mgs_response_host_phase2_data(
         &mut self,
-        sender: Sender,
+        sender: Sender<Self::VLanId>,
         message_id: u32,
         hash: [u8; 32],
         offset: u64,
@@ -383,7 +400,7 @@ pub trait SpHandler {
 /// message does not warrant a response, `out` remains unchanged and `None` is
 /// returned.
 pub fn handle_message<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     data: &[u8],
     handler: &mut H,
     out: &mut [u8; crate::MAX_SERIALIZED_SIZE],
@@ -583,7 +600,7 @@ fn read_request_header(data: &[u8]) -> ReadHeaderResult<'_> {
 /// and our caller is responsible for handling that generation. Otherwise,
 /// returns `(_, None)`.
 fn handle_message_impl<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     header: Header,
     request_kind_data: &[u8],
     handler: &mut H,
@@ -641,7 +658,7 @@ fn handle_message_impl<H: SpHandler>(
 }
 
 fn handle_mgs_response<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     message_id: u32,
     handler: &mut H,
     kind: MgsResponse,
@@ -650,10 +667,10 @@ fn handle_mgs_response<H: SpHandler>(
     // Check whether this message is trusted, bailing out early if that's not
     // the case.  The logic of message trust is implemented by the SpHandler,
     // and will typically check message type and sender VLAN.
-    if !handler.is_response_trusted(&kind, sender) {
+    let Some(kind) = handler.ensure_response_trusted(kind, sender) else {
         // The handler function should log an error itself
         return;
-    }
+    };
 
     match kind {
         MgsResponse::Error(err) => handler.mgs_response_error(message_id, err),
@@ -665,7 +682,7 @@ fn handle_mgs_response<H: SpHandler>(
 }
 
 fn handle_mgs_request<H: SpHandler>(
-    sender: Sender,
+    sender: Sender<H::VLanId>,
     handler: &mut H,
     kind: MgsRequest,
     leftover: &[u8],
@@ -694,9 +711,10 @@ fn handle_mgs_request<H: SpHandler>(
     // Check whether this message is trusted, bailing out early if that's not
     // the case.  The logic of message trust is implemented by the SpHandler,
     // and will typically check message type and sender VLAN.
-    if let Err(e) = handler.is_request_trusted(&kind, sender) {
-        return (SpResponse::Error(e), None);
-    }
+    let kind = match handler.ensure_request_trusted(kind, sender) {
+        Ok(k) => k,
+        Err(e) => return (SpResponse::Error(e), None),
+    };
 
     // Call out to handler to provide response.
     //
@@ -986,6 +1004,7 @@ enum OutgoingTrailingData<H: SpHandler> {
 mod tests {
     use super::*;
     use crate::SerializedSize;
+    use crate::SpPort;
     use serde::Serialize;
 
     struct FakeHandler;
@@ -995,30 +1014,31 @@ mod tests {
     impl SpHandler for FakeHandler {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
+        type VLanId = u16;
 
-        fn is_request_trusted(
+        fn ensure_request_trusted(
             &mut self,
-            _kind: &MgsRequest,
-            _sender: Sender,
-        ) -> Result<(), SpError> {
+            kind: MgsRequest,
+            _sender: Sender<Self::VLanId>,
+        ) -> Result<MgsRequest, SpError> {
             // Trust everyone!
-            Ok(())
+            Ok(kind)
         }
 
-        fn is_response_trusted(
+        fn ensure_response_trusted(
             &mut self,
-            _kind: &MgsResponse,
-            _sender: Sender,
-        ) -> bool {
+            kind: MgsResponse,
+            _sender: Sender<Self::VLanId>,
+        ) -> Option<MgsResponse> {
             // Trust everyone!
-            true
+            Some(kind)
         }
 
         fn discover(
             &mut self,
-            sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<DiscoverResponse, SpError> {
-            Ok(DiscoverResponse { sp_port: sender.port })
+            Ok(DiscoverResponse { sp_port: SpPort::One })
         }
 
         fn num_ignition_ports(&mut self) -> Result<u32, SpError> {
@@ -1116,7 +1136,7 @@ mod tests {
 
         fn set_power_state(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _power_state: PowerState,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1124,7 +1144,7 @@ mod tests {
 
         fn serial_console_attach(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _component: SpComponent,
         ) -> Result<(), SpError> {
             unimplemented!()
@@ -1132,7 +1152,7 @@ mod tests {
 
         fn serial_console_write(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _offset: u64,
             _data: &[u8],
         ) -> Result<u64, SpError> {
@@ -1141,21 +1161,21 @@ mod tests {
 
         fn serial_console_detach(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn serial_console_keepalive(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
 
         fn serial_console_break(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
         ) -> Result<(), SpError> {
             unimplemented!()
         }
@@ -1210,7 +1230,7 @@ mod tests {
 
         fn mgs_response_host_phase2_data(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _message_id: u32,
             _hash: [u8; 32],
             _offset: u64,
@@ -1237,7 +1257,7 @@ mod tests {
 
         fn component_action(
             &mut self,
-            _sender: Sender,
+            _sender: Sender<Self::VLanId>,
             _component: SpComponent,
             _action: ComponentAction,
         ) -> Result<ComponentActionResponse, SpError> {
@@ -1353,11 +1373,7 @@ mod tests {
         let m = crate::serialize(&mut req_buf, &msg).unwrap();
 
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
-        let sender = Sender {
-            addr: any_socket_addr_v6(),
-            port: SpPort::One,
-            vid: 0x301,
-        };
+        let sender = Sender { addr: any_socket_addr_v6(), vid: 0x301 };
         let n =
             handle_message(sender, &req_buf[..m], &mut FakeHandler, &mut buf)
                 .unwrap();
@@ -1435,11 +1451,7 @@ mod tests {
         let mut buf = [0; crate::MAX_SERIALIZED_SIZE];
 
         // ... but only the first 3 bytes (incomplete version field)
-        let sender = Sender {
-            addr: any_socket_addr_v6(),
-            port: SpPort::One,
-            vid: 0x301,
-        };
+        let sender = Sender { addr: any_socket_addr_v6(), vid: 0x301 };
         let n =
             handle_message(sender, &req_buf[..3], &mut FakeHandler, &mut buf)
                 .unwrap();
