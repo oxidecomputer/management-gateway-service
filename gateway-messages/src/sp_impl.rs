@@ -120,11 +120,14 @@ pub trait SpHandler {
         sender: Sender<Self::VLanId>,
     ) -> Result<MgsRequest, SpError>;
 
-    fn is_response_trusted(
+    /// Checks whether the given response should be sent
+    ///
+    /// Returns the response if it's allowed, or `None` otherwise
+    fn ensure_response_trusted(
         &mut self,
-        kind: &MgsResponse,
+        kind: MgsResponse,
         sender: Sender<Self::VLanId>,
-    ) -> bool;
+    ) -> Option<MgsResponse>;
 
     fn discover(
         &mut self,
@@ -664,10 +667,10 @@ fn handle_mgs_response<H: SpHandler>(
     // Check whether this message is trusted, bailing out early if that's not
     // the case.  The logic of message trust is implemented by the SpHandler,
     // and will typically check message type and sender VLAN.
-    if !handler.is_response_trusted(&kind, sender) {
+    let Some(kind) = handler.ensure_response_trusted(kind, sender) else {
         // The handler function should log an error itself
         return;
-    }
+    };
 
     match kind {
         MgsResponse::Error(err) => handler.mgs_response_error(message_id, err),
@@ -1022,13 +1025,13 @@ mod tests {
             Ok(kind)
         }
 
-        fn is_response_trusted(
+        fn ensure_response_trusted(
             &mut self,
-            _kind: &MgsResponse,
+            kind: MgsResponse,
             _sender: Sender<Self::VLanId>,
-        ) -> bool {
+        ) -> Option<MgsResponse> {
             // Trust everyone!
-            true
+            Some(kind)
         }
 
         fn discover(
