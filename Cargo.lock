@@ -692,6 +692,7 @@ dependencies = [
  "glob",
  "hex",
  "nix",
+ "rand",
  "serde",
  "serde_json",
  "sha2",
@@ -704,6 +705,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "uuid",
+ "zerocopy 0.6.6",
 ]
 
 [[package]]

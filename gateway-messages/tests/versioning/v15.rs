@@ -18,6 +18,7 @@
 use super::assert_serialized;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
+use gateway_messages::EcdsaSha2Nistp256Challenge;
 use gateway_messages::MonorailComponentAction;
 use gateway_messages::MonorailComponentActionResponse;
 use gateway_messages::SerializedSize;
@@ -38,12 +39,24 @@ fn monorail_component_action() {
 
     #[rustfmt::skip]
     let action = ComponentAction::Monorail(MonorailComponentAction::Unlock {
-        challenge: UnlockChallenge::EcdsaSha2Nistp256([
-            1, 2, 3, 4, 5, 6, 7, 8,
-            1, 2, 3, 4, 5, 6, 7, 8,
-            1, 2, 3, 4, 5, 6, 7, 8,
-            1, 2, 3, 4, 5, 6, 7, 8,
-        ]),
+        challenge: UnlockChallenge::EcdsaSha2Nistp256(
+           EcdsaSha2Nistp256Challenge {
+                hw_id: [
+                    8, 8, 9, 0, 3, 3, 3, 3,
+                    1, 1, 1, 1, 2, 2, 2, 2,
+                    5, 5, 5, 5, 5, 6, 7, 8,
+                    6, 6, 6, 6, 6, 7, 8, 9,
+                ],
+                sw_id: [8, 8, 9, 0],
+                time: [0, 0, 0, 0, 1, 2, 3, 4],
+                nonce: [
+                    1, 2, 3, 4, 5, 6, 7, 8,
+                    1, 2, 3, 4, 5, 6, 7, 8,
+                    1, 2, 3, 4, 5, 6, 7, 8,
+                    1, 2, 3, 4, 5, 6, 7, 8,
+                ],
+            }
+        ),
         response: UnlockResponse::EcdsaSha2Nistp256 {
             key: [
                 123,
@@ -56,6 +69,7 @@ fn monorail_component_action() {
                 7, 7, 7, 7, 7, 7, 7, 7,
                 8, 8, 8, 8, 8, 8, 8, 8,
             ],
+            signer_nonce: [1, 2, 3, 4, 5, 6, 7, 8],
             signature: [
                 8, 8, 8, 8, 8, 8, 8, 8,
                 7, 7, 7, 7, 7, 7, 7, 7,
@@ -74,7 +88,13 @@ fn monorail_component_action() {
         1, // ComponentAction::Monorail
         1, // MonorailComponentAction::Unlock
         1, // UnlockChallenge::EcdsaSha2Nistp256
-        1, 2, 3, 4, 5, 6, 7, 8,
+        8, 8, 9, 0, 3, 3, 3, 3, // hw_id
+        1, 1, 1, 1, 2, 2, 2, 2,
+        5, 5, 5, 5, 5, 6, 7, 8,
+        6, 6, 6, 6, 6, 7, 8, 9,
+        8, 8, 9, 0, // sw_id
+        0, 0, 0, 0, 1, 2, 3, 4, // time
+        1, 2, 3, 4, 5, 6, 7, 8, // nonce
         1, 2, 3, 4, 5, 6, 7, 8,
         1, 2, 3, 4, 5, 6, 7, 8,
         1, 2, 3, 4, 5, 6, 7, 8,
@@ -89,6 +109,9 @@ fn monorail_component_action() {
         6, 6, 6, 6, 6, 6, 6, 6,
         7, 7, 7, 7, 7, 7, 7, 7,
         8, 8, 8, 8, 8, 8, 8, 8,
+
+        // signer_nonce
+        1, 2, 3, 4, 5, 6, 7, 8,
 
         8, 8, 8, 8, 8, 8, 8, 8, // signature
         7, 7, 7, 7, 7, 7, 7, 7,
@@ -110,13 +133,25 @@ fn component_action_response() {
     #[rustfmt::skip]
     let r = SpResponse::ComponentAction(ComponentActionResponse::Monorail(
         MonorailComponentActionResponse::RequestChallenge(
-            UnlockChallenge::EcdsaSha2Nistp256([
-                1, 2, 3, 4, 5, 6, 7, 8,
-                2, 2, 3, 4, 5, 6, 7, 8,
-                1, 2, 3, 4, 5, 6, 7, 9,
-                3, 2, 3, 4, 5, 6, 7, 8,
-            ]),
-        ),
+            UnlockChallenge::EcdsaSha2Nistp256(
+                EcdsaSha2Nistp256Challenge {
+                    hw_id: [
+                        8, 8, 9, 0, 3, 3, 3, 3,
+                        1, 1, 1, 1, 2, 2, 2, 2,
+                        5, 5, 5, 5, 5, 6, 7, 8,
+                        6, 6, 6, 6, 6, 7, 8, 9,
+                    ],
+                    sw_id: [8, 8, 9, 0],
+                    time: [0, 0, 0, 0, 1, 2, 3, 4],
+                    nonce: [
+                        1, 2, 3, 4, 5, 6, 7, 8,
+                        1, 2, 3, 4, 5, 6, 7, 8,
+                        1, 2, 3, 4, 5, 6, 7, 8,
+                        1, 2, 3, 4, 5, 6, 7, 8,
+                    ],
+                }
+            )
+        )
     ));
     #[rustfmt::skip]
     let expected = vec![
@@ -124,10 +159,16 @@ fn component_action_response() {
         1,  // Ack
         0,  // RequestChallenge
         1,  // EcdsaSha2Nistp256
-        1, 2, 3, 4, 5, 6, 7, 8, // array
-        2, 2, 3, 4, 5, 6, 7, 8,
-        1, 2, 3, 4, 5, 6, 7, 9,
-        3, 2, 3, 4, 5, 6, 7, 8,
+        8, 8, 9, 0, 3, 3, 3, 3, // hw_id
+        1, 1, 1, 1, 2, 2, 2, 2,
+        5, 5, 5, 5, 5, 6, 7, 8,
+        6, 6, 6, 6, 6, 7, 8, 9,
+        8, 8, 9, 0, // sw_id
+        0, 0, 0, 0, 1, 2, 3, 4, // time
+        1, 2, 3, 4, 5, 6, 7, 8, // nonce
+        1, 2, 3, 4, 5, 6, 7, 8,
+        1, 2, 3, 4, 5, 6, 7, 8,
+        1, 2, 3, 4, 5, 6, 7, 8,
     ];
     assert_serialized(&mut out, &expected, &r);
 }

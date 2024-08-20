@@ -57,6 +57,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+use zerocopy::AsBytes;
 
 mod picocom_map;
 mod usart;
@@ -1468,24 +1469,11 @@ async fn monorail_unlock(
                 bail!("need --key for ECDSA challenge");
             };
 
-            debug!(log, "loading private key from {priv_path:?}");
-            let priv_key = ssh_key::PrivateKey::read_openssh_file(&priv_path)
-                .with_context(|| {
-                "failed to read private key at {priv_path}"
-            })?;
-            if priv_key.algorithm()
-                != (ssh_key::Algorithm::Ecdsa {
-                    curve: ssh_key::EcdsaCurve::NistP256,
-                })
-            {
-                bail!("invalid algorithm {:?}", priv_key.algorithm());
-            }
+            let mut data = data.as_bytes().to_vec();
+            let signer_nonce: [u8; 8] = rand::random();
+            data.extend(signer_nonce);
 
-            let signed = priv_key.sign(
-                "monorail-unlock",
-                ssh_key::HashAlg::Sha256,
-                &data,
-            )?;
+            let signed = sign_from_private_key(&priv_path, &data, log)?;
             debug!(log, "got signature {signed:?}");
 
             let key_bytes =
@@ -1502,18 +1490,21 @@ async fn monorail_unlock(
             //
             // Each one is either 32 bytes or 33 bytes with a leading zero, so
             // we'll awkwardly allow for both cases.
-            let sig_bytes = signed.signature_bytes();
+            let mut r = std::io::Cursor::new(signed.signature_bytes());
+            use std::io::Read;
             let mut signature = [0u8; 64];
-            let start = match sig_bytes[3] {
-                32 => 4,
-                33 => 5,
-                i => bail!("invalid length {i}"),
-            };
-            signature[0..32].copy_from_slice(&sig_bytes[start..][..32]);
-            let tail = sig_bytes.len() - 32;
-            signature[32..64].copy_from_slice(&sig_bytes[tail..][..32]);
+            for i in 0..2 {
+                let mut size = [0u8; 4];
+                r.read_exact(&mut size)?;
+                match u32::from_be_bytes(size) {
+                    32 => (),
+                    33 => r.read_exact(&mut [0u8])?, // eat the leading byte
+                    _ => bail!("invalid length {i}"),
+                }
+                r.read_exact(&mut signature[i * 32..][..32])?;
+            }
 
-            UnlockResponse::EcdsaSha2Nistp256 { key, signature }
+            UnlockResponse::EcdsaSha2Nistp256 { key, signer_nonce, signature }
         }
     };
     sp.component_action(
@@ -1527,6 +1518,25 @@ async fn monorail_unlock(
     .await?;
 
     Ok(())
+}
+
+fn sign_from_private_key(
+    priv_path: &Path,
+    data: &[u8],
+    log: &Logger,
+) -> Result<ssh_key::SshSig> {
+    debug!(log, "loading private key from {priv_path:?}");
+    let priv_key = ssh_key::PrivateKey::read_openssh_file(priv_path)
+        .with_context(|| "failed to read private key at {priv_path}")?;
+    if priv_key.algorithm()
+        != (ssh_key::Algorithm::Ecdsa { curve: ssh_key::EcdsaCurve::NistP256 })
+    {
+        bail!("invalid algorithm {:?}", priv_key.algorithm());
+    }
+
+    let signed =
+        priv_key.sign("monorail-unlock", ssh_key::HashAlg::Sha256, data)?;
+    Ok(signed)
 }
 
 fn handle_cxpa(
