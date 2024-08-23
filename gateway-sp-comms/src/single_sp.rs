@@ -651,6 +651,17 @@ impl SingleSp {
 
     /// Set the current power state.
     pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
+        // First, let's make sure the system isn't already *in* the desired power
+        // state --- the SP will return an error if we try to set the power
+        // state to the state it's already in.
+        if power_state == self.power_state().await? {
+            trace!(
+                &self.log,
+                "already in the desired power state, doing nothing";
+                "power_state" => ?power_state,
+            );
+            return Ok(());
+        }
         self.rpc(MgsRequest::SetPowerState(power_state))
             .await
             .and_then(expect_set_power_state_ack)
