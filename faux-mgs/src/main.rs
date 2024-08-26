@@ -50,6 +50,8 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::io;
+use std::io::BufRead;
+use std::io::Write;
 use std::mem;
 use std::net::SocketAddrV6;
 use std::path::Path;
@@ -424,9 +426,13 @@ enum MonorailCommand {
         /// How long to unlock for
         time_sec: u32,
 
-        /// Path to private key for SSH signing challenge
+        /// Path to public key for SSH signing challenge
         #[clap(long)]
         key: Option<PathBuf>,
+
+        /// Interactively select a key at the CLI
+        #[clap(short, long, conflicts_with = "key")]
+        interactive: bool,
     },
 
     /// Lock the technician port
@@ -782,6 +788,31 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn ssh_list_keys() -> Result<Vec<String>> {
+    use std::process::{Command, Stdio};
+    let child = Command::new("ssh-add")
+        .arg("-L")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not call ssh-add, is it present on the system?")?;
+
+    // Wait for the process to exit and capture the output
+    let output = child.wait_with_output().context("ssh-add failed")?;
+
+    // Check the status code
+    if !output.status.success() {
+        bail!(
+            "ssh-add returned an error.\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+    let s = std::str::from_utf8(&output.stdout)
+        .context("could not parse stdout")?;
+    Ok(s.trim().lines().map(|line| line.to_string()).collect())
 }
 
 async fn run_command(
@@ -1324,8 +1355,9 @@ async fn run_command(
                     )
                     .await?
                 }
-                MonorailCommand::Unlock { time_sec, key } => {
-                    monorail_unlock(&log, &sp, time_sec, key).await?;
+                MonorailCommand::Unlock { time_sec, key, interactive } => {
+                    monorail_unlock(&log, &sp, time_sec, key, interactive)
+                        .await?;
                 }
             }
             if json {
@@ -1441,7 +1473,8 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
-    key: Option<PathBuf>,
+    pub_key: Option<PathBuf>,
+    interactive: bool,
 ) -> Result<()> {
     let r = sp
         .component_action_with_response(
@@ -1465,15 +1498,47 @@ async fn monorail_unlock(
             UnlockResponse::Trivial { timestamp }
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            let Some(priv_path) = key else {
-                bail!("need --key for ECDSA challenge");
+            // We'll either accept a pubkey path from the command line arguments
+            // (`--key`), or call `ssh-add -L` and build a temporary key.
+            let mut _temp_key = None;
+            let pub_path = match (interactive, pub_key) {
+                (true, Some(..)) => panic!(), // prevented by Clap
+                (true, None) => {
+                    // get key from ssh-agent, write to temp file
+                    let keys = ssh_list_keys()?;
+                    for (i, k) in keys.iter().enumerate() {
+                        println!("{i}: {k}");
+                    }
+                    print!("> ");
+                    std::io::stdout().flush()?;
+
+                    let mut line = String::new();
+                    let stdin = std::io::stdin();
+                    stdin.lock().read_line(&mut line).unwrap();
+                    let i =
+                        line.parse::<usize>().context("invalid selection")?;
+                    if i >= keys.len() {
+                        bail!("invalid selection");
+                    }
+                    let tmp = tempfile::NamedTempFile::new()
+                        .context("failed to make temporary key file")?;
+                    let path = tmp.path().to_owned();
+                    _temp_key = Some(tmp); // prevent Drop
+                    std::fs::write(&path, &keys[i])
+                        .context("failed to write temporary key file")?;
+                    path
+                }
+                (false, Some(p)) => p.to_owned(),
+                (false, None) => {
+                    bail!("need --key or --interactive for ECDSA challenge")
+                }
             };
 
             let mut data = data.as_bytes().to_vec();
             let signer_nonce: [u8; 8] = rand::random();
             data.extend(signer_nonce);
 
-            let signed = sign_from_private_key(&priv_path, &data, log)?;
+            let signed = ssh_keygen_sign(&pub_path, &data)?;
             debug!(log, "got signature {signed:?}");
 
             let key_bytes =
@@ -1520,23 +1585,56 @@ async fn monorail_unlock(
     Ok(())
 }
 
-fn sign_from_private_key(
-    priv_path: &Path,
+fn ssh_keygen_sign(
+    pub_key_path: &Path,
     data: &[u8],
-    log: &Logger,
 ) -> Result<ssh_key::SshSig> {
-    debug!(log, "loading private key from {priv_path:?}");
-    let priv_key = ssh_key::PrivateKey::read_openssh_file(priv_path)
-        .with_context(|| "failed to read private key at {priv_path}")?;
-    if priv_key.algorithm()
-        != (ssh_key::Algorithm::Ecdsa { curve: ssh_key::EcdsaCurve::NistP256 })
-    {
-        bail!("invalid algorithm {:?}", priv_key.algorithm());
+    use std::process::{Command, Stdio};
+    let mut child = Command::new("ssh-keygen")
+        .arg("-Y")
+        .arg("sign")
+        .arg("-f")
+        .arg(pub_key_path)
+        .arg("-n")
+        .arg("monorail-unlock")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .context("could not call ssh-keygen, is it present on the system?")?;
+
+    // Write the data to the process's stdin
+    if let Some(stdin) = child.stdin.as_mut() {
+        stdin.write_all(data)?;
     }
 
-    let signed =
-        priv_key.sign("monorail-unlock", ssh_key::HashAlg::Sha256, data)?;
-    Ok(signed)
+    // Wait for the process to exit and capture the output
+    let output = child.wait_with_output().context("ssh-keygen failed")?;
+
+    // Check the status code
+    if !output.status.success() {
+        bail!(
+            "ssh-keygen returned an error.\nstdout: {}\nstderr: {}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+    }
+
+    // Read the signature from stdout
+    let sig = ssh_key::SshSig::from_pem(output.stdout)
+        .context("could not parse signature")?;
+
+    // Confirm that the signature is of the expected form
+    use ssh_key::{Algorithm, EcdsaCurve, HashAlg};
+    match sig.algorithm() {
+        Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 } => {}
+        h => bail!("invalid algorithm algorithm {h:?}"),
+    }
+    match sig.hash_alg() {
+        HashAlg::Sha256 => {}
+        h => bail!("invalid hash algorithm {h:?}"),
+    }
+    Ok(sig)
 }
 
 fn handle_cxpa(

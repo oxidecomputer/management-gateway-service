@@ -29,13 +29,6 @@ use gateway_messages::UnlockResponse;
 #[test]
 fn monorail_component_action() {
     let mut out = [0; ComponentAction::MAX_SIZE];
-    let action =
-        ComponentAction::Monorail(MonorailComponentAction::RequestChallenge);
-    let expected = vec![
-        1, // Monorail
-        0, // RequestChallenge
-    ];
-    assert_serialized(&mut out, &expected, &action);
 
     #[rustfmt::skip]
     let action = ComponentAction::Monorail(MonorailComponentAction::Unlock {
@@ -156,7 +149,7 @@ fn component_action_response() {
     #[rustfmt::skip]
     let expected = vec![
         46, // ComponentAction
-        1,  // Ack
+        1,  // MonorailAction
         0,  // RequestChallenge
         1,  // EcdsaSha2Nistp256
         8, 8, 9, 0, 3, 3, 3, 3, // hw_id
