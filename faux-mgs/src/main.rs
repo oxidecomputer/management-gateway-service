@@ -790,29 +790,13 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn ssh_list_keys() -> Result<Vec<String>> {
-    use std::process::{Command, Stdio};
-    let child = Command::new("ssh-add")
-        .arg("-L")
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("could not call ssh-add, is it present on the system?")?;
+fn ssh_list_keys() -> Result<Vec<ssh_key::PublicKey>> {
+    let sock = std::env::var("SSH_AUTH_SOCK")?;
+    let sock_path = PathBuf::new().join(sock);
+    let mut client = ssh_agent_client_rs::Client::connect(&sock_path)
+        .with_context(|| "failed to connect to SSH agent on {sock_path:?}")?;
 
-    // Wait for the process to exit and capture the output
-    let output = child.wait_with_output().context("ssh-add failed")?;
-
-    // Check the status code
-    if !output.status.success() {
-        bail!(
-            "ssh-add returned an error.\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-    let s = std::str::from_utf8(&output.stdout)
-        .context("could not parse stdout")?;
-    Ok(s.trim().lines().map(|line| line.to_string()).collect())
+    client.list_identities().context("failed to list identities")
 }
 
 async fn run_command(
@@ -1499,15 +1483,14 @@ async fn monorail_unlock(
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
             // We'll either accept a pubkey path from the command line arguments
-            // (`--key`), or call `ssh-add -L` and build a temporary key.
-            let mut _temp_key = None;
-            let pub_path = match (interactive, pub_key) {
+            // (`--key`), or talk to the SSH agent to get a list of keys and
+            // have the user pick one interactively
+            let pub_key = match (interactive, pub_key) {
                 (true, Some(..)) => panic!(), // prevented by Clap
                 (true, None) => {
-                    // get key from ssh-agent, write to temp file
-                    let keys = ssh_list_keys()?;
+                    let mut keys = ssh_list_keys()?;
                     for (i, k) in keys.iter().enumerate() {
-                        println!("{i}: {k}");
+                        println!("{i}: {}", k.comment());
                     }
                     print!("> ");
                     std::io::stdout().flush()?;
@@ -1520,15 +1503,12 @@ async fn monorail_unlock(
                     if i >= keys.len() {
                         bail!("invalid selection");
                     }
-                    let tmp = tempfile::NamedTempFile::new()
-                        .context("failed to make temporary key file")?;
-                    let path = tmp.path().to_owned();
-                    _temp_key = Some(tmp); // prevent Drop
-                    std::fs::write(&path, &keys[i])
-                        .context("failed to write temporary key file")?;
-                    path
+                    keys.remove(i)
                 }
-                (false, Some(p)) => p.to_owned(),
+                (false, Some(p)) => ssh_key::PublicKey::read_openssh_file(&p)
+                    .with_context(|| {
+                    format!("could not read key from {p:?}")
+                })?,
                 (false, None) => {
                     bail!("need --key or --interactive for ECDSA challenge")
                 }
@@ -1538,7 +1518,7 @@ async fn monorail_unlock(
             let signer_nonce: [u8; 8] = rand::random();
             data.extend(signer_nonce);
 
-            let signed = ssh_keygen_sign(&pub_path, &data)?;
+            let signed = ssh_keygen_sign(pub_key, &data)?;
             debug!(log, "got signature {signed:?}");
 
             let key_bytes =
@@ -1586,49 +1566,28 @@ async fn monorail_unlock(
 }
 
 fn ssh_keygen_sign(
-    pub_key_path: &Path,
+    pub_key: ssh_key::PublicKey,
     data: &[u8],
 ) -> Result<ssh_key::SshSig> {
-    use std::process::{Command, Stdio};
-    let mut child = Command::new("ssh-keygen")
-        .arg("-Y")
-        .arg("sign")
-        .arg("-f")
-        .arg(pub_key_path)
-        .arg("-n")
-        .arg("monorail-unlock")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn()
-        .context("could not call ssh-keygen, is it present on the system?")?;
+    use ssh_key::{Algorithm, EcdsaCurve, HashAlg, SshSig};
 
-    // Write the data to the process's stdin
-    if let Some(stdin) = child.stdin.as_mut() {
-        stdin.write_all(data)?;
-    }
+    let sock = std::env::var("SSH_AUTH_SOCK")
+        .context("could not read SSH_AUTH_SOCK environment variable")?;
+    let sock_path = PathBuf::new().join(sock);
+    let mut client = ssh_agent_client_rs::Client::connect(&sock_path)
+        .with_context(|| "failed to connect to SSH agent on {sock_path:?}")?;
 
-    // Wait for the process to exit and capture the output
-    let output = child.wait_with_output().context("ssh-keygen failed")?;
+    const NAMESPACE: &str = "monorail-unlock";
+    const HASH: HashAlg = HashAlg::Sha256;
+    let blob = SshSig::signed_data(NAMESPACE, HASH, data)?;
 
-    // Check the status code
-    if !output.status.success() {
-        bail!(
-            "ssh-keygen returned an error.\nstdout: {}\nstderr: {}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr),
-        );
-    }
-
-    // Read the signature from stdout
-    let sig = ssh_key::SshSig::from_pem(output.stdout)
-        .context("could not parse signature")?;
+    let sig = client.sign(&pub_key, &blob)?;
+    let sig = SshSig::new(pub_key.into(), NAMESPACE, HASH, sig)?;
 
     // Confirm that the signature is of the expected form
-    use ssh_key::{Algorithm, EcdsaCurve, HashAlg};
     match sig.algorithm() {
         Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 } => {}
-        h => bail!("invalid algorithm algorithm {h:?}"),
+        h => bail!("invalid signature algorithm {h:?}"),
     }
     match sig.hash_alg() {
         HashAlg::Sha256 => {}
