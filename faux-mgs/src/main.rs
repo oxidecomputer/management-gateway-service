@@ -1500,32 +1500,39 @@ async fn monorail_unlock(
             UnlockResponse::Trivial { timestamp }
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            let Some(pub_key) = pub_key else {
-                bail!("need --key for ECDSA challenge");
-            };
-            let pub_key = if pub_key.ends_with(".pub") {
-                ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
-                    .with_context(|| {
-                        format!("could not read key from {pub_key:?}")
-                    })?
+            let keys = ssh_list_keys()?;
+            let pub_key = if keys.len() == 1 {
+                keys[0].clone()
             } else {
-                let keys = ssh_list_keys()?;
-                let mut found = None;
-                for k in keys.iter() {
-                    if k.to_openssh()?.contains(&pub_key) {
-                        if found.is_some() {
-                            bail!("multiple keys contain '{pub_key}'");
-                        }
-                        found = Some(k);
-                    }
-                }
-                let Some(found) = found else {
+                let Some(pub_key) = pub_key else {
                     bail!(
-                        "could not match '{pub_key}'; \
-                        use `faux-mgs monorail unlock --list` to print keys"
+                        "need --key for ECDSA challenge; \
+                         multiple keys are available"
                     );
                 };
-                found.clone()
+                if pub_key.ends_with(".pub") {
+                    ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
+                        .with_context(|| {
+                        format!("could not read key from {pub_key:?}")
+                    })?
+                } else {
+                    let mut found = None;
+                    for k in keys.iter() {
+                        if k.to_openssh()?.contains(&pub_key) {
+                            if found.is_some() {
+                                bail!("multiple keys contain '{pub_key}'");
+                            }
+                            found = Some(k);
+                        }
+                    }
+                    let Some(found) = found else {
+                        bail!(
+                            "could not match '{pub_key}'; \
+                        use `faux-mgs monorail unlock --list` to print keys"
+                        );
+                    };
+                    found.clone()
+                }
             };
 
             let mut data = data.as_bytes().to_vec();
