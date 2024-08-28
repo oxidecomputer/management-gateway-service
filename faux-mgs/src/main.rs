@@ -1526,7 +1526,7 @@ async fn monorail_unlock(
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
             let keys = ssh_list_keys(socket)?;
-            let pub_key = if keys.len() == 1 {
+            let pub_key = if keys.len() == 1 && pub_key.is_none() {
                 keys[0].clone()
             } else {
                 let Some(pub_key) = pub_key else {
@@ -1553,7 +1553,8 @@ async fn monorail_unlock(
                     let Some(found) = found else {
                         bail!(
                             "could not match '{pub_key}'; \
-                        use `faux-mgs monorail unlock --list` to print keys"
+                             use `faux-mgs monorail unlock --list` \
+                             to print keys"
                         );
                     };
                     found.clone()
