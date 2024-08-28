@@ -804,7 +804,9 @@ fn ssh_list_keys() -> Result<Vec<ssh_key::PublicKey>> {
     let sock = std::env::var("SSH_AUTH_SOCK")?;
     let sock_path = PathBuf::new().join(sock);
     let mut client = ssh_agent_client_rs::Client::connect(&sock_path)
-        .with_context(|| "failed to connect to SSH agent on {sock_path:?}")?;
+        .with_context(|| {
+            format!("failed to connect to SSH agent on {sock_path:?}")
+        })?;
 
     client.list_identities().context("failed to list identities")
 }
@@ -1599,7 +1601,9 @@ fn ssh_keygen_sign(
         .context("could not read SSH_AUTH_SOCK environment variable")?;
     let sock_path = PathBuf::new().join(sock);
     let mut client = ssh_agent_client_rs::Client::connect(&sock_path)
-        .with_context(|| "failed to connect to SSH agent on {sock_path:?}")?;
+        .with_context(|| {
+            format!("failed to connect to SSH agent on {sock_path:?}")
+        })?;
 
     const NAMESPACE: &str = "monorail-unlock";
     const HASH: HashAlg = HashAlg::Sha256;
