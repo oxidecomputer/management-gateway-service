@@ -1359,6 +1359,9 @@ async fn run_command(
                         }
                     } else {
                         let time_sec = time.unwrap().as_secs_f32() as u32;
+                        if time_sec == 0 {
+                            bail!("--time must be >= 1 second");
+                        }
                         monorail_unlock(&log, &sp, time_sec, key).await?;
                     }
                 }
