@@ -804,20 +804,17 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn get_ssh_client(
-    socket: Option<PathBuf>,
+fn get_ssh_client<P: AsRef<Path> + std::fmt::Debug>(
+    socket: P,
 ) -> Result<ssh_agent_client_rs::Client> {
-    let Some(sock_path) = socket else {
-        bail!("must provide --ssh-auth-sock");
-    };
-    let client = ssh_agent_client_rs::Client::connect(&sock_path)
+    let client = ssh_agent_client_rs::Client::connect(socket.as_ref())
         .with_context(|| {
-            format!("failed to connect to SSH agent on {sock_path:?}")
+            format!("failed to connect to SSH agent on {socket:?}")
         })?;
     Ok(client)
 }
 
-fn ssh_list_keys(socket: Option<PathBuf>) -> Result<Vec<ssh_key::PublicKey>> {
+fn ssh_list_keys(socket: &PathBuf) -> Result<Vec<ssh_key::PublicKey>> {
     let mut client = get_ssh_client(socket)?;
     client.list_identities().context("failed to list identities")
 }
@@ -1368,7 +1365,10 @@ async fn run_command(
                     ssh_auth_sock,
                 } => {
                     if list {
-                        for k in ssh_list_keys(ssh_auth_sock)? {
+                        let Some(ssh_auth_sock) = ssh_auth_sock else {
+                            bail!("must provide --ssh-auth-sock");
+                        };
+                        for k in ssh_list_keys(&ssh_auth_sock)? {
                             println!("{}", k.to_openssh()?);
                         }
                     } else {
@@ -1525,7 +1525,10 @@ async fn monorail_unlock(
             UnlockResponse::Trivial { timestamp }
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            let keys = ssh_list_keys(socket)?;
+            let Some(socket) = socket else {
+                bail!("must provide --ssh-auth-sock");
+            };
+            let keys = ssh_list_keys(&socket)?;
             let pub_key = if keys.len() == 1 && pub_key.is_none() {
                 keys[0].clone()
             } else {
@@ -1565,7 +1568,7 @@ async fn monorail_unlock(
             let signer_nonce: [u8; 8] = rand::random();
             data.extend(signer_nonce);
 
-            let signed = ssh_keygen_sign(pub_key, &data)?;
+            let signed = ssh_keygen_sign(socket, pub_key, &data)?;
             debug!(log, "got signature {signed:?}");
 
             let key_bytes =
@@ -1613,18 +1616,13 @@ async fn monorail_unlock(
 }
 
 fn ssh_keygen_sign(
+    socket: PathBuf,
     pub_key: ssh_key::PublicKey,
     data: &[u8],
 ) -> Result<ssh_key::SshSig> {
     use ssh_key::{Algorithm, EcdsaCurve, HashAlg, SshSig};
 
-    let sock = std::env::var("SSH_AUTH_SOCK")
-        .context("could not read SSH_AUTH_SOCK environment variable")?;
-    let sock_path = PathBuf::new().join(sock);
-    let mut client = ssh_agent_client_rs::Client::connect(&sock_path)
-        .with_context(|| {
-            format!("failed to connect to SSH agent on {sock_path:?}")
-        })?;
+    let mut client = get_ssh_client(socket)?;
 
     const NAMESPACE: &str = "monorail-unlock";
     const HASH: HashAlg = HashAlg::Sha256;
