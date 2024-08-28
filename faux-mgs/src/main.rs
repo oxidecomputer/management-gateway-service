@@ -50,8 +50,6 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
 use std::io;
-use std::io::BufRead;
-use std::io::Write;
 use std::mem;
 use std::net::SocketAddrV6;
 use std::path::Path;
@@ -423,20 +421,32 @@ enum LedCommand {
 enum MonorailCommand {
     /// Unlock the technician port, allowing access to other SPs
     Unlock {
-        /// How long to unlock for
-        time_sec: u32,
+        #[clap(flatten)]
+        cmd: UnlockGroup,
 
-        /// Path to public key for SSH signing challenge
-        #[clap(long)]
-        key: Option<PathBuf>,
-
-        /// Interactively select a key at the CLI
-        #[clap(short, long, conflicts_with = "key")]
-        interactive: bool,
+        /// Public key for SSH signing challenge
+        ///
+        /// This is either a path to a public key (ending in `.pub`), or a
+        /// substring to match against known keys (which can be printed with
+        /// `faux-mgs monorail unlock --list`).
+        #[clap(short, long, conflicts_with = "list")]
+        key: Option<String>,
     },
 
     /// Lock the technician port
     Lock,
+}
+
+#[derive(Clone, Debug, clap::Args)]
+#[group(required = true, multiple = false)]
+pub struct UnlockGroup {
+    /// How long to unlock for
+    #[clap(short, long)]
+    time: Option<humantime::Duration>,
+
+    /// List available keys
+    #[clap(short, long)]
+    list: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -1339,9 +1349,18 @@ async fn run_command(
                     )
                     .await?
                 }
-                MonorailCommand::Unlock { time_sec, key, interactive } => {
-                    monorail_unlock(&log, &sp, time_sec, key, interactive)
-                        .await?;
+                MonorailCommand::Unlock {
+                    cmd: UnlockGroup { time, list },
+                    key,
+                } => {
+                    if list {
+                        for k in ssh_list_keys()? {
+                            println!("{}", k.to_openssh()?);
+                        }
+                    } else {
+                        let time_sec = time.unwrap().as_secs_f32() as u32;
+                        monorail_unlock(&log, &sp, time_sec, key).await?;
+                    }
                 }
             }
             if json {
@@ -1457,8 +1476,7 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
-    pub_key: Option<PathBuf>,
-    interactive: bool,
+    pub_key: Option<String>,
 ) -> Result<()> {
     let r = sp
         .component_action_with_response(
@@ -1482,36 +1500,32 @@ async fn monorail_unlock(
             UnlockResponse::Trivial { timestamp }
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            // We'll either accept a pubkey path from the command line arguments
-            // (`--key`), or talk to the SSH agent to get a list of keys and
-            // have the user pick one interactively
-            let pub_key = match (interactive, pub_key) {
-                (true, Some(..)) => panic!(), // prevented by Clap
-                (true, None) => {
-                    let mut keys = ssh_list_keys()?;
-                    for (i, k) in keys.iter().enumerate() {
-                        println!("{i}: {}", k.comment());
-                    }
-                    print!("> ");
-                    std::io::stdout().flush()?;
-
-                    let mut line = String::new();
-                    let stdin = std::io::stdin();
-                    stdin.lock().read_line(&mut line).unwrap();
-                    let i =
-                        line.parse::<usize>().context("invalid selection")?;
-                    if i >= keys.len() {
-                        bail!("invalid selection");
-                    }
-                    keys.remove(i)
-                }
-                (false, Some(p)) => ssh_key::PublicKey::read_openssh_file(&p)
+            let Some(pub_key) = pub_key else {
+                bail!("need --key for ECDSA challenge");
+            };
+            let pub_key = if pub_key.ends_with(".pub") {
+                ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
                     .with_context(|| {
-                    format!("could not read key from {p:?}")
-                })?,
-                (false, None) => {
-                    bail!("need --key or --interactive for ECDSA challenge")
+                        format!("could not read key from {pub_key:?}")
+                    })?
+            } else {
+                let keys = ssh_list_keys()?;
+                let mut found = None;
+                for k in keys.iter() {
+                    if k.to_openssh()?.contains(&pub_key) {
+                        if found.is_some() {
+                            bail!("multiple keys contain '{pub_key}'");
+                        }
+                        found = Some(k);
+                    }
                 }
+                let Some(found) = found else {
+                    bail!(
+                        "could not match '{pub_key}'; \
+                        use `faux-mgs monorail unlock --list` to print keys"
+                    );
+                };
+                found.clone()
             };
 
             let mut data = data.as_bytes().to_vec();
