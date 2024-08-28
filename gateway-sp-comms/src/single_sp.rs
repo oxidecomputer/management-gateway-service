@@ -1581,9 +1581,9 @@ impl InnerSocket for InnerSocketWrapper {
 
     // This function is only used if we were created with
     // `new_direct_socket_for_testing()`, so we're a little lazy with error
-    // handling. The real `SingleSpHandle` handles errors internally, so this
-    // `recv()` is defined as infallible in our trait that wraps both the real
-    // handle and this wrapper-for-tests.
+    // handling. The real `SingleSpHandle` handles errors internally but may
+    // return `None` at runtime shutdown; this `recv()` is more infallible
+    // (always returning `Some(..)`)
     async fn recv(&mut self) -> Option<SingleSpMessage> {
         let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
         loop {
