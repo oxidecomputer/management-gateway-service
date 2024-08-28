@@ -1529,7 +1529,7 @@ trait InnerSocket {
     fn log(&self) -> &Logger;
     fn discovery_addr(&self) -> SocketAddrV6;
     async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError>;
-    async fn recv(&mut self) -> SingleSpMessage;
+    async fn recv(&mut self) -> Option<SingleSpMessage>;
 }
 
 #[async_trait]
@@ -1546,7 +1546,7 @@ impl InnerSocket for SingleSpHandle {
         SingleSpHandle::send(self, data).await
     }
 
-    async fn recv(&mut self) -> SingleSpMessage {
+    async fn recv(&mut self) -> Option<SingleSpMessage> {
         SingleSpHandle::recv(self).await
     }
 }
@@ -1581,10 +1581,10 @@ impl InnerSocket for InnerSocketWrapper {
 
     // This function is only used if we were created with
     // `new_direct_socket_for_testing()`, so we're a little lazy with error
-    // handling. The real `SingleSpHandle` handles errors internally, so this
-    // `recv()` is defined as infallible in our trait that wraps both the real
-    // handle and this wrapper-for-tests.
-    async fn recv(&mut self) -> SingleSpMessage {
+    // handling. The real `SingleSpHandle` handles errors internally but may
+    // return `None` at runtime shutdown; this `recv()` is more infallible
+    // (always returning `Some(..)`)
+    async fn recv(&mut self) -> Option<SingleSpMessage> {
         let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
         loop {
             let (peer, buf) = match self.socket.recv_from(&mut buf).await {
@@ -1627,19 +1627,19 @@ impl InnerSocket for InnerSocketWrapper {
                     component,
                     offset,
                 }) => {
-                    return SingleSpMessage::SerialConsole {
+                    return Some(SingleSpMessage::SerialConsole {
                         component,
                         offset,
                         data: data.to_owned(),
-                    };
+                    });
                 }
                 MessageKind::SpResponse(response) => {
-                    return SingleSpMessage::SpResponse {
+                    return Some(SingleSpMessage::SpResponse {
                         peer,
                         header: message.header,
                         response: *response,
                         data: data.to_owned(),
-                    };
+                    });
                 }
             }
         }
@@ -1722,6 +1722,13 @@ impl<T: InnerSocket> Inner<T> {
                 }
 
                 message = self.socket_handle.recv() => {
+                    let Some(message) = message else {
+                        info!(
+                            self.log(),
+                            "socket handle has closed; exiting run loop"
+                        );
+                        break;
+                    };
                     self.handle_incoming_message(message).await;
                     discovery_idle.reset();
                 }
@@ -2029,7 +2036,12 @@ impl<T: InnerSocket> Inner<T> {
             resend_request = true;
 
             let message = tokio::select! {
-                result = self.socket_handle.recv() => result,
+                result = self.socket_handle.recv() => {
+                    let Some(result) = result else {
+                        return Ok(None);
+                    };
+                    result
+                },
                 _ = timeout.tick() => return Ok(None),
             };
 
@@ -2268,8 +2280,12 @@ mod tests {
             Ok(())
         }
 
-        async fn recv(&mut self) -> SingleSpMessage {
-            self.recv.recv().await.unwrap()
+        async fn recv(&mut self) -> Option<SingleSpMessage> {
+            let m = self.recv.recv().await;
+            if m.is_none() {
+                warn!(self.log, "recv() failed; hopefully we are exiting");
+            }
+            m
         }
     }
 

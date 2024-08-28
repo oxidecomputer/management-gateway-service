@@ -353,11 +353,18 @@ impl SingleSpHandle {
         })
     }
 
-    pub(crate) async fn recv(&mut self) -> SingleSpMessage {
+    pub(crate) async fn recv(&mut self) -> Option<SingleSpMessage> {
         // If `recv()` returns `None`, the `RecvHandler` task associated with
-        // the shared socket we're using has panicked; we'll propagate that
-        // panic.
-        self.recv.recv().await.expect("recv() task died")
+        // the shared socket we're using has panicked, or we're in Tokio runtime
+        // shutdown (where tasks are destroyed in arbitrary order).  Relevant
+        // executables are compiled with `panic = abort`, so this is probably
+        // the latter; we'll log the error but not panic ourselves (to avoid
+        // spurious panics at shutdown).
+        let m = self.recv.recv().await;
+        if m.is_none() {
+            warn!(self.log, "recv() task died; we are hopefully exiting");
+        }
+        m
     }
 }
 
