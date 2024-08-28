@@ -431,6 +431,10 @@ enum MonorailCommand {
         /// `faux-mgs monorail unlock --list`).
         #[clap(short, long, conflicts_with = "list")]
         key: Option<String>,
+
+        /// Path to the SSH agent socket
+        #[clap(long, env)]
+        ssh_auth_sock: Option<PathBuf>,
     },
 
     /// Lock the technician port
@@ -800,14 +804,21 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn ssh_list_keys() -> Result<Vec<ssh_key::PublicKey>> {
-    let sock = std::env::var("SSH_AUTH_SOCK")?;
-    let sock_path = PathBuf::new().join(sock);
-    let mut client = ssh_agent_client_rs::Client::connect(&sock_path)
+fn get_ssh_client(
+    socket: Option<PathBuf>,
+) -> Result<ssh_agent_client_rs::Client> {
+    let Some(sock_path) = socket else {
+        bail!("must provide --ssh-auth-sock");
+    };
+    let client = ssh_agent_client_rs::Client::connect(&sock_path)
         .with_context(|| {
             format!("failed to connect to SSH agent on {sock_path:?}")
         })?;
+    Ok(client)
+}
 
+fn ssh_list_keys(socket: Option<PathBuf>) -> Result<Vec<ssh_key::PublicKey>> {
+    let mut client = get_ssh_client(socket)?;
     client.list_identities().context("failed to list identities")
 }
 
@@ -1354,9 +1365,10 @@ async fn run_command(
                 MonorailCommand::Unlock {
                     cmd: UnlockGroup { time, list },
                     key,
+                    ssh_auth_sock,
                 } => {
                     if list {
-                        for k in ssh_list_keys()? {
+                        for k in ssh_list_keys(ssh_auth_sock)? {
                             println!("{}", k.to_openssh()?);
                         }
                     } else {
@@ -1364,7 +1376,14 @@ async fn run_command(
                         if time_sec == 0 {
                             bail!("--time must be >= 1 second");
                         }
-                        monorail_unlock(&log, &sp, time_sec, key).await?;
+                        monorail_unlock(
+                            &log,
+                            &sp,
+                            time_sec,
+                            ssh_auth_sock,
+                            key,
+                        )
+                        .await?;
                     }
                 }
             }
@@ -1481,6 +1500,7 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
+    socket: Option<PathBuf>,
     pub_key: Option<String>,
 ) -> Result<()> {
     let r = sp
@@ -1505,7 +1525,7 @@ async fn monorail_unlock(
             UnlockResponse::Trivial { timestamp }
         }
         UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            let keys = ssh_list_keys()?;
+            let keys = ssh_list_keys(socket)?;
             let pub_key = if keys.len() == 1 {
                 keys[0].clone()
             } else {
