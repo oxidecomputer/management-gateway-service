@@ -16,6 +16,7 @@ use crate::UpdateId;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
+use serde_big_array::BigArray;
 
 #[derive(
     Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
@@ -278,6 +279,7 @@ pub struct ComponentUpdatePrepare {
 #[derive(
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
+#[allow(clippy::large_enum_variant)]
 pub enum ComponentAction {
     Led(LedComponentAction),
     Monorail(MonorailComponentAction),
@@ -297,6 +299,7 @@ pub enum LedComponentAction {
 #[derive(
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
+#[allow(clippy::large_enum_variant)]
 pub enum MonorailComponentAction {
     /// Request an `UnlockChallenge`
     ///
@@ -322,6 +325,34 @@ pub enum MonorailComponentAction {
 pub enum UnlockChallenge {
     /// Unlock given an [UnlockResponse::Trivial] with the same timestamp
     Trivial { timestamp: u64 },
+
+    /// Hash and sign the given data with a key that the SP trusts
+    ///
+    /// Trusted keys are hardcoded into SP firmware.
+    EcdsaSha2Nistp256(EcdsaSha2Nistp256Challenge),
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Serialize,
+    SerializedSize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    Debug,
+    zerocopy::AsBytes,
+)]
+#[repr(C)]
+pub struct EcdsaSha2Nistp256Challenge {
+    /// Hardware ID, e.g. serial name
+    pub hw_id: [u8; 32],
+    /// Software version ID
+    pub sw_id: [u8; 4],
+    /// Time (according to the SP's internal clock)
+    pub time: [u8; 8],
+    /// Additional nonce chosen by the SP
+    pub nonce: [u8; 32],
 }
 
 /// Response to an [`UnlockChallenge`]
@@ -329,7 +360,22 @@ pub enum UnlockChallenge {
     Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
 )]
 pub enum UnlockResponse {
+    /// Unlocks [UnlockChallenge::Trivial]
     Trivial { timestamp: u64 },
+
+    /// Here's your signature!
+    EcdsaSha2Nistp256 {
+        /// SEC1 encoding of the corresponding public key
+        #[serde(with = "BigArray")]
+        key: [u8; 65],
+
+        /// Additional nonce chosen by the signer
+        signer_nonce: [u8; 8],
+
+        /// Signature data, as an (x, y) tuple (32 bytes each)
+        #[serde(with = "BigArray")]
+        signature: [u8; 64],
+    },
 }
 
 #[derive(

@@ -38,6 +38,7 @@ use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
 use serde_json::json;
+use slog::debug;
 use slog::info;
 use slog::o;
 use slog::warn;
@@ -56,6 +57,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use uuid::Uuid;
+use zerocopy::AsBytes;
 
 mod picocom_map;
 mod usart;
@@ -419,12 +421,36 @@ enum LedCommand {
 enum MonorailCommand {
     /// Unlock the technician port, allowing access to other SPs
     Unlock {
-        /// How long to unlock for
-        time_sec: u32,
+        #[clap(flatten)]
+        cmd: UnlockGroup,
+
+        /// Public key for SSH signing challenge
+        ///
+        /// This is either a path to a public key (ending in `.pub`), or a
+        /// substring to match against known keys (which can be printed with
+        /// `faux-mgs monorail unlock --list`).
+        #[clap(short, long, conflicts_with = "list")]
+        key: Option<String>,
+
+        /// Path to the SSH agent socket
+        #[clap(long, env)]
+        ssh_auth_sock: Option<PathBuf>,
     },
 
     /// Lock the technician port
     Lock,
+}
+
+#[derive(Clone, Debug, clap::Args)]
+#[group(required = true, multiple = false)]
+pub struct UnlockGroup {
+    /// How long to unlock for
+    #[clap(short, long)]
+    time: Option<humantime::Duration>,
+
+    /// List available keys
+    #[clap(short, long)]
+    list: bool,
 }
 
 #[derive(ValueEnum, Debug, Clone)]
@@ -776,6 +802,21 @@ async fn main() -> Result<()> {
     }
 
     Ok(())
+}
+
+fn get_ssh_client<P: AsRef<Path> + std::fmt::Debug>(
+    socket: P,
+) -> Result<ssh_agent_client_rs::Client> {
+    let client = ssh_agent_client_rs::Client::connect(socket.as_ref())
+        .with_context(|| {
+            format!("failed to connect to SSH agent on {socket:?}")
+        })?;
+    Ok(client)
+}
+
+fn ssh_list_keys(socket: &PathBuf) -> Result<Vec<ssh_key::PublicKey>> {
+    let mut client = get_ssh_client(socket)?;
+    client.list_identities().context("failed to list identities")
 }
 
 async fn run_command(
@@ -1318,8 +1359,32 @@ async fn run_command(
                     )
                     .await?
                 }
-                MonorailCommand::Unlock { time_sec } => {
-                    monorail_unlock(&log, &sp, time_sec).await?;
+                MonorailCommand::Unlock {
+                    cmd: UnlockGroup { time, list },
+                    key,
+                    ssh_auth_sock,
+                } => {
+                    if list {
+                        let Some(ssh_auth_sock) = ssh_auth_sock else {
+                            bail!("must provide --ssh-auth-sock");
+                        };
+                        for k in ssh_list_keys(&ssh_auth_sock)? {
+                            println!("{}", k.to_openssh()?);
+                        }
+                    } else {
+                        let time_sec = time.unwrap().as_secs_f32() as u32;
+                        if time_sec == 0 {
+                            bail!("--time must be >= 1 second");
+                        }
+                        monorail_unlock(
+                            &log,
+                            &sp,
+                            time_sec,
+                            ssh_auth_sock,
+                            key,
+                        )
+                        .await?;
+                    }
                 }
             }
             if json {
@@ -1435,6 +1500,8 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
+    socket: Option<PathBuf>,
+    pub_key: Option<String>,
 ) -> Result<()> {
     let r = sp
         .component_action_with_response(
@@ -1457,6 +1524,83 @@ async fn monorail_unlock(
         UnlockChallenge::Trivial { timestamp } => {
             UnlockResponse::Trivial { timestamp }
         }
+        UnlockChallenge::EcdsaSha2Nistp256(data) => {
+            let Some(socket) = socket else {
+                bail!("must provide --ssh-auth-sock");
+            };
+            let keys = ssh_list_keys(&socket)?;
+            let pub_key = if keys.len() == 1 && pub_key.is_none() {
+                keys[0].clone()
+            } else {
+                let Some(pub_key) = pub_key else {
+                    bail!(
+                        "need --key for ECDSA challenge; \
+                         multiple keys are available"
+                    );
+                };
+                if pub_key.ends_with(".pub") {
+                    ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
+                        .with_context(|| {
+                        format!("could not read key from {pub_key:?}")
+                    })?
+                } else {
+                    let mut found = None;
+                    for k in keys.iter() {
+                        if k.to_openssh()?.contains(&pub_key) {
+                            if found.is_some() {
+                                bail!("multiple keys contain '{pub_key}'");
+                            }
+                            found = Some(k);
+                        }
+                    }
+                    let Some(found) = found else {
+                        bail!(
+                            "could not match '{pub_key}'; \
+                             use `faux-mgs monorail unlock --list` \
+                             to print keys"
+                        );
+                    };
+                    found.clone()
+                }
+            };
+
+            let mut data = data.as_bytes().to_vec();
+            let signer_nonce: [u8; 8] = rand::random();
+            data.extend(signer_nonce);
+
+            let signed = ssh_keygen_sign(socket, pub_key, &data)?;
+            debug!(log, "got signature {signed:?}");
+
+            let key_bytes =
+                signed.public_key().ecdsa().unwrap().as_sec1_bytes();
+            assert_eq!(key_bytes.len(), 65, "invalid key length");
+            let mut key = [0u8; 65];
+            key.copy_from_slice(key_bytes);
+
+            // Signature bytes are encoded per
+            // https://datatracker.ietf.org/doc/html/rfc5656#section-3.1.2
+            //
+            // They are a pair of `mpint` values, per
+            // https://datatracker.ietf.org/doc/html/rfc4251
+            //
+            // Each one is either 32 bytes or 33 bytes with a leading zero, so
+            // we'll awkwardly allow for both cases.
+            let mut r = std::io::Cursor::new(signed.signature_bytes());
+            use std::io::Read;
+            let mut signature = [0u8; 64];
+            for i in 0..2 {
+                let mut size = [0u8; 4];
+                r.read_exact(&mut size)?;
+                match u32::from_be_bytes(size) {
+                    32 => (),
+                    33 => r.read_exact(&mut [0u8])?, // eat the leading byte
+                    _ => bail!("invalid length {i}"),
+                }
+                r.read_exact(&mut signature[i * 32..][..32])?;
+            }
+
+            UnlockResponse::EcdsaSha2Nistp256 { key, signer_nonce, signature }
+        }
     };
     sp.component_action(
         SpComponent::MONORAIL,
@@ -1469,6 +1613,34 @@ async fn monorail_unlock(
     .await?;
 
     Ok(())
+}
+
+fn ssh_keygen_sign(
+    socket: PathBuf,
+    pub_key: ssh_key::PublicKey,
+    data: &[u8],
+) -> Result<ssh_key::SshSig> {
+    use ssh_key::{Algorithm, EcdsaCurve, HashAlg, SshSig};
+
+    let mut client = get_ssh_client(socket)?;
+
+    const NAMESPACE: &str = "monorail-unlock";
+    const HASH: HashAlg = HashAlg::Sha256;
+    let blob = SshSig::signed_data(NAMESPACE, HASH, data)?;
+
+    let sig = client.sign(&pub_key, &blob)?;
+    let sig = SshSig::new(pub_key.into(), NAMESPACE, HASH, sig)?;
+
+    // Confirm that the signature is of the expected form
+    match sig.algorithm() {
+        Algorithm::Ecdsa { curve: EcdsaCurve::NistP256 } => {}
+        h => bail!("invalid signature algorithm {h:?}"),
+    }
+    match sig.hash_alg() {
+        HashAlg::Sha256 => {}
+        h => bail!("invalid hash algorithm {h:?}"),
+    }
+    Ok(sig)
 }
 
 fn handle_cxpa(

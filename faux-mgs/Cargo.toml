@@ -11,18 +11,23 @@ clap.workspace = true
 futures.workspace = true
 glob.workspace = true
 hex.workspace = true
+humantime.workspace = true
 nix.workspace = true
+rand.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 slog.workspace = true
 slog-async.workspace = true
 slog-term.workspace = true
+ssh-agent-client-rs.workspace = true
+ssh-key.workspace = true
 termios.workspace = true
 tokio.workspace = true
 tokio-stream.workspace = true
 tokio-util.workspace = true
 uuid = { workspace = true, features = ["std", "v4"] }
+zerocopy.workspace = true
 
 gateway-messages = { workspace = true, features = ["std"] }
 gateway-sp-comms.workspace = true
