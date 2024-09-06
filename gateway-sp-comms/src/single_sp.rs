@@ -49,6 +49,7 @@ use gateway_messages::SpError;
 use gateway_messages::SpPort;
 use gateway_messages::SpRequest;
 use gateway_messages::SpResponse;
+use gateway_messages::SprotProtocolError;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
@@ -812,6 +813,19 @@ impl SingleSp {
                     warn!(
                         self.log,
                         "cannot use reset watchdog; SP MGS version is too old"
+                    );
+                    use_watchdog = false;
+                }
+                Err(CommunicationError::SpError(SpError::Sprot(
+                    SprotProtocolError::Deserialization,
+                ))) => {
+                    // If the RoT firmware version is too old, then it will fail
+                    // to deserialize the message; then log an error message and
+                    // fall back to the non-watchdog reset command
+                    warn!(
+                        self.log,
+                        "cannot use reset watchdog; RoT firmware failed to \
+                         deserialize message"
                     );
                     use_watchdog = false;
                 }
