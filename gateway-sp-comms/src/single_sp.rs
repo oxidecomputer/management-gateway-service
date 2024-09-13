@@ -105,15 +105,6 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 // will require an MGS update.
 const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
 
-// We allow our client to specify the max RPC attempts and the
-// per-attempt timeout; however, it's very easy to set a timeout that is
-// too low for the "reset the SP" request, especially if the SP being
-// reset is a sidecar (which means it won't be able to respond until it
-// brings the management network back online). We will override the max
-// attempt count for only that message to ensure we give SPs ample time
-// to reset.
-const SP_RESET_TIME_ALLOWED: Duration = Duration::from_secs(30);
-
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,6 +134,52 @@ pub struct SpComponentDetails {
     pub entries: Vec<ComponentDetails>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SpRetryConfig {
+    /// Timeout between retries (applies to all request types).
+    pub per_attempt_timeout: Duration,
+
+    /// Maximum number of retries for requests that attempt to reset the SP.
+    ///
+    /// The overall timeout for a reset attempt is this count multiplied by
+    /// `per_attempt_timeout`. We have seen sidecar resets take nearly 30
+    /// seconds (https://github.com/oxidecomputer/hubris/issues/1867), so this
+    /// value should be high enough to allow for resets at least that long with
+    /// some headroom.
+    pub max_attempts_reset: usize,
+
+    /// Maximum number of retries for general requests (currently, all requests
+    /// _other_ than resets, which are governed my `max_attempts_reset`).
+    ///
+    /// The overall timeout for requests is this count multiplied by
+    /// `per_attempt_timeout`.
+    pub max_attempts_general: usize,
+}
+
+impl SpRetryConfig {
+    fn reset_watchdog_timeout_ms(&self) -> u32 {
+        // Calculate our total timeout for resets in ms. We'll use
+        // `saturating_mul`; we're calculating a u128 so should never hit that
+        // unless we're configured with `Duration::MAX` or something silly.
+        let reset_timeout_ms = self
+            .per_attempt_timeout
+            .as_millis()
+            .saturating_mul(self.max_attempts_reset as u128);
+
+        // We'll set the watchdog timer to 50% longer than the total reset
+        // timeout; this means that if things fail, the watchdog will reset the
+        // SP **after** the MGS timeout expires, so we won't have a
+        // false-positive success in this function.
+        //
+        // We use saturating_mul again and then blindly divide by two; if we
+        // saturated a u128, half that will still result in us returning
+        // u32::MAX below.
+        let inflated_reset_timeout_ms = reset_timeout_ms.saturating_mul(3) / 2;
+
+        u32::try_from(inflated_reset_timeout_ms).unwrap_or(u32::MAX)
+    }
+}
+
 #[derive(Debug)]
 pub struct SingleSp {
     interface: String,
@@ -150,6 +187,7 @@ pub struct SingleSp {
     sp_addr_rx: watch::Receiver<Option<(SocketAddrV6, SpPort)>>,
     inner_task: JoinHandle<()>,
     log: Logger,
+    reset_watchdog_timeout_ms: u32,
 }
 
 impl Drop for SingleSp {
@@ -175,17 +213,10 @@ impl SingleSp {
     ///    determined by the previous step). If this bind fails (e.g., because
     ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
     ///    a "UDP bind failed" error from all methods forever.
-    ///
-    /// Note that `max_attempts_per_rpc` may be overridden for certain kinds of
-    /// requests. Today, the only request that overrides this value is resetting
-    /// an SP, which (particularly for sidecars) can take much longer than any
-    /// other request. `SingleSp` will internally use a higher max attempt count
-    /// for these messages (but will still respect `per_attempt_timeout`).
     pub async fn new(
         shared_socket: &SharedSocket,
         config: SwitchPortConfig,
-        max_attempts_per_rpc: usize,
-        per_attempt_timeout: Duration,
+        retry_config: SpRetryConfig,
     ) -> Self {
         let handle = shared_socket
             .single_sp_handler(&config.interface, config.discovery_addr)
@@ -193,13 +224,7 @@ impl SingleSp {
 
         let log = handle.log().clone();
 
-        Self::new_impl(
-            handle,
-            config.interface,
-            max_attempts_per_rpc,
-            per_attempt_timeout,
-            log,
-        )
+        Self::new_impl(handle, config.interface, retry_config, log)
     }
 
     /// Create a new `SingleSp` instance specifically for testing (i.e.,
@@ -212,8 +237,7 @@ impl SingleSp {
     pub fn new_direct_socket_for_testing(
         socket: UdpSocket,
         discovery_addr: SocketAddrV6,
-        max_attempts_per_rpc: usize,
-        per_attempt_timeout: Duration,
+        retry_config: SpRetryConfig,
         log: Logger,
     ) -> Self {
         let wrapper =
@@ -222,8 +246,7 @@ impl SingleSp {
         Self::new_impl(
             wrapper,
             "(direct socket handle)".to_string(),
-            max_attempts_per_rpc,
-            per_attempt_timeout,
+            retry_config,
             log,
         )
     }
@@ -234,8 +257,7 @@ impl SingleSp {
     fn new_impl<T: InnerSocket + Send + 'static>(
         socket: T,
         interface: String,
-        max_attempts_per_rpc: usize,
-        per_attempt_timeout: Duration,
+        retry_config: SpRetryConfig,
         log: Logger,
     ) -> Self {
         // SPs don't support pipelining, so any command we send to
@@ -247,17 +269,25 @@ impl SingleSp {
         let (cmds_tx, cmds_rx) = mpsc::channel(8);
         let (sp_addr_tx, sp_addr_rx) = watch::channel(None);
 
-        let inner = Inner::new(
-            socket,
-            sp_addr_tx,
-            max_attempts_per_rpc,
-            per_attempt_timeout,
-            cmds_rx,
-        );
+        // `retry_config` is primarily for `Inner`, but we need to know the
+        // reset watchdog timeout so we know how to construct
+        // reset-with-watchdog requests to _send_ to inner. Stash that here,
+        // then give the rest of the config to Inner.
+        let reset_watchdog_timeout_ms =
+            retry_config.reset_watchdog_timeout_ms();
+
+        let inner = Inner::new(socket, sp_addr_tx, retry_config, cmds_rx);
 
         let inner_task = tokio::spawn(inner.run());
 
-        Self { interface, cmds_tx, sp_addr_rx, inner_task, log }
+        Self {
+            interface,
+            cmds_tx,
+            sp_addr_rx,
+            inner_task,
+            log,
+            reset_watchdog_timeout_ms,
+        }
     }
 
     fn log(&self) -> &Logger {
@@ -841,14 +871,11 @@ impl SingleSp {
         }
 
         let reset_command = if use_watchdog {
-            // We'll set the watchdog timer to slightly longer than
-            // SP_RESET_TIME_ALLOWED; this means that if things fail, the
-            // watchdog will reset the SP **after** the MGS timeout expires, so
-            // we won't have a false-positive success in this function.
-            let time_ms =
-                u32::try_from(SP_RESET_TIME_ALLOWED.as_millis()).unwrap() * 3
-                    / 2;
-            info!(self.log, "using watchdog during reset");
+            let time_ms = self.reset_watchdog_timeout_ms;
+            info!(
+                self.log, "using watchdog during reset";
+                "watchdog_timeout_ms" => time_ms,
+            );
             MgsRequest::ResetComponentTriggerWithWatchdog { component, time_ms }
         } else {
             MgsRequest::ResetComponentTrigger { component }
@@ -1663,8 +1690,7 @@ impl InnerSocket for InnerSocketWrapper {
 struct Inner<T> {
     socket_handle: T,
     sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
-    max_attempts_per_rpc: usize,
-    per_attempt_timeout: Duration,
+    retry_config: SpRetryConfig,
     serial_console_tx: Option<mpsc::Sender<(u64, Vec<u8>)>>,
     cmds_rx: mpsc::Receiver<InnerCommand>,
     message_id: u32,
@@ -1679,15 +1705,13 @@ impl<T: InnerSocket> Inner<T> {
     fn new(
         socket_handle: T,
         sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
-        max_attempts_per_rpc: usize,
-        per_attempt_timeout: Duration,
+        retry_config: SpRetryConfig,
         cmds_rx: mpsc::Receiver<InnerCommand>,
     ) -> Self {
         Self {
             socket_handle,
             sp_addr_tx,
-            max_attempts_per_rpc,
-            per_attempt_timeout,
+            retry_config,
             serial_console_tx: None,
             cmds_rx,
             message_id: 0,
@@ -1976,22 +2000,17 @@ impl<T: InnerSocket> Inner<T> {
         };
         let outgoing_buf = &outgoing_buf[..n];
 
-        // See comment on `SP_RESET_TIME_ALLOWED` above; bump up the retry count
-        // if we're trying to trigger an SP reset.
-        let calc_reset_attempts = || {
-            let time_desired = SP_RESET_TIME_ALLOWED.as_millis();
-            let per_attempt = self.per_attempt_timeout.as_millis().max(1);
-            ((time_desired + per_attempt - 1) / per_attempt) as usize
-        };
         let max_attempts = match &request.kind {
             MessageKind::MgsRequest(MgsRequest::ResetComponentTrigger {
                 component,
-            }) if *component == SpComponent::SP_ITSELF => calc_reset_attempts(),
+            }) if *component == SpComponent::SP_ITSELF => {
+                self.retry_config.max_attempts_reset
+            }
             MessageKind::MgsRequest(
                 MgsRequest::ResetTrigger
                 | MgsRequest::ResetComponentTriggerWithWatchdog { .. },
-            ) => calc_reset_attempts(),
-            _ => self.max_attempts_per_rpc,
+            ) => self.retry_config.max_attempts_reset,
+            _ => self.retry_config.max_attempts_general,
         };
 
         for attempt in 1..=max_attempts {
@@ -2010,7 +2029,7 @@ impl<T: InnerSocket> Inner<T> {
             }
         }
 
-        Err(CommunicationError::ExhaustedNumAttempts(self.max_attempts_per_rpc))
+        Err(CommunicationError::ExhaustedNumAttempts(max_attempts))
     }
 
     async fn rpc_call_one_attempt(
@@ -2037,7 +2056,8 @@ impl<T: InnerSocket> Inner<T> {
         // can loop _without_ resending (and therefore without resetting this
         // interval) - this allows us to still time out even if we're getting a
         // steady stream of out-of-band messages.
-        let mut timeout = tokio::time::interval(self.per_attempt_timeout);
+        let mut timeout =
+            tokio::time::interval(self.retry_config.per_attempt_timeout);
 
         loop {
             if resend_request {
@@ -2313,8 +2333,11 @@ mod tests {
         let mut inner = Inner::new(
             socket,
             sp_addr_tx,
-            1,
-            Duration::from_millis(200),
+            SpRetryConfig {
+                per_attempt_timeout: Duration::from_millis(200),
+                max_attempts_reset: 1,
+                max_attempts_general: 1,
+            },
             cmds_rx,
         );
 
@@ -2364,5 +2387,28 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[tokio::test]
+    async fn test_watchdog_timeout_calculation() {
+        let retry_config = SpRetryConfig {
+            per_attempt_timeout: Duration::from_millis(2000),
+            max_attempts_reset: 15,
+            max_attempts_general: 1,
+        };
+
+        // Total reset is 2 sec * 15 = 30 sec, and that should be inflated by
+        // 50% for the watchdog.
+        assert_eq!(retry_config.reset_watchdog_timeout_ms(), 45_000);
+
+        // For an absurdly large timeout value, we should get back a u32::MAX
+        // and not panic from overflowing arithmetic.
+        let retry_config = SpRetryConfig {
+            per_attempt_timeout: Duration::MAX,
+            max_attempts_reset: 3,
+            max_attempts_general: 1,
+        };
+
+        assert_eq!(retry_config.reset_watchdog_timeout_ms(), u32::MAX);
     }
 }

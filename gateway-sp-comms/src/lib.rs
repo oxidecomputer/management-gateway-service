@@ -41,6 +41,7 @@ pub use single_sp::SingleSp;
 pub use single_sp::SpComponentDetails;
 pub use single_sp::SpDevice;
 pub use single_sp::SpInventory;
+pub use single_sp::SpRetryConfig;
 
 const SP_TO_MGS_MULTICAST_ADDR: Ipv6Addr =
     Ipv6Addr::new(0xff02, 0, 0, 0, 0, 0, 0x1de, 1);
