@@ -34,6 +34,7 @@ use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SpComponentDetails;
+use gateway_sp_comms::SpRetryConfig;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
@@ -100,9 +101,15 @@ struct Args {
     #[clap(long, required = true)]
     interface: Vec<String>,
 
-    /// Maximum number of attempts to make when sending requests to the SP.
+    /// Maximum number of attempts to make when sending general (non-reset)
+    /// requests to the SP.
     #[clap(long, default_value = "5")]
     max_attempts: usize,
+
+    /// Maximum number of attempts to make when sending reset requests to the
+    /// SP.
+    #[clap(long, default_value = "30")]
+    max_attempts_reset: usize,
 
     /// Timeout (in milliseconds) for each attempt.
     #[clap(long, default_value = "2000")]
@@ -631,8 +638,13 @@ async fn main() -> Result<()> {
     let (log, log_guard) =
         build_logger(args.log_level, args.logfile.as_deref())?;
 
-    let per_attempt_timeout =
-        Duration::from_millis(args.per_attempt_timeout_millis);
+    let retry_config = SpRetryConfig {
+        per_attempt_timeout: Duration::from_millis(
+            args.per_attempt_timeout_millis,
+        ),
+        max_attempts_reset: args.max_attempts,
+        max_attempts_general: args.max_attempts_reset,
+    };
 
     let listen_port =
         args.listen_port.unwrap_or_else(|| args.command.default_listen_port());
@@ -661,8 +673,7 @@ async fn main() -> Result<()> {
                     discovery_addr: args.discovery_addr,
                     interface,
                 },
-                args.max_attempts,
-                per_attempt_timeout,
+                retry_config,
             )
             .await,
         );
