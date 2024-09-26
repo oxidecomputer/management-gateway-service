@@ -67,4 +67,6 @@ pub enum MeasurementKind {
     InputCurrent,
     InputVoltage,
     Speed,
+    /// A dimensionless measurement, without units.
+    Dimensionless,
 }
