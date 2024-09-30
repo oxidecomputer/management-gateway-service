@@ -67,4 +67,5 @@ pub enum MeasurementKind {
     InputCurrent,
     InputVoltage,
     Speed,
+    CpuTctl,
 }
