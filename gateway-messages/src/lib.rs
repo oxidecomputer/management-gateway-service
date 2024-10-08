@@ -369,6 +369,9 @@ impl SpComponent {
     /// The `sp3` host CPU.
     pub const SP3_HOST_CPU: Self = Self { id: *b"sp3-host-cpu\0\0\0\0" };
 
+    /// The `sp5` host CPU.
+    pub const SP5_HOST_CPU: Self = Self { id: *b"sp5-host-cpu\0\0\0\0" };
+
     /// The host CPU boot flash.
     pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
 
