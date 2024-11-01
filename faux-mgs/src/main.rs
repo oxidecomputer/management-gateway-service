@@ -235,8 +235,11 @@ enum Command {
         component: SpComponent,
     },
 
-    /// Ask the SP for its current system time.
+    /// Ask the SP for its current system time (interpreted as human time).
     CurrentTime,
+
+    /// Ask the SP for its current system time (fetches the raw value).
+    CurrentTimeRaw,
 
     /// Attach to the SP's USART.
     UsartAttach {
@@ -1166,7 +1169,16 @@ async fn run_command(
             if json {
                 Ok(Output::Json(json!({"time": t})))
             } else {
+                let t = humantime::format_duration(t);
                 Ok(Output::Lines(vec![format!("current time: {t}")]))
+            }
+        }
+        Command::CurrentTimeRaw => {
+            let t = sp.current_time_raw().await?;
+            if json {
+                Ok(Output::Json(json!({"time-raw": t})))
+            } else {
+                Ok(Output::Lines(vec![format!("current time (raw): {t}")]))
             }
         }
         Command::UsartDetach => {
