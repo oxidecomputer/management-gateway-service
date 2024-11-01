@@ -235,6 +235,13 @@ enum Command {
         component: SpComponent,
     },
 
+    /// Ask the SP for its current system time (interpreted as human time or as
+    /// a raw value).
+    CurrentTime {
+        #[clap(short, long, help = "do not interpret returned value")]
+        raw: bool,
+    },
+
     /// Attach to the SP's USART.
     UsartAttach {
         /// Put the local terminal in raw mode.
@@ -1156,6 +1163,24 @@ async fn run_command(
                 Ok(Output::Json(json!({ "ack": "cleared" })))
             } else {
                 Ok(Output::Lines(vec!["status cleared".to_string()]))
+            }
+        }
+        Command::CurrentTime { raw } => {
+            if raw {
+                let t = sp.current_time_raw().await?;
+                if json {
+                    Ok(Output::Json(json!({"time-raw": t})))
+                } else {
+                    Ok(Output::Lines(vec![format!("current time (raw): {t}")]))
+                }
+            } else {
+                let t = sp.current_time().await?;
+                if json {
+                    Ok(Output::Json(json!({"time": t})))
+                } else {
+                    let t = humantime::format_duration(t);
+                    Ok(Output::Lines(vec![format!("current time: {t}")]))
+                }
             }
         }
         Command::UsartDetach => {

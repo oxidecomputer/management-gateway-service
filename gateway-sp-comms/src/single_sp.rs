@@ -494,6 +494,17 @@ impl SingleSp {
             .and_then(expect_component_clear_status_ack)
     }
 
+    /// Request the current system time and interpret it into a [`Duration`].
+    pub async fn current_time(&self) -> Result<Duration> {
+        let raw = self.current_time_raw().await?;
+        Ok(Duration::from_millis(raw))
+    }
+
+    /// Request the current system time.
+    pub async fn current_time_raw(&self) -> Result<u64> {
+        self.rpc(MgsRequest::CurrentTime).await.and_then(expect_current_time)
+    }
+
     async fn get_paginated_tlv_data<T: TlvRpc>(
         &self,
         rpc: T,
