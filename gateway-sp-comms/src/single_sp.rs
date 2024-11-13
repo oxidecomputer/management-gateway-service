@@ -30,6 +30,9 @@ use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
+use gateway_messages::DumpRequest;
+use gateway_messages::DumpResponse;
+use gateway_messages::DumpSegment;
 use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
@@ -1047,6 +1050,98 @@ impl SingleSp {
         let result = rpc(&self.cmds_tx, MgsRequest::VpdLockState, None).await;
 
         result.result.and_then(expect_vpd_lock_state)
+    }
+
+    /// Returns the number of task dumps stored in the SP
+    pub async fn task_dump_count(&self) -> Result<u32> {
+        let result = rpc(
+            &self.cmds_tx,
+            MgsRequest::Dump(DumpRequest::TaskDumpCount),
+            None,
+        )
+        .await;
+
+        result.result.and_then(|(_peer, response, data)| match response {
+            SpResponse::Dump(DumpResponse::TaskDumpCount(n)) => {
+                if data.is_empty() {
+                    Ok(n)
+                } else {
+                    Err(CommunicationError::UnexpectedTrailingData(data))
+                }
+            }
+            SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: "task_dump_count",
+                got: other.into(),
+            }),
+        })
+    }
+
+    /// Reads a single task dump by index from the SP
+    pub async fn task_dump_read(
+        &self,
+        index: u32,
+    ) -> Result<Vec<(DumpSegment, Vec<u8>)>> {
+        let key: u32 = rand::random();
+        let result = rpc(
+            &self.cmds_tx,
+            MgsRequest::Dump(DumpRequest::TaskDumpReadStart { key, index }),
+            None,
+        )
+        .await;
+
+        result.result.and_then(|(_peer, response, data)| match response {
+            SpResponse::Dump(DumpResponse::TaskDumpReadStarted) => {
+                if data.is_empty() {
+                    Ok(())
+                } else {
+                    Err(CommunicationError::UnexpectedTrailingData(data))
+                }
+            }
+            SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: "task_dump_read_start",
+                got: other.into(),
+            }),
+        })?;
+
+        let mut out = vec![];
+        loop {
+            let result = rpc(
+                &self.cmds_tx,
+                MgsRequest::Dump(DumpRequest::TaskDumpContinueRead { key }),
+                None,
+            )
+            .await;
+
+            let (header, data) = result.result.and_then(
+                |(_peer, response, data)| match response {
+                    SpResponse::Dump(DumpResponse::TaskDumpRead(s)) => {
+                        if data.len() != s.compressed_length as usize {
+                            Err(CommunicationError::BadTrailingDataSize {
+                                expected: s.compressed_length as usize,
+                                got: data.len(),
+                            })
+                        } else {
+                            Ok((s, data))
+                        }
+                    }
+                    SpResponse::Error(err) => {
+                        Err(CommunicationError::SpError(err))
+                    }
+                    other => Err(CommunicationError::BadResponseType {
+                        expected: "task_dump_read",
+                        got: other.into(),
+                    }),
+                },
+            )?;
+            if data.is_empty() {
+                break Ok(out);
+            } else {
+                todo!("decompress data");
+                out.push((header, data))
+            }
+        }
     }
 }
 

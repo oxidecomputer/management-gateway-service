@@ -138,6 +138,11 @@ pub enum SpResponse {
 
     /// Response to a data-bearing component action
     ComponentAction(ComponentActionResponse),
+
+    /// Response to a dump request
+    ///
+    /// The packet may contain trailing dump data
+    Dump(DumpResponse),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -713,6 +718,27 @@ impl ComponentDetails {
 pub enum ComponentActionResponse {
     Ack,
     Monorail(MonorailComponentActionResponse),
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum DumpResponse {
+    TaskDumpCount(u32),
+    TaskDumpReadStarted,
+
+    /// This variant is followed by compressed data
+    TaskDumpRead(DumpSegment),
+}
+
+/// Morally equivalent to `humpty::DumpSegmentData`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct DumpSegment {
+    pub address: u32,
+    pub compressed_length: u16,
+    pub uncompressed_length: u16,
 }
 
 #[derive(

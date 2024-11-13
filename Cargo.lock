@@ -954,6 +954,7 @@ dependencies = [
  "nix",
  "once_cell",
  "paste",
+ "rand",
  "serde",
  "serde-big-array",
  "slog",

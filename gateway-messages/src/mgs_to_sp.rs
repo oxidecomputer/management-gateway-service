@@ -210,6 +210,8 @@ pub enum MgsRequest {
     VersionedRotBootInfo {
         version: u8,
     },
+
+    Dump(DumpRequest),
 }
 
 #[derive(
@@ -406,4 +408,24 @@ bitflags::bitflags! {
         const STARTUP_BOOT_NET = 1 << 7;
         const STARTUP_VERBOSE = 1 << 8;
     }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum DumpRequest {
+    /// Returns the number of task crash dumps
+    TaskDumpCount,
+
+    /// Begins reading a task crash dump by index
+    ///
+    /// `key` is used for disambiguation between multiple readers
+    TaskDumpReadStart {
+        index: u32,
+        key: u32,
+    },
+
+    TaskDumpContinueRead {
+        key: u32,
+    },
 }

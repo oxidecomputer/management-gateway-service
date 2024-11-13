@@ -419,6 +419,12 @@ enum Command {
         #[clap(subcommand)]
         cmd: MonorailCommand,
     },
+
+    /// List and read per-task crash dumps
+    Dump {
+        #[clap(subcommand)]
+        cmd: DumpCommand,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -453,6 +459,23 @@ enum MonorailCommand {
 
     /// Lock the technician port
     Lock,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DumpCommand {
+    /// List the number of task crash dumps available
+    Count,
+
+    /// Read a single dump
+    Read {
+        /// File to write the dump
+        #[clap(long, short)]
+        index: usize,
+
+        /// File to write the dump
+        #[clap(long, short)]
+        output: PathBuf,
+    },
 }
 
 #[derive(Clone, Debug, clap::Args)]
@@ -1529,6 +1552,20 @@ async fn run_command(
                 Ok(Output::Lines(out))
             }
         }
+        Command::Dump { cmd } => match cmd {
+            DumpCommand::Count => {
+                let n = sp.task_dump_count().await?;
+
+                if json {
+                    Ok(Output::Json(json!({"count": n})))
+                } else {
+                    Ok(Output::Lines(vec![format!("count: {n}")]))
+                }
+            }
+            DumpCommand::Read { index, output } => {
+                todo!()
+            }
+        },
     }
 }
 
