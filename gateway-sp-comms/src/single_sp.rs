@@ -32,7 +32,6 @@ use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
 use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
-use gateway_messages::DumpTask;
 use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
@@ -69,6 +68,7 @@ use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Seek;
 use std::io::SeekFrom;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::net::SocketAddrV6;
 use std::str;
@@ -181,6 +181,79 @@ impl SpRetryConfig {
         let inflated_reset_timeout_ms = reset_timeout_ms.saturating_mul(3) / 2;
 
         u32::try_from(inflated_reset_timeout_ms).unwrap_or(u32::MAX)
+    }
+}
+
+/// Single-task dump, containing raw memory
+///
+/// This type is not useful on its own, because we have no idea what the memory
+/// signifies.  It can be hydrated with a Humility archive to form a proper
+/// Hubris core file for offline debugging.
+pub struct TaskDump {
+    /// Task index
+    pub task_index: u16,
+
+    /// Timestamp at which the task crash occurred
+    pub timestamp: u64,
+
+    /// Hubris archive ID (opaque blob)
+    pub archive_id: [u8; 8],
+
+    /// `BORD` field from the caboose
+    pub bord: String,
+
+    /// `GITC` field from the caboose
+    pub gitc: String,
+
+    /// `VERS` field from the caboose, if present
+    pub vers: Option<String>,
+
+    /// Raw memory read from the SP
+    pub memory: BTreeMap<u32, Vec<u8>>,
+}
+
+impl TaskDump {
+    pub fn write_zip<W: Write + Seek>(
+        &self,
+        out: W,
+    ) -> Result<(), std::io::Error> {
+        let mut z = zip::ZipWriter::new(out);
+        let opt = zip::write::FileOptions::default();
+
+        z.start_file("TASK_INDEX", opt)?;
+        writeln!(z, "{}", self.task_index)?;
+        z.start_file("TIMESTAMP", opt)?;
+        writeln!(z, "{}", self.timestamp)?;
+        z.start_file("ARCHIVE_ID", opt)?;
+        for b in self.archive_id {
+            write!(z, "{b:02x}")?;
+        }
+        writeln!(z)?;
+        z.start_file("BORD", opt)?;
+        writeln!(z, "{}", self.bord)?;
+        z.start_file("GITC", opt)?;
+        writeln!(z, "{}", self.gitc)?;
+        if let Some(v) = &self.vers {
+            z.start_file("VERS", opt)?;
+            write!(z, "{}", v)?;
+        }
+        for (k, v) in &self.memory {
+            z.start_file(format!("{k:#08x}.bin"), opt)?;
+            z.write_all(v)?;
+        }
+
+        z.start_file("README", opt)?;
+        write!(
+            z,
+            "\
+This is a dehydrated Hubris memory dump.
+
+To use it for debugging, it should be combined with the appropriate Hubris
+archive, using `humility hydrate`.  Identify the Hubris archive using the other
+files in the archive."
+        )?;
+
+        Ok(())
     }
 }
 
@@ -1006,6 +1079,21 @@ impl SingleSp {
         result.result.and_then(expect_caboose_value)
     }
 
+    pub async fn read_component_caboose_string(
+        &self,
+        component: SpComponent,
+        slot: u16,
+        key: [u8; 4],
+    ) -> Result<String> {
+        let value = self.read_component_caboose(component, slot, key).await?;
+
+        Ok(if value.is_ascii() {
+            String::from_utf8(value).unwrap()
+        } else {
+            hex::encode(value)
+        })
+    }
+
     pub async fn read_sensor_value(&self, id: u32) -> Result<SensorReading> {
         let v = self
             .rpc(MgsRequest::ReadSensor(SensorRequest {
@@ -1079,10 +1167,32 @@ impl SingleSp {
     }
 
     /// Reads a single task dump by index from the SP
-    pub async fn task_dump_read(
-        &self,
-        index: u32,
-    ) -> Result<(DumpTask, BTreeMap<u32, Vec<u8>>)> {
+    pub async fn task_dump_read(&self, index: u32) -> Result<TaskDump> {
+        let archive_id = match self.state().await? {
+            VersionedSpState::V1(v) => v.hubris_archive_id,
+            VersionedSpState::V2(v) => v.hubris_archive_id,
+            VersionedSpState::V3(v) => v.hubris_archive_id,
+        };
+        // BORD and GITC are mandatory
+        let bord = self
+            .read_component_caboose_string(SpComponent::SP_ITSELF, 0, *b"BORD")
+            .await?;
+        let gitc = self
+            .read_component_caboose_string(SpComponent::SP_ITSELF, 0, *b"GITC")
+            .await?;
+
+        // VERS is optional, since it's not populated on debug builds
+        let vers = match self
+            .read_component_caboose_string(SpComponent::SP_ITSELF, 0, *b"VERS")
+            .await
+        {
+            Ok(v) => Some(v),
+            Err(CommunicationError::SpError(SpError::NoSuchCabooseKey(..))) => {
+                None
+            }
+            Err(e) => return Err(e),
+        };
+
         let key: u32 = rand::random();
         let result = rpc(
             &self.cmds_tx,
@@ -1112,7 +1222,7 @@ impl SingleSp {
                     }),
                 },
             )?;
-        info!(self.log, "got task {task:?}");
+        debug!(self.log, "got task {task:?}");
 
         let mut map: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
         loop {
@@ -1154,7 +1264,7 @@ impl SingleSp {
                     data.len(),
                     header.address
                 );
-                // This must agree with `humpty`
+                // The decompressor type must agree with `humpty`
                 pub type DumpLzss =
                     lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;
                 let data = DumpLzss::decompress(
@@ -1162,6 +1272,8 @@ impl SingleSp {
                     lzss::VecWriter::with_capacity(512),
                 )
                 .unwrap(); // decompression can't fail with a VecWriter
+
+                // sanity-check against the expected length
                 if header.uncompressed_length as usize != data.len() {
                     return Err(CommunicationError::BadDecompressionSize {
                         expected: header.uncompressed_length as usize,
@@ -1177,9 +1289,18 @@ impl SingleSp {
                     .unwrap_or(header.address);
                 map.entry(base_addr).or_default().extend(data);
             } else {
-                break Ok((task, map));
+                break;
             }
         }
+        Ok(TaskDump {
+            task_index: task.task,
+            timestamp: task.time,
+            archive_id,
+            bord,
+            gitc,
+            vers,
+            memory: map,
+        })
     }
 }
 

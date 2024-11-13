@@ -473,8 +473,11 @@ enum DumpCommand {
         index: u32,
 
         /// File to write the dump
+        ///
+        /// If not provided, the dump is written to `hubris.dry.X`, where `X` is
+        /// the next available integer.
         #[clap(long, short)]
-        output: PathBuf,
+        output: Option<PathBuf>,
     },
 }
 
@@ -1563,12 +1566,46 @@ async fn run_command(
                 }
             }
             DumpCommand::Read { index, output } => {
-                let (task, map) = sp.task_dump_read(index).await?;
-                println!("{task:?}");
-                for (k, v) in map {
-                    println!("{k:#08x}: {:#08x}", v.len());
+                let task = sp.task_dump_read(index).await?;
+
+                let output = output.unwrap_or_else(|| {
+                    (0..)
+                        .map(|i| PathBuf::from(format!("hubris.dry.{i}")))
+                        .find(|p| !p.exists())
+                        .unwrap()
+                });
+                task.write_zip(std::fs::File::create(&output)?)?;
+
+                if json {
+                    let regions = task
+                        .memory
+                        .iter()
+                        .map(|(k, v)| (*k, v.len()))
+                        .collect::<Vec<(u32, usize)>>();
+                    Ok(Output::Json(json!({
+                        "task_index": task.task_index,
+                        "crashed_at": task.timestamp,
+                        "gitc": task.gitc,
+                        "bord": task.bord,
+                        "regions": regions,
+                        "written_to": output,
+                    })))
+                } else {
+                    let mut lines = vec![
+                        format!(
+                            "task {}: crashed at {}",
+                            task.task_index, task.timestamp
+                        ),
+                        format!("gitc: {}", task.gitc),
+                        format!("bord: {}", task.bord),
+                        format!("{} memory regions:", task.memory.len()),
+                    ];
+                    for (k, v) in task.memory {
+                        lines.push(format!("  {k:#08x}: {:#08x}", v.len()));
+                    }
+                    lines.push(format!("written to {output:?}"));
+                    Ok(Output::Lines(lines))
                 }
-                Ok(Output::Lines(vec![]))
             }
         },
     }
