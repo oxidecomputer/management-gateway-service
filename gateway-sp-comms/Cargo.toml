@@ -14,6 +14,7 @@ hubpack.workspace = true
 hubtools.workspace = true
 nix.workspace = true
 lru-cache.workspace = true
+lzss.workspace = true
 once_cell.workspace = true
 paste.workspace = true
 rand.workspace = true

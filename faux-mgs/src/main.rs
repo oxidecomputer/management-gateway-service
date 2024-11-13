@@ -470,7 +470,7 @@ enum DumpCommand {
     Read {
         /// File to write the dump
         #[clap(long, short)]
-        index: usize,
+        index: u32,
 
         /// File to write the dump
         #[clap(long, short)]
@@ -1563,7 +1563,12 @@ async fn run_command(
                 }
             }
             DumpCommand::Read { index, output } => {
-                todo!()
+                let (task, map) = sp.task_dump_read(index).await?;
+                println!("{task:?}");
+                for (k, v) in map {
+                    println!("{k:#08x}: {:#08x}", v.len());
+                }
+                Ok(Output::Lines(vec![]))
             }
         },
     }

@@ -20,6 +20,7 @@ use crate::DiscoverResponse;
 use crate::DumpRequest;
 use crate::DumpResponse;
 use crate::DumpSegment;
+use crate::DumpTask;
 use crate::Header;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
@@ -395,12 +396,13 @@ pub trait SpHandler {
         &mut self,
         index: u32,
         key: u32,
-    ) -> Result<(), SpError>;
+    ) -> Result<DumpTask, SpError>;
+
     fn task_dump_read_continue(
         &mut self,
         key: u32,
         buf: &mut [u8],
-    ) -> Result<DumpSegment, SpError>;
+    ) -> Result<Option<DumpSegment>, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -990,11 +992,11 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::Dump(DumpRequest::TaskDumpReadStart { index, key }) => {
             handler
                 .task_dump_read_start(index, key)
-                .map(|()| SpResponse::Dump(DumpResponse::TaskDumpReadStarted))
+                .map(|r| SpResponse::Dump(DumpResponse::TaskDumpReadStarted(r)))
         }
         MgsRequest::Dump(DumpRequest::TaskDumpContinueRead { key }) => {
             let r = handler.task_dump_read_continue(key, trailing_tx_buf);
-            if let Ok(d) = r {
+            if let Ok(Some(d)) = r {
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::ShiftFromTail(
                         d.compressed_length as usize,
@@ -1395,7 +1397,7 @@ mod tests {
             &mut self,
             _index: u32,
             _key: u32,
-        ) -> Result<(), SpError> {
+        ) -> Result<DumpTask, SpError> {
             unimplemented!()
         }
 
@@ -1403,7 +1405,7 @@ mod tests {
             &mut self,
             _key: u32,
             _buf: &mut [u8],
-        ) -> Result<DumpSegment, SpError> {
+        ) -> Result<Option<DumpSegment>, SpError> {
             unimplemented!()
         }
     }

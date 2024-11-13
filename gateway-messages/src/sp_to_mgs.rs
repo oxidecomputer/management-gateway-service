@@ -725,10 +725,21 @@ pub enum ComponentActionResponse {
 )]
 pub enum DumpResponse {
     TaskDumpCount(u32),
-    TaskDumpReadStarted,
+    TaskDumpReadStarted(DumpTask),
 
-    /// This variant is followed by compressed data
-    TaskDumpRead(DumpSegment),
+    /// This variant is usually followed by compressed data
+    ///
+    /// `None` indicates the end of the task dump
+    TaskDumpRead(Option<DumpSegment>),
+}
+
+/// Morally equivalent to `humpty::DumpTask`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct DumpTask {
+    pub task: u16,
+    pub time: u64,
 }
 
 /// Morally equivalent to `humpty::DumpSegmentData`
@@ -1007,6 +1018,7 @@ pub enum SpError {
     Vpd(VpdError),
     Watchdog(WatchdogError),
     Monorail(MonorailError),
+    Dump(DumpError),
 }
 
 impl fmt::Display for SpError {
@@ -1120,6 +1132,7 @@ impl fmt::Display for SpError {
             Self::Vpd(e) => write!(f, "vpd: {}", e),
             Self::Watchdog(e) => write!(f, "watchdog: {}", e),
             Self::Monorail(e) => write!(f, "monorail: {}", e),
+            Self::Dump(e) => write!(f, "dump: {}", e),
         }
     }
 }
@@ -1582,6 +1595,39 @@ impl fmt::Display for MonorailError {
             Self::TimeIsTooLong => "unlock time is too long",
             Self::ChallengeExpired => "challenge has expired",
             Self::AlreadyTrusted => "the source port is already trusted",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Errors encountered interacting with the dump agent
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum DumpError {
+    BadArea,
+    BadIndex,
+    NoDumpTaskHeader,
+    CorruptTaskHeader,
+    BadKey,
+    ReadFailed,
+    NoLongerValid,
+    SegmentTooLong,
+}
+
+impl fmt::Display for DumpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::BadArea => "could not read area header",
+            Self::BadIndex => "could not find dump by index",
+            Self::NoDumpTaskHeader => "could not read dump task header",
+            Self::CorruptTaskHeader => "task header has invalid magic bytes",
+            Self::BadKey => "invalid key",
+            Self::ReadFailed => "read failed",
+            Self::NoLongerValid => "the dump region has been cleared",
+            Self::SegmentTooLong => "data segment cannot fit in packet data",
         };
         write!(f, "{s}")
     }

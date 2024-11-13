@@ -32,7 +32,7 @@ use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
 use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
-use gateway_messages::DumpSegment;
+use gateway_messages::DumpTask;
 use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
@@ -65,6 +65,7 @@ use slog::info;
 use slog::trace;
 use slog::warn;
 use slog::Logger;
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Seek;
 use std::io::SeekFrom;
@@ -1081,7 +1082,7 @@ impl SingleSp {
     pub async fn task_dump_read(
         &self,
         index: u32,
-    ) -> Result<Vec<(DumpSegment, Vec<u8>)>> {
+    ) -> Result<(DumpTask, BTreeMap<u32, Vec<u8>>)> {
         let key: u32 = rand::random();
         let result = rpc(
             &self.cmds_tx,
@@ -1090,22 +1091,30 @@ impl SingleSp {
         )
         .await;
 
-        result.result.and_then(|(_peer, response, data)| match response {
-            SpResponse::Dump(DumpResponse::TaskDumpReadStarted) => {
-                if data.is_empty() {
-                    Ok(())
-                } else {
-                    Err(CommunicationError::UnexpectedTrailingData(data))
-                }
-            }
-            SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
-            other => Err(CommunicationError::BadResponseType {
-                expected: "task_dump_read_start",
-                got: other.into(),
-            }),
-        })?;
+        let task =
+            result.result.and_then(
+                |(_peer, response, data)| match response {
+                    SpResponse::Dump(DumpResponse::TaskDumpReadStarted(t)) => {
+                        if data.is_empty() {
+                            Ok(t)
+                        } else {
+                            Err(CommunicationError::UnexpectedTrailingData(
+                                data,
+                            ))
+                        }
+                    }
+                    SpResponse::Error(err) => {
+                        Err(CommunicationError::SpError(err))
+                    }
+                    other => Err(CommunicationError::BadResponseType {
+                        expected: "task_dump_read_start",
+                        got: other.into(),
+                    }),
+                },
+            )?;
+        info!(self.log, "got task {task:?}");
 
-        let mut out = vec![];
+        let mut map: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
         loop {
             let result = rpc(
                 &self.cmds_tx,
@@ -1114,16 +1123,19 @@ impl SingleSp {
             )
             .await;
 
-            let (header, data) = result.result.and_then(
-                |(_peer, response, data)| match response {
-                    SpResponse::Dump(DumpResponse::TaskDumpRead(s)) => {
+            let r = result.result.and_then(
+                |(_, response, data)| match response {
+                    SpResponse::Dump(DumpResponse::TaskDumpRead(None)) => {
+                        Ok(None)
+                    }
+                    SpResponse::Dump(DumpResponse::TaskDumpRead(Some(s))) => {
                         if data.len() != s.compressed_length as usize {
                             Err(CommunicationError::BadTrailingDataSize {
                                 expected: s.compressed_length as usize,
                                 got: data.len(),
                             })
                         } else {
-                            Ok((s, data))
+                            Ok(Some((s, data)))
                         }
                     }
                     SpResponse::Error(err) => {
@@ -1135,11 +1147,37 @@ impl SingleSp {
                     }),
                 },
             )?;
-            if data.is_empty() {
-                break Ok(out);
+            if let Some((header, data)) = r {
+                debug!(
+                    self.log,
+                    "got {} bytes from {:#08x}",
+                    data.len(),
+                    header.address
+                );
+                // This must agree with `humpty`
+                pub type DumpLzss =
+                    lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;
+                let data = DumpLzss::decompress(
+                    lzss::SliceReader::new(&data),
+                    lzss::VecWriter::with_capacity(512),
+                )
+                .unwrap(); // decompression can't fail with a VecWriter
+                if header.uncompressed_length as usize != data.len() {
+                    return Err(CommunicationError::BadDecompressionSize {
+                        expected: header.uncompressed_length as usize,
+                        got: data.len(),
+                    });
+                }
+                // Extend the current range, or begin a new range
+                let mut r = map.range(0..=header.address);
+                let base_addr = r
+                    .next_back()
+                    .filter(|(k, v)| *k + v.len() as u32 == header.address)
+                    .map(|(k, _v)| *k)
+                    .unwrap_or(header.address);
+                map.entry(base_addr).or_default().extend(data);
             } else {
-                todo!("decompress data");
-                out.push((header, data))
+                break Ok((task, map));
             }
         }
     }
