@@ -1228,7 +1228,7 @@ impl SingleSp {
         loop {
             let result = rpc(
                 &self.cmds_tx,
-                MgsRequest::Dump(DumpRequest::TaskDumpContinueRead { key }),
+                MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key }),
                 None,
             )
             .await;

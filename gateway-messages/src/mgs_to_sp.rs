@@ -425,7 +425,7 @@ pub enum DumpRequest {
         key: u32,
     },
 
-    TaskDumpContinueRead {
+    TaskDumpReadContinue {
         key: u32,
     },
 }

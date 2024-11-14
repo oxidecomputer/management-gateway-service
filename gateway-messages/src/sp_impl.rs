@@ -994,7 +994,7 @@ fn handle_mgs_request<H: SpHandler>(
                 .task_dump_read_start(index, key)
                 .map(|r| SpResponse::Dump(DumpResponse::TaskDumpReadStarted(r)))
         }
-        MgsRequest::Dump(DumpRequest::TaskDumpContinueRead { key }) => {
+        MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key }) => {
             let r = handler.task_dump_read_continue(key, trailing_tx_buf);
             if let Ok(Some(d)) = r {
                 outgoing_trailing_data =
