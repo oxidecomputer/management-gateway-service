@@ -12,9 +12,7 @@
 //! can be removed as we will stop supporting v4.
 
 use super::assert_serialized;
-use gateway_messages::MgsRequest;
 use gateway_messages::RotError;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::SpiError;
@@ -25,8 +23,6 @@ use gateway_messages::UpdateError;
 // Test SprotProtocolError
 #[test]
 fn sprot_errors() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     for (error, serialized) in [
         (SprotProtocolError::InvalidCrc, &[0_u8] as &[_]),
         (SprotProtocolError::FlowError, &[1]),
@@ -50,21 +46,19 @@ fn sprot_errors() {
         let response = SpResponse::Error(SpError::Sprot(error));
         let mut expected = vec![17, 29];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
 
         // Test RotError variants
         let response = RotError::Sprot(error);
         let mut expected = vec![1];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }
 
 // Test SpiError
 #[test]
 fn spi_error() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     for (error, serialized) in [
         (SpiError::BadTransferSize, &[0_u8] as &[_]),
         (SpiError::TaskRestarted, &[1]),
@@ -80,21 +74,19 @@ fn spi_error() {
         let response = SpResponse::Error(SpError::Spi(error));
         let mut expected = vec![17, 30];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
 
         // Test RotError variants
         let response = RotError::Spi(error);
         let mut expected = vec![2];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }
 
 // Test SprocketsError
 #[test]
 fn sprockets_error() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     for (error, serialized) in [
         (SprocketsError::BadEncoding, &[0_u8] as &[_]),
         (SprocketsError::UnsupportedVersion, &[1]),
@@ -108,21 +100,19 @@ fn sprockets_error() {
         let response = SpResponse::Error(SpError::Sprockets(error));
         let mut expected = vec![17, 31];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
 
         // Test RotError variants
         let response = RotError::Sprockets(error);
         let mut expected = vec![3];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }
 
 // Test UpdateError
 #[test]
 fn update_error() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     for (error, serialized) in [
         (UpdateError::BadLength, &[0_u8] as &[_]),
         (UpdateError::UpdateInProgress, &[1]),
@@ -159,12 +149,12 @@ fn update_error() {
         let response = SpResponse::Error(SpError::Update(error));
         let mut expected = vec![17, 32];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
 
         // Test RotError variants
         let response = RotError::Update(error);
         let mut expected = vec![4];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }

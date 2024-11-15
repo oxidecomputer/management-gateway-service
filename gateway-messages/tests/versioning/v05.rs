@@ -13,13 +13,10 @@
 
 use super::assert_serialized;
 use gateway_messages::MgsRequest;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpComponent;
 
 #[test]
 fn mgs_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     let request = MgsRequest::ReadComponentCaboose {
         component: SpComponent::SP_ITSELF,
         slot: 1,
@@ -31,5 +28,5 @@ fn mgs_request() {
         1, 0, // slot
         1, 2, 3, 4,
     ];
-    assert_serialized(&mut out, expected, &request);
+    assert_serialized(expected, &request);
 }

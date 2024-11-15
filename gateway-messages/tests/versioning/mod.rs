@@ -4,6 +4,7 @@
 
 // Copyright 2023 Oxide Computer Company
 
+use hubpack::SerializedSize;
 use serde::Serialize;
 
 mod v02;
@@ -22,12 +23,12 @@ mod v14;
 mod v15;
 mod v16;
 
-pub fn assert_serialized(
-    out: &mut [u8],
+pub fn assert_serialized<T: Serialize + SerializedSize + std::fmt::Debug>(
     expected: &[u8],
-    item: &(impl Serialize + std::fmt::Debug),
+    item: &T,
 ) {
-    let n = gateway_messages::serialize(out, item).unwrap();
+    let mut out = vec![0u8; T::MAX_SIZE];
+    let n = gateway_messages::serialize(&mut out, item).unwrap();
     assert_eq!(
         n,
         expected.len(),

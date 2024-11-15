@@ -12,9 +12,7 @@
 //! can be removed as we will stop supporting v9.
 
 use super::assert_serialized;
-use gateway_messages::MgsRequest;
 use gateway_messages::RotError;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::SprotProtocolError;
@@ -22,8 +20,6 @@ use gateway_messages::SprotProtocolError;
 // Test SprotProtocolError
 #[test]
 fn sprot_protocol_errors() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     for (error, serialized) in [
         (SprotProtocolError::InvalidCrc, &[0_u8] as &[_]),
         (SprotProtocolError::FlowError, &[1]),
@@ -48,12 +44,12 @@ fn sprot_protocol_errors() {
         let response = SpResponse::Error(SpError::Sprot(error));
         let mut expected = vec![17, 29];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
 
         // Test RotError variants
         let response = RotError::Sprot(error);
         let mut expected = vec![1];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }

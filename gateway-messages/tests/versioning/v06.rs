@@ -15,7 +15,6 @@ use super::assert_serialized;
 use gateway_messages::RotError;
 use gateway_messages::RotSlotId;
 use gateway_messages::RotStateV2;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::SpStateV2;
@@ -23,8 +22,6 @@ use gateway_messages::UpdateError;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     let rot = RotStateV2 {
         active: RotSlotId::A,
         persistent_boot_preference: RotSlotId::A,
@@ -79,21 +76,19 @@ fn sp_response() {
         0,0,0,0,0,0,0,0,0,0,0,0, // slot_b_sha3_256_digest
     ];
 
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn update_error() {
     // This variant was added in v6
-    let mut out = [0; SpResponse::MAX_SIZE];
     let response =
         SpResponse::Error(SpError::Update(UpdateError::MissingHandoffData));
     let expected = vec![17, 32, 26];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 
     // Test RotError variants
-    let mut out = [0; RotError::MAX_SIZE];
     let response = RotError::Update(UpdateError::MissingHandoffData);
     let expected = vec![4, 26];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }

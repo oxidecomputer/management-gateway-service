@@ -14,7 +14,6 @@
 use super::assert_serialized;
 use gateway_messages::MgsRequest;
 use gateway_messages::RotWatchdogError;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
@@ -22,20 +21,17 @@ use gateway_messages::WatchdogError;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     let response = SpResponse::DisableComponentWatchdogAck;
     let expected = [42];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 
     let response = SpResponse::ComponentWatchdogSupportedAck;
     let expected = [43];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn host_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
     let request = MgsRequest::ResetComponentTriggerWithWatchdog {
         component: SpComponent::SP_ITSELF,
         time_ms: 0x12345,
@@ -45,7 +41,7 @@ fn host_request() {
         b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // component
         0x45, 0x23, 0x01, 0x00, // time_ms
     ];
-    assert_serialized(&mut out, &expected, &request);
+    assert_serialized(&expected, &request);
 
     let request = MgsRequest::DisableComponentWatchdog {
         component: SpComponent::SP_ITSELF,
@@ -54,7 +50,7 @@ fn host_request() {
         43, // tag
         b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
-    assert_serialized(&mut out, &expected, &request);
+    assert_serialized(&expected, &request);
 
     let request = MgsRequest::ComponentWatchdogSupported {
         component: SpComponent::SP_ITSELF,
@@ -63,13 +59,11 @@ fn host_request() {
         44, // tag
         b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
     ];
-    assert_serialized(&mut out, &expected, &request);
+    assert_serialized(&expected, &request);
 }
 
 #[test]
 fn watchdog_error() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     for err in [
         WatchdogError::NoCompletedUpdate,
         WatchdogError::Rot(RotWatchdogError::DongleDetected),
@@ -86,6 +80,6 @@ fn watchdog_error() {
             }
         };
         let response = SpResponse::Error(SpError::Watchdog(err));
-        assert_serialized(&mut out, serialized, &response);
+        assert_serialized(serialized, &response);
     }
 }

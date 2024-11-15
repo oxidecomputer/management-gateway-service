@@ -21,15 +21,12 @@ use gateway_messages::ComponentActionResponse;
 use gateway_messages::EcdsaSha2Nistp256Challenge;
 use gateway_messages::MonorailComponentAction;
 use gateway_messages::MonorailComponentActionResponse;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
 use gateway_messages::UnlockChallenge;
 use gateway_messages::UnlockResponse;
 
 #[test]
 fn monorail_component_action() {
-    let mut out = [0; ComponentAction::MAX_SIZE];
-
     #[rustfmt::skip]
     let action = ComponentAction::Monorail(MonorailComponentAction::Unlock {
         challenge: UnlockChallenge::EcdsaSha2Nistp256(
@@ -117,12 +114,10 @@ fn monorail_component_action() {
 
         0x34, 0x12, 0, 0, // time_s
     ];
-    assert_serialized(&mut out, &expected, &action);
+    assert_serialized(&expected, &action);
 }
 #[test]
 fn component_action_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     #[rustfmt::skip]
     let r = SpResponse::ComponentAction(ComponentActionResponse::Monorail(
         MonorailComponentActionResponse::RequestChallenge(
@@ -163,5 +158,5 @@ fn component_action_response() {
         1, 2, 3, 4, 5, 6, 7, 8,
         1, 2, 3, 4, 5, 6, 7, 8,
     ];
-    assert_serialized(&mut out, &expected, &r);
+    assert_serialized(&expected, &r);
 }

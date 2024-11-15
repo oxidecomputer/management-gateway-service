@@ -16,7 +16,6 @@
 use gateway_messages::ComponentAction;
 use gateway_messages::LedComponentAction;
 use gateway_messages::MgsRequest;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpComponent;
 use gateway_messages::SpResponse;
 
@@ -25,34 +24,31 @@ use super::assert_serialized;
 // This test covers the ComponentAction message added in v3.
 #[test]
 fn mgs_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
-
     let request = MgsRequest::ComponentAction {
         component: SpComponent::SYSTEM_LED,
         action: ComponentAction::Led(LedComponentAction::TurnOn),
     };
     let expected = b"\x24system-led\0\0\0\0\0\0\0\0";
-    assert_serialized(&mut out, expected, &request);
+    assert_serialized(expected, &request);
 
     let request = MgsRequest::ComponentAction {
         component: SpComponent::SYSTEM_LED,
         action: ComponentAction::Led(LedComponentAction::TurnOff),
     };
     let expected = b"\x24system-led\0\0\0\0\0\0\0\x01";
-    assert_serialized(&mut out, expected, &request);
+    assert_serialized(expected, &request);
 
     let request = MgsRequest::ComponentAction {
         component: SpComponent::SYSTEM_LED,
         action: ComponentAction::Led(LedComponentAction::Blink),
     };
     let expected = b"\x24system-led\0\0\0\0\0\0\0\x02";
-    assert_serialized(&mut out, expected, &request);
+    assert_serialized(expected, &request);
 }
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
     let response = SpResponse::ComponentActionAck;
     let expected = &[36];
-    assert_serialized(&mut out, expected, &response);
+    assert_serialized(expected, &response);
 }

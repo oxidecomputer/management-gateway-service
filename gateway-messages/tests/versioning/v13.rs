@@ -22,14 +22,12 @@ use gateway_messages::MgsRequest;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotSlotId;
 use gateway_messages::RotStateV3;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
 use gateway_messages::SpStateV3;
 use gateway_messages::UpdateError;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
     let response = SpResponse::SpStateV3(SpStateV3 {
         hubris_archive_id: [1, 2, 3, 4, 5, 6, 7, 8],
         serial_number: [
@@ -63,12 +61,11 @@ fn sp_response() {
         0, // power_state
     ];
 
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn host_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
     let request = MgsRequest::VersionedRotBootInfo { version: 3 };
 
     #[rustfmt::skip]
@@ -77,13 +74,11 @@ fn host_request() {
         3, // version
     ];
 
-    assert_serialized(&mut out, &expected, &request);
+    assert_serialized(&expected, &request);
 }
 
 #[test]
 fn rot_boot_info_v3() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     let response = SpResponse::RotBootInfo(RotBootInfo::V3(RotStateV3 {
         active: RotSlotId::A,
         persistent_boot_preference: RotSlotId::A,
@@ -124,13 +119,11 @@ fn rot_boot_info_v3() {
         1, 1 // stage0next_status: Err(ImageError::FirstPageErased)
     ];
 
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn error_enums() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     let response: [ImageError; 13] = [
         ImageError::Unchecked,
         ImageError::FirstPageErased,
@@ -147,7 +140,7 @@ fn error_enums() {
         ImageError::Signature,
     ];
     let expected = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 
     let response: [UpdateError; 3] = [
         UpdateError::BlockOutOfOrder,
@@ -155,5 +148,5 @@ fn error_enums() {
         UpdateError::InvalidSlotIdForOperation,
     ];
     let expected = vec![27, 28, 29];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }

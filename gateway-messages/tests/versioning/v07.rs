@@ -13,7 +13,6 @@
 
 use super::assert_serialized;
 use gateway_messages::RotError;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
 use gateway_messages::SpiError;
 use gateway_messages::SprocketsError;
@@ -24,8 +23,6 @@ use gateway_messages::UpdateStatus;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     // The full set of nested error serialization was tested back in v4; we'll
     // just repeat a few of those here.
     for (rot_error, serialized) in [
@@ -56,6 +53,6 @@ fn sp_response() {
         ];
         expected.extend_from_slice(&update_id);
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }
