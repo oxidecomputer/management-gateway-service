@@ -17,13 +17,9 @@
 
 use super::assert_serialized;
 use gateway_messages::measurement::MeasurementKind;
-use gateway_messages::SerializedSize;
-use gateway_messages::SpResponse;
 
 #[test]
 fn measurement_kinds() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     for (kind, serialized) in [
         (MeasurementKind::Temperature, &[0]),
         (MeasurementKind::Power, &[1]),
@@ -34,6 +30,6 @@ fn measurement_kinds() {
         (MeasurementKind::Speed, &[6]),
         (MeasurementKind::CpuTctl, &[7]),
     ] {
-        assert_serialized(&mut out, serialized, &kind);
+        assert_serialized(serialized, &kind);
     }
 }

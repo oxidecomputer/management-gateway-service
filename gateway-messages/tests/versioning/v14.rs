@@ -21,7 +21,6 @@ use gateway_messages::ComponentActionResponse;
 use gateway_messages::MonorailComponentAction;
 use gateway_messages::MonorailComponentActionResponse;
 use gateway_messages::MonorailError;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::UnlockChallenge;
@@ -29,14 +28,13 @@ use gateway_messages::UnlockResponse;
 
 #[test]
 fn monorail_component_action() {
-    let mut out = [0; ComponentAction::MAX_SIZE];
     let action =
         ComponentAction::Monorail(MonorailComponentAction::RequestChallenge);
     let expected = vec![
         1, // Monorail
         0, // RequestChallenge
     ];
-    assert_serialized(&mut out, &expected, &action);
+    assert_serialized(&expected, &action);
 
     let action = ComponentAction::Monorail(MonorailComponentAction::Unlock {
         challenge: UnlockChallenge::Trivial { timestamp: 0x1234 },
@@ -52,25 +50,23 @@ fn monorail_component_action() {
         0x67, 0x45, 0, 0, 0, 0, 0, 0, // timestamp
         0x34, 0x12, 0, 0, // time_s
     ];
-    assert_serialized(&mut out, &expected, &action);
+    assert_serialized(&expected, &action);
 
     let action = ComponentAction::Monorail(MonorailComponentAction::Lock);
     let expected = vec![
         1, // Monorail
         2, // Lock
     ];
-    assert_serialized(&mut out, &expected, &action);
+    assert_serialized(&expected, &action);
 }
 #[test]
 fn component_action_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     let r = SpResponse::ComponentAction(ComponentActionResponse::Ack);
     let expected = vec![
         46, // ComponentAction
         0,  // Ack
     ];
-    assert_serialized(&mut out, &expected, &r);
+    assert_serialized(&expected, &r);
 
     let r = SpResponse::ComponentAction(ComponentActionResponse::Monorail(
         MonorailComponentActionResponse::RequestChallenge(
@@ -84,13 +80,11 @@ fn component_action_response() {
         0,  // Trivial
         0x55, 0x44, 0, 0, 0, 0, 0, 0, // timestamp
     ];
-    assert_serialized(&mut out, &expected, &r);
+    assert_serialized(&expected, &r);
 }
 
 #[test]
 fn monorail_error() {
-    let mut out = [0; ComponentAction::MAX_SIZE];
-
     for (i, e) in [
         MonorailError::UnlockAuthFailed,
         MonorailError::UnlockFailed,
@@ -111,6 +105,6 @@ fn monorail_error() {
             36,      // Monorail
             i as u8, // error code
         ];
-        assert_serialized(&mut out, &expected, &err);
+        assert_serialized(&expected, &err);
     }
 }

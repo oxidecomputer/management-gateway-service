@@ -18,12 +18,10 @@ use gateway_messages::SensorReading;
 use gateway_messages::SensorRequest;
 use gateway_messages::SensorRequestKind;
 use gateway_messages::SensorResponse;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
     for (response, serialized) in [
         (
             SensorResponse::LastReading(SensorReading {
@@ -50,17 +48,16 @@ fn sp_response() {
             38, // SpResponse::ReadSensor
         ];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 
     let response = SpResponse::CurrentTime(0x1234);
     let expected = [39, 0x34, 0x12, 0, 0, 0, 0, 0, 0];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn host_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
     for (kind, serialized) in [
         (SensorRequestKind::LastReading, &[0, 0x34, 0x12, 0, 0]),
         (SensorRequestKind::LastData, &[1, 0x34, 0x12, 0, 0]),
@@ -73,23 +70,21 @@ fn host_request() {
             38, // MgsRequest::ReadSensor
         ];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &request);
+        assert_serialized(&expected, &request);
     }
 
     let request = MgsRequest::CurrentTime;
     let expected = vec![
         39, // MgsRequest::CurrentTime
     ];
-    assert_serialized(&mut out, &expected, &request);
+    assert_serialized(&expected, &request);
 }
 
 #[test]
 fn sensor_data_missing() {
-    let mut out = [0; SensorDataMissing::MAX_SIZE];
-
-    assert_serialized(&mut out, &[0], &SensorDataMissing::DeviceOff);
-    assert_serialized(&mut out, &[1], &SensorDataMissing::DeviceError);
-    assert_serialized(&mut out, &[2], &SensorDataMissing::DeviceNotPresent);
-    assert_serialized(&mut out, &[3], &SensorDataMissing::DeviceUnavailable);
-    assert_serialized(&mut out, &[4], &SensorDataMissing::DeviceTimeout);
+    assert_serialized(&[0], &SensorDataMissing::DeviceOff);
+    assert_serialized(&[1], &SensorDataMissing::DeviceError);
+    assert_serialized(&[2], &SensorDataMissing::DeviceNotPresent);
+    assert_serialized(&[3], &SensorDataMissing::DeviceUnavailable);
+    assert_serialized(&[4], &SensorDataMissing::DeviceTimeout);
 }

@@ -13,31 +13,26 @@
 
 use super::assert_serialized;
 use gateway_messages::MgsRequest;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpError;
 use gateway_messages::SpResponse;
 use gateway_messages::VpdError;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
     let response = SpResponse::VpdLockState;
     let expected = [41];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn host_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
     let request = MgsRequest::VpdLockState;
     let expected = [41];
-    assert_serialized(&mut out, &expected, &request);
+    assert_serialized(&expected, &request);
 }
 
 #[test]
 fn vpd_protocol_errors() {
-    let mut out = [0; SpResponse::MAX_SIZE];
-
     for (error, serialized) in [
         (VpdError::InvalidDevice, &[0]),
         (VpdError::NotPresent, &[1]),
@@ -60,6 +55,6 @@ fn vpd_protocol_errors() {
         let response = SpResponse::Error(SpError::Vpd(error));
         let mut expected = vec![17, 34];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &response);
+        assert_serialized(&expected, &response);
     }
 }

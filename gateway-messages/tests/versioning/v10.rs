@@ -16,20 +16,17 @@ use gateway_messages::CfpaPage;
 use gateway_messages::MgsRequest;
 use gateway_messages::RotRequest;
 use gateway_messages::RotResponse;
-use gateway_messages::SerializedSize;
 use gateway_messages::SpResponse;
 
 #[test]
 fn sp_response() {
-    let mut out = [0; SpResponse::MAX_SIZE];
     let response = SpResponse::ReadRot(RotResponse::Ok);
     let expected = [40, 0];
-    assert_serialized(&mut out, &expected, &response);
+    assert_serialized(&expected, &response);
 }
 
 #[test]
 fn host_request() {
-    let mut out = [0; MgsRequest::MAX_SIZE];
     for (r, serialized) in [
         (RotRequest::ReadCmpa, &[0u8] as &[_]),
         (RotRequest::ReadCfpa(CfpaPage::Active), &[1, 0]),
@@ -39,15 +36,13 @@ fn host_request() {
             40, // MgsRequest::ReadRot
         ];
         expected.extend_from_slice(serialized);
-        assert_serialized(&mut out, &expected, &request);
+        assert_serialized(&expected, &request);
     }
 }
 
 #[test]
 fn cfpa_page() {
-    let mut out = [0; CfpaPage::MAX_SIZE];
-
-    assert_serialized(&mut out, &[0], &CfpaPage::Active);
-    assert_serialized(&mut out, &[1], &CfpaPage::Inactive);
-    assert_serialized(&mut out, &[2], &CfpaPage::Scratch);
+    assert_serialized(&[0], &CfpaPage::Active);
+    assert_serialized(&[1], &CfpaPage::Inactive);
+    assert_serialized(&[2], &CfpaPage::Scratch);
 }
