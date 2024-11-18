@@ -1492,12 +1492,8 @@ async fn run_command(
                     bail!("invalid component {c} for caboose")
                 }
             };
-            let value = sp.read_component_caboose(component, slot, key).await?;
-            let out = if value.is_ascii() {
-                String::from_utf8(value).unwrap()
-            } else {
-                hex::encode(value)
-            };
+            let out =
+                sp.read_component_caboose_string(component, slot, key).await?;
             if json {
                 Ok(Output::Json(json!({ "value": out })))
             } else {

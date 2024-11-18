@@ -225,10 +225,7 @@ impl TaskDump {
         z.start_file("TIMESTAMP", opt)?;
         writeln!(z, "{}", self.timestamp)?;
         z.start_file("ARCHIVE_ID", opt)?;
-        for b in self.archive_id {
-            write!(z, "{b:02x}")?;
-        }
-        writeln!(z)?;
+        writeln!(z, "{}", hex::encode(self.archive_id))?;
         z.start_file("BORD", opt)?;
         writeln!(z, "{}", self.bord)?;
         z.start_file("GITC", opt)?;
