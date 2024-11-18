@@ -468,7 +468,9 @@ enum DumpCommand {
 
     /// Read a single dump
     Read {
-        /// File to write the dump
+        /// Index of the dump to read (in the range `0..count`)
+        ///
+        /// The total dump count can be printed with `faux-mgs dump count`
         #[clap(long, short)]
         index: u32,
 
