@@ -17,8 +17,8 @@
 
 use super::assert_serialized;
 use gateway_messages::{
-    DumpError, DumpRequest, DumpResponse, DumpSegment, DumpTask, MgsRequest,
-    SpError, SpResponse,
+    DumpCompression, DumpError, DumpRequest, DumpResponse, DumpSegment,
+    DumpTask, MgsRequest, SpError, SpResponse,
 };
 
 #[test]
@@ -49,9 +49,10 @@ fn dump_response() {
         SpResponse::Dump(DumpResponse::TaskDumpReadStarted(DumpTask {
             task: 0x1576,
             time: 0xFF12345678,
+            compression: DumpCompression::Lzss,
         }));
     assert_serialized(
-        &[47, 1, 0x76, 0x15, 0x78, 0x56, 0x34, 0x12, 0xFF, 0, 0, 0],
+        &[47, 1, 0x76, 0x15, 0x78, 0x56, 0x34, 0x12, 0xFF, 0, 0, 0, 0],
         &request,
     );
 

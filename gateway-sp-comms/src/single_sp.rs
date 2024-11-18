@@ -30,6 +30,7 @@ use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
+use gateway_messages::DumpCompression;
 use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
 use gateway_messages::Header;
@@ -1261,14 +1262,19 @@ impl SingleSp {
                     data.len(),
                     header.address
                 );
-                // The decompressor type must agree with `humpty`
-                pub type DumpLzss =
-                    lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;
-                let data = DumpLzss::decompress(
-                    lzss::SliceReader::new(&data),
-                    lzss::VecWriter::with_capacity(512),
-                )
-                .unwrap(); // decompression can't fail with a VecWriter
+                // There's only one compression type right now
+                let data = match task.compression {
+                    DumpCompression::Lzss => {
+                        // The decompressor type must agree with `humpty`
+                        pub type DumpLzss =
+                            lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;
+                        DumpLzss::decompress(
+                            lzss::SliceReader::new(&data),
+                            lzss::VecWriter::with_capacity(512),
+                        )
+                        .unwrap() // decompression can't fail with a VecWriter
+                    }
+                };
 
                 // sanity-check against the expected length
                 if header.uncompressed_length as usize != data.len() {

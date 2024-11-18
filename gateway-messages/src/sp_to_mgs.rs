@@ -740,6 +740,18 @@ pub enum DumpResponse {
 pub struct DumpTask {
     pub task: u16,
     pub time: u64,
+    pub compression: DumpCompression,
+}
+
+/// Compression type used for dump data
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum DumpCompression {
+    /// LZSS parameters which are hard-coded in `humpty::DumpLzss`
+    ///
+    /// This is `lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;`
+    Lzss,
 }
 
 /// Morally equivalent to `humpty::DumpSegmentData`
