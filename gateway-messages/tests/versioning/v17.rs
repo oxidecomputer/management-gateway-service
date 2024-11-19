@@ -28,16 +28,30 @@ fn dump_request() {
 
     let request = MgsRequest::Dump(DumpRequest::TaskDumpReadStart {
         index: 0x1234,
-        key: 0x55667788,
+        key: [0x55, 0x66, 0x77, 0x88, 0x12, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 8],
     });
     assert_serialized(
-        &[46, 1, 0x34, 0x12, 0, 0, 0x88, 0x77, 0x66, 0x55],
+        &[
+            46, 1, 0x34, 0x12, 0, 0, 0x55, 0x66, 0x77, 0x88, 0x12, 0, 0, 0, 0,
+            0, 0, 0, 0, 0, 0, 8,
+        ],
         &request,
     );
 
-    let request =
-        MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key: 0x55667788 });
-    assert_serialized(&[46, 2, 0x88, 0x77, 0x66, 0x55], &request);
+    let request = MgsRequest::Dump(DumpRequest::TaskDumpReadContinue {
+        seq: 0x12345678,
+        key: [
+            0x78, 0x56, 0x34, 0x12, 0x55, 0x66, 0x77, 0x88, 0x12, 0, 0, 0, 0,
+            0, 0, 2,
+        ],
+    });
+    assert_serialized(
+        &[
+            46, 2, 0x78, 0x56, 0x34, 0x12, 0x78, 0x56, 0x34, 0x12, 0x55, 0x66,
+            0x77, 0x88, 0x12, 0, 0, 0, 0, 0, 0, 2,
+        ],
+        &request,
+    );
 }
 
 #[test]
@@ -61,9 +75,13 @@ fn dump_response() {
             address: 0x12345678,
             compressed_length: 0x1122,
             uncompressed_length: 0x5567,
+            seq: 0x9876,
         })));
     assert_serialized(
-        &[47, 2, 1, 0x78, 0x56, 0x34, 0x12, 0x22, 0x11, 0x67, 0x55],
+        &[
+            47, 2, 1, 0x78, 0x56, 0x34, 0x12, 0x22, 0x11, 0x67, 0x55, 0x76,
+            0x98, 0, 0,
+        ],
         &request,
     );
 }
@@ -79,6 +97,7 @@ fn dump_error() {
         DumpError::ReadFailed,
         DumpError::NoLongerValid,
         DumpError::SegmentTooLong,
+        DumpError::BadSequenceNumber,
     ]
     .into_iter()
     .enumerate()

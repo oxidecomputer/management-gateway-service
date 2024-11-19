@@ -759,9 +759,21 @@ pub enum DumpCompression {
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct DumpSegment {
+    /// Memory address for this chunk of data
     pub address: u32,
+
+    /// Compressed data length
+    ///
+    /// This must match the length of trailing data in the packet
     pub compressed_length: u16,
+
+    /// Original data length
+    ///
+    /// This must match the data length after decompressing
     pub uncompressed_length: u16,
+
+    /// Sequence number to detect dropped or duplicate packets
+    pub seq: u32,
 }
 
 #[derive(
@@ -1627,6 +1639,7 @@ pub enum DumpError {
     ReadFailed,
     NoLongerValid,
     SegmentTooLong,
+    BadSequenceNumber,
 }
 
 impl fmt::Display for DumpError {
@@ -1640,6 +1653,7 @@ impl fmt::Display for DumpError {
             Self::ReadFailed => "read failed",
             Self::NoLongerValid => "the dump region has been cleared",
             Self::SegmentTooLong => "data segment cannot fit in packet data",
+            Self::BadSequenceNumber => "sequence number is invalid",
         };
         write!(f, "{s}")
     }

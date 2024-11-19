@@ -395,12 +395,13 @@ pub trait SpHandler {
     fn task_dump_read_start(
         &mut self,
         index: u32,
-        key: u32,
+        key: [u8; 16],
     ) -> Result<DumpTask, SpError>;
 
     fn task_dump_read_continue(
         &mut self,
-        key: u32,
+        key: [u8; 16],
+        seq: u32,
         buf: &mut [u8],
     ) -> Result<Option<DumpSegment>, SpError>;
 }
@@ -994,8 +995,8 @@ fn handle_mgs_request<H: SpHandler>(
                 .task_dump_read_start(index, key)
                 .map(|r| SpResponse::Dump(DumpResponse::TaskDumpReadStarted(r)))
         }
-        MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key }) => {
-            let r = handler.task_dump_read_continue(key, trailing_tx_buf);
+        MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key, seq }) => {
+            let r = handler.task_dump_read_continue(key, seq, trailing_tx_buf);
             if let Ok(Some(d)) = r {
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::ShiftFromTail(
@@ -1396,14 +1397,15 @@ mod tests {
         fn task_dump_read_start(
             &mut self,
             _index: u32,
-            _key: u32,
+            _key: [u8; 16],
         ) -> Result<DumpTask, SpError> {
             unimplemented!()
         }
 
         fn task_dump_read_continue(
             &mut self,
-            _key: u32,
+            _key: [u8; 16],
+            _seq: u32,
             _buf: &mut [u8],
         ) -> Result<Option<DumpSegment>, SpError> {
             unimplemented!()

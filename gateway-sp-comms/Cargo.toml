@@ -17,7 +17,6 @@ lru-cache.workspace = true
 lzss.workspace = true
 once_cell.workspace = true
 paste.workspace = true
-rand.workspace = true
 serde.workspace = true
 serde-big-array.workspace = true
 slog.workspace = true

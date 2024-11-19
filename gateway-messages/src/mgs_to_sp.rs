@@ -421,11 +421,18 @@ pub enum DumpRequest {
     ///
     /// `key` is used for disambiguation between multiple readers
     TaskDumpReadStart {
+        /// Which task dump to read, in the range `0..count`
         index: u32,
-        key: u32,
+
+        /// UUID-shaped key for disambiguation
+        key: [u8; 16],
     },
 
     TaskDumpReadContinue {
-        key: u32,
+        /// Sequence number to detect dropped or duplicate packets
+        seq: u32,
+
+        /// UUID-shaped key for disambiguation of multiple connections
+        key: [u8; 16],
     },
 }

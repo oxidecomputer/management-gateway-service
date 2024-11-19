@@ -1191,7 +1191,8 @@ impl SingleSp {
             Err(e) => return Err(e),
         };
 
-        let key: u32 = rand::random();
+        let uuid = uuid::Uuid::new_v4();
+        let key = uuid.into_bytes();
         let result = rpc(
             &self.cmds_tx,
             MgsRequest::Dump(DumpRequest::TaskDumpReadStart { key, index }),
@@ -1223,10 +1224,14 @@ impl SingleSp {
         debug!(self.log, "got task {task:?}");
 
         let mut map: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
-        loop {
+        let mut seq = 0;
+        for _ in 0.. {
             let result = rpc(
                 &self.cmds_tx,
-                MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key }),
+                MgsRequest::Dump(DumpRequest::TaskDumpReadContinue {
+                    key,
+                    seq,
+                }),
                 None,
             )
             .await;
@@ -1256,6 +1261,20 @@ impl SingleSp {
                 },
             )?;
             if let Some((header, data)) = r {
+                // If we've received data with an invalid sequence number, then
+                // it's probably out of date; keep going without incrementing
+                // seq to recover (this will retransmit `TaskDumpReadContinue`
+                // message with the same `seq`)
+                if header.seq != seq {
+                    warn!(
+                        self.log,
+                        "skipping data with invalid seq \
+                         (expected {seq}, got {})",
+                        header.seq
+                    );
+                    continue;
+                }
+
                 debug!(
                     self.log,
                     "got {} bytes from {:#08x}",
@@ -1291,6 +1310,9 @@ impl SingleSp {
                     .map(|(k, _v)| *k)
                     .unwrap_or(header.address);
                 map.entry(base_addr).or_default().extend(data);
+
+                // Increment the sequence number
+                seq += 1;
             } else {
                 break;
             }
