@@ -214,12 +214,25 @@ pub struct TaskDump {
 }
 
 impl TaskDump {
+    /// Writes the task dump to a ZIP file
     pub fn write_zip<W: Write + Seek>(
         &self,
         out: W,
     ) -> Result<(), std::io::Error> {
         let mut z = zip::ZipWriter::new(out);
         let opt = zip::write::FileOptions::default();
+
+        // Store metadata about the dump format itself in `meta.json`
+        //
+        // This version number is checked by Humility; remember to update it if
+        // you're changing the archive in breaking ways.
+        z.start_file("meta.json", opt)?;
+        write!(
+            z,
+            r#"{{
+    "version": 1
+}}"#
+        )?;
 
         z.start_file("TASK_INDEX", opt)?;
         writeln!(z, "{}", self.task_index)?;
