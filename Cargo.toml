@@ -45,7 +45,7 @@ slog = { version = "2.7", features = ["max_level_trace", "release_max_level_trac
 slog-async = "2.8"
 slog-term = "2.9"
 smoltcp = { version = "0.9", default-features = false, features = ["proto-ipv6"] }
-socket2 = "0.5.7"
+socket2 = "0.5.8"
 ssh-agent-client-rs = "0.9.1"
 ssh-key = { version = "0.6.7", features = ["p256"] }
 static_assertions = "1.1.0"
