@@ -65,6 +65,10 @@ pub enum CommunicationError {
     UnexpectedTrailingData(Vec<u8>),
     #[error("Trailing data is wrong length: expected {expected}, got {got}")]
     BadTrailingDataSize { expected: usize, got: usize },
+    #[error(
+        "Trailing data decompression failed: expected {expected}, got {got}"
+    )]
+    BadDecompressionSize { expected: usize, got: usize },
 }
 
 impl From<SingleSpHandleError> for CommunicationError {
