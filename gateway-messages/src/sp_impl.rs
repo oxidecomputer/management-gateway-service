@@ -17,6 +17,10 @@ use crate::DeviceCapabilities;
 use crate::DeviceDescriptionHeader;
 use crate::DevicePresence;
 use crate::DiscoverResponse;
+use crate::DumpRequest;
+use crate::DumpResponse;
+use crate::DumpSegment;
+use crate::DumpTask;
 use crate::Header;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
@@ -386,6 +390,20 @@ pub trait SpHandler {
         &mut self,
         version: u8,
     ) -> Result<RotBootInfo, SpError>;
+
+    fn get_task_dump_count(&mut self) -> Result<u32, SpError>;
+    fn task_dump_read_start(
+        &mut self,
+        index: u32,
+        key: [u8; 16],
+    ) -> Result<DumpTask, SpError>;
+
+    fn task_dump_read_continue(
+        &mut self,
+        key: [u8; 16],
+        seq: u32,
+        buf: &mut [u8],
+    ) -> Result<Option<DumpSegment>, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -969,6 +987,24 @@ fn handle_mgs_request<H: SpHandler>(
             let r = handler.versioned_rot_boot_info(version);
             r.map(SpResponse::RotBootInfo)
         }
+        MgsRequest::Dump(DumpRequest::TaskDumpCount) => handler
+            .get_task_dump_count()
+            .map(|n| SpResponse::Dump(DumpResponse::TaskDumpCount(n))),
+        MgsRequest::Dump(DumpRequest::TaskDumpReadStart { index, key }) => {
+            handler
+                .task_dump_read_start(index, key)
+                .map(|r| SpResponse::Dump(DumpResponse::TaskDumpReadStarted(r)))
+        }
+        MgsRequest::Dump(DumpRequest::TaskDumpReadContinue { key, seq }) => {
+            let r = handler.task_dump_read_continue(key, seq, trailing_tx_buf);
+            if let Ok(Some(d)) = r {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(
+                        d.compressed_length as usize,
+                    ));
+            }
+            r.map(|d| SpResponse::Dump(DumpResponse::TaskDumpRead(d)))
+        }
     };
 
     let response = match result {
@@ -1351,6 +1387,27 @@ mod tests {
             &mut self,
             _version: u8,
         ) -> Result<RotBootInfo, SpError> {
+            unimplemented!()
+        }
+
+        fn get_task_dump_count(&mut self) -> Result<u32, SpError> {
+            unimplemented!()
+        }
+
+        fn task_dump_read_start(
+            &mut self,
+            _index: u32,
+            _key: [u8; 16],
+        ) -> Result<DumpTask, SpError> {
+            unimplemented!()
+        }
+
+        fn task_dump_read_continue(
+            &mut self,
+            _key: [u8; 16],
+            _seq: u32,
+            _buf: &mut [u8],
+        ) -> Result<Option<DumpSegment>, SpError> {
             unimplemented!()
         }
     }
