@@ -30,6 +30,9 @@ use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
+use gateway_messages::DumpCompression;
+use gateway_messages::DumpRequest;
+use gateway_messages::DumpResponse;
 use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
@@ -62,9 +65,11 @@ use slog::info;
 use slog::trace;
 use slog::warn;
 use slog::Logger;
+use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Seek;
 use std::io::SeekFrom;
+use std::io::Write;
 use std::net::SocketAddr;
 use std::net::SocketAddrV6;
 use std::str;
@@ -177,6 +182,96 @@ impl SpRetryConfig {
         let inflated_reset_timeout_ms = reset_timeout_ms.saturating_mul(3) / 2;
 
         u32::try_from(inflated_reset_timeout_ms).unwrap_or(u32::MAX)
+    }
+}
+
+/// Single-task dump, containing raw memory
+///
+/// This type is not useful on its own, because we have no idea what the memory
+/// signifies.  It can be hydrated with a Humility archive to form a proper
+/// Hubris core file for offline debugging.
+pub struct TaskDump {
+    /// Task index
+    pub task_index: u16,
+
+    /// Timestamp at which the task crash occurred
+    pub timestamp: u64,
+
+    /// Hubris archive ID (opaque blob)
+    pub archive_id: [u8; 8],
+
+    /// `BORD` field from the caboose
+    pub bord: String,
+
+    /// `GITC` field from the caboose
+    pub gitc: String,
+
+    /// `VERS` field from the caboose, if present
+    pub vers: Option<String>,
+
+    /// Raw memory read from the SP
+    pub memory: BTreeMap<u32, Vec<u8>>,
+}
+
+impl TaskDump {
+    /// Writes the task dump to a ZIP file
+    pub fn write_zip<W: Write + Seek>(
+        &self,
+        out: W,
+    ) -> Result<(), std::io::Error> {
+        let mut z = zip::ZipWriter::new(out);
+        let opt = zip::write::FileOptions::default();
+
+        // Store metadata about the dump format itself in `meta.json`
+        //
+        // This version number is checked by Humility; remember to update it if
+        // you're changing the archive in breaking ways.
+        z.start_file("dump.json", opt)?;
+        write!(
+            z,
+            r#"{{
+    "format": 1,
+    "task_index": {task_index},
+    "crash_time": {crash_time},
+    "board_name": "{bord}",
+    "git_commit": "{gitc}",
+    "archive_id": "{archive_id}""#,
+            task_index = self.task_index,
+            crash_time = self.timestamp,
+            archive_id = hex::encode(self.archive_id),
+            bord = self.bord,
+            gitc = self.gitc,
+        )?;
+        if let Some(v) = &self.vers {
+            write!(
+                z,
+                r#",
+    "fw_version": "{v}""#
+            )?;
+        }
+        writeln!(
+            z,
+            "
+}}"
+        )?;
+
+        for (k, v) in &self.memory {
+            z.start_file(format!("{k:#08x}.bin"), opt)?;
+            z.write_all(v)?;
+        }
+
+        z.start_file("README", opt)?;
+        write!(
+            z,
+            "\
+This is a dehydrated Hubris memory dump.
+
+To use it for debugging, it should be combined with the appropriate Hubris
+archive, using `humility hydrate`.  Identify the Hubris archive using the
+details in `dump.json`."
+        )?;
+
+        Ok(())
     }
 }
 
@@ -1002,6 +1097,21 @@ impl SingleSp {
         result.result.and_then(expect_caboose_value)
     }
 
+    pub async fn read_component_caboose_string(
+        &self,
+        component: SpComponent,
+        slot: u16,
+        key: [u8; 4],
+    ) -> Result<String> {
+        let value = self.read_component_caboose(component, slot, key).await?;
+
+        Ok(if value.is_ascii() {
+            String::from_utf8(value).unwrap()
+        } else {
+            hex::encode(value)
+        })
+    }
+
     pub async fn read_sensor_value(&self, id: u32) -> Result<SensorReading> {
         let v = self
             .rpc(MgsRequest::ReadSensor(SensorRequest {
@@ -1047,6 +1157,195 @@ impl SingleSp {
         let result = rpc(&self.cmds_tx, MgsRequest::VpdLockState, None).await;
 
         result.result.and_then(expect_vpd_lock_state)
+    }
+
+    /// Returns the number of task dumps stored in the SP
+    pub async fn task_dump_count(&self) -> Result<u32> {
+        let result = rpc(
+            &self.cmds_tx,
+            MgsRequest::Dump(DumpRequest::TaskDumpCount),
+            None,
+        )
+        .await;
+
+        result.result.and_then(|(_peer, response, data)| match response {
+            SpResponse::Dump(DumpResponse::TaskDumpCount(n)) => {
+                if data.is_empty() {
+                    Ok(n)
+                } else {
+                    Err(CommunicationError::UnexpectedTrailingData(data))
+                }
+            }
+            SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
+            other => Err(CommunicationError::BadResponseType {
+                expected: "task_dump_count",
+                got: other.into(),
+            }),
+        })
+    }
+
+    /// Reads a single task dump by index from the SP
+    pub async fn task_dump_read(&self, index: u32) -> Result<TaskDump> {
+        let archive_id = match self.state().await? {
+            VersionedSpState::V1(v) => v.hubris_archive_id,
+            VersionedSpState::V2(v) => v.hubris_archive_id,
+            VersionedSpState::V3(v) => v.hubris_archive_id,
+        };
+        // BORD and GITC are mandatory
+        let bord = self
+            .read_component_caboose_string(SpComponent::SP_ITSELF, 0, *b"BORD")
+            .await?;
+        let gitc = self
+            .read_component_caboose_string(SpComponent::SP_ITSELF, 0, *b"GITC")
+            .await?;
+
+        // VERS is optional, since it's not populated on debug builds
+        let vers = match self
+            .read_component_caboose_string(SpComponent::SP_ITSELF, 0, *b"VERS")
+            .await
+        {
+            Ok(v) => Some(v),
+            Err(CommunicationError::SpError(SpError::NoSuchCabooseKey(..))) => {
+                None
+            }
+            Err(e) => return Err(e),
+        };
+
+        let uuid = uuid::Uuid::new_v4();
+        let key = uuid.into_bytes();
+        let result = rpc(
+            &self.cmds_tx,
+            MgsRequest::Dump(DumpRequest::TaskDumpReadStart { key, index }),
+            None,
+        )
+        .await;
+
+        let task =
+            result.result.and_then(
+                |(_peer, response, data)| match response {
+                    SpResponse::Dump(DumpResponse::TaskDumpReadStarted(t)) => {
+                        if data.is_empty() {
+                            Ok(t)
+                        } else {
+                            Err(CommunicationError::UnexpectedTrailingData(
+                                data,
+                            ))
+                        }
+                    }
+                    SpResponse::Error(err) => {
+                        Err(CommunicationError::SpError(err))
+                    }
+                    other => Err(CommunicationError::BadResponseType {
+                        expected: "task_dump_read_start",
+                        got: other.into(),
+                    }),
+                },
+            )?;
+        debug!(self.log, "got task {task:?}");
+
+        let mut map: BTreeMap<u32, Vec<u8>> = BTreeMap::new();
+        let mut seq = 0;
+        for _ in 0.. {
+            let result = rpc(
+                &self.cmds_tx,
+                MgsRequest::Dump(DumpRequest::TaskDumpReadContinue {
+                    key,
+                    seq,
+                }),
+                None,
+            )
+            .await;
+
+            let r = result.result.and_then(
+                |(_, response, data)| match response {
+                    SpResponse::Dump(DumpResponse::TaskDumpRead(None)) => {
+                        Ok(None)
+                    }
+                    SpResponse::Dump(DumpResponse::TaskDumpRead(Some(s))) => {
+                        if data.len() != s.compressed_length as usize {
+                            Err(CommunicationError::BadTrailingDataSize {
+                                expected: s.compressed_length as usize,
+                                got: data.len(),
+                            })
+                        } else {
+                            Ok(Some((s, data)))
+                        }
+                    }
+                    SpResponse::Error(err) => {
+                        Err(CommunicationError::SpError(err))
+                    }
+                    other => Err(CommunicationError::BadResponseType {
+                        expected: "task_dump_read",
+                        got: other.into(),
+                    }),
+                },
+            )?;
+            if let Some((header, data)) = r {
+                // If we've received data with an invalid sequence number, then
+                // it's probably out of date; keep going without incrementing
+                // seq to recover (this will retransmit `TaskDumpReadContinue`
+                // message with the same `seq`)
+                if header.seq != seq {
+                    warn!(
+                        self.log,
+                        "skipping data with invalid seq \
+                         (expected {seq}, got {})",
+                        header.seq
+                    );
+                    continue;
+                }
+
+                debug!(
+                    self.log,
+                    "got {} bytes from {:#08x}",
+                    data.len(),
+                    header.address
+                );
+                // There's only one compression type right now
+                let data = match task.compression {
+                    DumpCompression::Lzss => {
+                        // The decompressor type must agree with `humpty`
+                        pub type DumpLzss =
+                            lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;
+                        DumpLzss::decompress(
+                            lzss::SliceReader::new(&data),
+                            lzss::VecWriter::with_capacity(512),
+                        )
+                        .unwrap() // decompression can't fail with a VecWriter
+                    }
+                };
+
+                // sanity-check against the expected length
+                if header.uncompressed_length as usize != data.len() {
+                    return Err(CommunicationError::BadDecompressionSize {
+                        expected: header.uncompressed_length as usize,
+                        got: data.len(),
+                    });
+                }
+                // Extend the current range, or begin a new range
+                let mut r = map.range(0..=header.address);
+                let base_addr = r
+                    .next_back()
+                    .filter(|(k, v)| *k + v.len() as u32 == header.address)
+                    .map(|(k, _v)| *k)
+                    .unwrap_or(header.address);
+                map.entry(base_addr).or_default().extend(data);
+
+                // Increment the sequence number
+                seq += 1;
+            } else {
+                break;
+            }
+        }
+        Ok(TaskDump {
+            task_index: task.task,
+            timestamp: task.time,
+            archive_id,
+            bord,
+            gitc,
+            vers,
+            memory: map,
+        })
     }
 }
 

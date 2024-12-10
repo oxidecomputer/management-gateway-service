@@ -419,6 +419,12 @@ enum Command {
         #[clap(subcommand)]
         cmd: MonorailCommand,
     },
+
+    /// List and read per-task crash dumps
+    Dump {
+        #[clap(subcommand)]
+        cmd: DumpCommand,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -453,6 +459,28 @@ enum MonorailCommand {
 
     /// Lock the technician port
     Lock,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum DumpCommand {
+    /// List the number of task crash dumps available
+    Count,
+
+    /// Read a single dump
+    Read {
+        /// Index of the dump to read (in the range `0..count`)
+        ///
+        /// The total dump count can be printed with `faux-mgs dump count`
+        #[clap(long, short)]
+        index: u32,
+
+        /// File to write the dump
+        ///
+        /// If not provided, the dump is written to `hubris.dry.X`, where `X` is
+        /// the next available integer.
+        #[clap(long, short)]
+        output: Option<PathBuf>,
+    },
 }
 
 #[derive(Clone, Debug, clap::Args)]
@@ -1466,12 +1494,8 @@ async fn run_command(
                     bail!("invalid component {c} for caboose")
                 }
             };
-            let value = sp.read_component_caboose(component, slot, key).await?;
-            let out = if value.is_ascii() {
-                String::from_utf8(value).unwrap()
-            } else {
-                hex::encode(value)
-            };
+            let out =
+                sp.read_component_caboose_string(component, slot, key).await?;
             if json {
                 Ok(Output::Json(json!({ "value": out })))
             } else {
@@ -1529,6 +1553,59 @@ async fn run_command(
                 Ok(Output::Lines(out))
             }
         }
+        Command::Dump { cmd } => match cmd {
+            DumpCommand::Count => {
+                let n = sp.task_dump_count().await?;
+
+                if json {
+                    Ok(Output::Json(json!({"count": n})))
+                } else {
+                    Ok(Output::Lines(vec![format!("count: {n}")]))
+                }
+            }
+            DumpCommand::Read { index, output } => {
+                let task = sp.task_dump_read(index).await?;
+
+                let output = output.unwrap_or_else(|| {
+                    (0..)
+                        .map(|i| PathBuf::from(format!("hubris.dry.{i}")))
+                        .find(|p| !p.exists())
+                        .unwrap()
+                });
+                task.write_zip(std::fs::File::create(&output)?)?;
+
+                if json {
+                    let regions = task
+                        .memory
+                        .iter()
+                        .map(|(k, v)| (*k, v.len()))
+                        .collect::<Vec<(u32, usize)>>();
+                    Ok(Output::Json(json!({
+                        "task_index": task.task_index,
+                        "crashed_at": task.timestamp,
+                        "gitc": task.gitc,
+                        "bord": task.bord,
+                        "regions": regions,
+                        "written_to": output,
+                    })))
+                } else {
+                    let mut lines = vec![
+                        format!(
+                            "task {}: crashed at {}",
+                            task.task_index, task.timestamp
+                        ),
+                        format!("gitc: {}", task.gitc),
+                        format!("bord: {}", task.bord),
+                        format!("{} memory regions:", task.memory.len()),
+                    ];
+                    for (k, v) in task.memory {
+                        lines.push(format!("  {k:#08x}: {:#08x}", v.len()));
+                    }
+                    lines.push(format!("written to {output:?}"));
+                    Ok(Output::Lines(lines))
+                }
+            }
+        },
     }
 }
 

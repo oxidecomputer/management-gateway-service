@@ -138,6 +138,11 @@ pub enum SpResponse {
 
     /// Response to a data-bearing component action
     ComponentAction(ComponentActionResponse),
+
+    /// Response to a dump request
+    ///
+    /// The packet may contain trailing dump data
+    Dump(DumpResponse),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -718,6 +723,62 @@ pub enum ComponentActionResponse {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
+pub enum DumpResponse {
+    TaskDumpCount(u32),
+    TaskDumpReadStarted(DumpTask),
+
+    /// This variant is usually followed by compressed data
+    ///
+    /// `None` indicates the end of the task dump
+    TaskDumpRead(Option<DumpSegment>),
+}
+
+/// Morally equivalent to `humpty::DumpTask`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct DumpTask {
+    pub task: u16,
+    pub time: u64,
+    pub compression: DumpCompression,
+}
+
+/// Compression type used for dump data
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum DumpCompression {
+    /// LZSS parameters which are hard-coded in `humpty::DumpLzss`
+    ///
+    /// This is `lzss::Lzss<6, 4, 0x20, { 1 << 6 }, { 2 << 6 }>;`
+    Lzss,
+}
+
+/// Morally equivalent to `humpty::DumpSegmentData`
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct DumpSegment {
+    /// Memory address for this chunk of data
+    pub address: u32,
+
+    /// Compressed data length
+    ///
+    /// This must match the length of trailing data in the packet
+    pub compressed_length: u16,
+
+    /// Original data length
+    ///
+    /// This must match the data length after decompressing
+    pub uncompressed_length: u16,
+
+    /// Sequence number to detect dropped or duplicate packets
+    pub seq: u32,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
 pub enum MonorailComponentActionResponse {
     RequestChallenge(UnlockChallenge),
 }
@@ -981,6 +1042,7 @@ pub enum SpError {
     Vpd(VpdError),
     Watchdog(WatchdogError),
     Monorail(MonorailError),
+    Dump(DumpError),
 }
 
 impl fmt::Display for SpError {
@@ -1094,6 +1156,7 @@ impl fmt::Display for SpError {
             Self::Vpd(e) => write!(f, "vpd: {}", e),
             Self::Watchdog(e) => write!(f, "watchdog: {}", e),
             Self::Monorail(e) => write!(f, "monorail: {}", e),
+            Self::Dump(e) => write!(f, "dump: {}", e),
         }
     }
 }
@@ -1556,6 +1619,41 @@ impl fmt::Display for MonorailError {
             Self::TimeIsTooLong => "unlock time is too long",
             Self::ChallengeExpired => "challenge has expired",
             Self::AlreadyTrusted => "the source port is already trusted",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Errors encountered interacting with the dump agent
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum DumpError {
+    BadArea,
+    BadIndex,
+    NoDumpTaskHeader,
+    CorruptTaskHeader,
+    BadKey,
+    ReadFailed,
+    NoLongerValid,
+    SegmentTooLong,
+    BadSequenceNumber,
+}
+
+impl fmt::Display for DumpError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::BadArea => "could not read area header",
+            Self::BadIndex => "could not find dump by index",
+            Self::NoDumpTaskHeader => "could not read dump task header",
+            Self::CorruptTaskHeader => "task header has invalid magic bytes",
+            Self::BadKey => "invalid key",
+            Self::ReadFailed => "read failed",
+            Self::NoLongerValid => "the dump region has been cleared",
+            Self::SegmentTooLong => "data segment cannot fit in packet data",
+            Self::BadSequenceNumber => "sequence number is invalid",
         };
         write!(f, "{s}")
     }
