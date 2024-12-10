@@ -226,28 +226,35 @@ impl TaskDump {
         //
         // This version number is checked by Humility; remember to update it if
         // you're changing the archive in breaking ways.
-        z.start_file("meta.json", opt)?;
+        z.start_file("dump.json", opt)?;
         write!(
             z,
             r#"{{
-    "version": 1
-}}"#
+    "format": 1,
+    "task_index": {task_index},
+    "crash_time": {crash_time},
+    "board_name": "{bord}",
+    "git_commit": "{gitc}",
+    "archive_id": "{archive_id}""#,
+            task_index = self.task_index,
+            crash_time = self.timestamp,
+            archive_id = hex::encode(self.archive_id),
+            bord = self.bord,
+            gitc = self.gitc,
+        )?;
+        if let Some(v) = &self.vers {
+            write!(
+                z,
+                r#",
+    "fw_version": "{v}""#
+            )?;
+        }
+        writeln!(
+            z,
+            "
+}}"
         )?;
 
-        z.start_file("TASK_INDEX", opt)?;
-        writeln!(z, "{}", self.task_index)?;
-        z.start_file("TIMESTAMP", opt)?;
-        writeln!(z, "{}", self.timestamp)?;
-        z.start_file("ARCHIVE_ID", opt)?;
-        writeln!(z, "{}", hex::encode(self.archive_id))?;
-        z.start_file("BORD", opt)?;
-        writeln!(z, "{}", self.bord)?;
-        z.start_file("GITC", opt)?;
-        writeln!(z, "{}", self.gitc)?;
-        if let Some(v) = &self.vers {
-            z.start_file("VERS", opt)?;
-            write!(z, "{}", v)?;
-        }
         for (k, v) in &self.memory {
             z.start_file(format!("{k:#08x}.bin"), opt)?;
             z.write_all(v)?;
@@ -260,8 +267,8 @@ impl TaskDump {
 This is a dehydrated Hubris memory dump.
 
 To use it for debugging, it should be combined with the appropriate Hubris
-archive, using `humility hydrate`.  Identify the Hubris archive using the other
-files in the archive."
+archive, using `humility hydrate`.  Identify the Hubris archive using the
+details in `dump.json`."
         )?;
 
         Ok(())
