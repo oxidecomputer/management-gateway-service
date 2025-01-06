@@ -26,7 +26,7 @@ camino = "1.1.9"
 clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3.31"
 fxhash = "0.2.1"
-glob = "0.3.1"
+glob = "0.3.2"
 hex = "0.4.3"
 hubpack = "0.1.2"
 humantime = "2.1.0"
