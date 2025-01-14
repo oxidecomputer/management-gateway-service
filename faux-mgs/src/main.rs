@@ -425,6 +425,9 @@ enum Command {
         #[clap(subcommand)]
         cmd: DumpCommand,
     },
+
+    /// Kick the RoT watchdog, so it resets the SP into the alternate image
+    KickWatchdog,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1606,6 +1609,15 @@ async fn run_command(
                 }
             }
         },
+        Command::KickWatchdog => {
+            sp.reset_component_prepare(SpComponent::SP_ITSELF).await?;
+            sp.kick_watchdog().await?;
+            if json {
+                Ok(Output::Json(json!({"ok": true})))
+            } else {
+                Ok(Output::Lines(vec!["ok".to_owned()]))
+            }
+        }
     }
 }
 

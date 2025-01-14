@@ -832,6 +832,31 @@ impl SingleSp {
         rx.await.unwrap()
     }
 
+    pub async fn kick_watchdog(&self) -> Result<()> {
+        let response = self
+            .rpc(MgsRequest::ResetComponentTriggerWithWatchdog {
+                component: SpComponent::SP_ITSELF,
+                time_ms: 1_000,
+            })
+            .await;
+        match response {
+            Ok((_addr, response, _data)) => {
+                // Reset trigger should retry until we get back an error
+                // indicating the SP wasn't expecting a reset trigger
+                // (because it has reset!).
+                Err(CommunicationError::BadResponseType {
+                    expected: "system-reset",
+                    got: response.into(),
+                })
+            }
+            Err(CommunicationError::SpError(
+                SpError::ResetComponentTriggerWithoutPrepare
+                | SpError::Monorail(MonorailError::ManagementNetworkLocked),
+            )) => Ok(()),
+            Err(other) => Err(other),
+        }
+    }
+
     pub(crate) async fn rpc(
         &self,
         kind: MgsRequest,
