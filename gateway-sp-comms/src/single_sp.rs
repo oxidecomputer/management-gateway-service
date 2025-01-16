@@ -112,6 +112,16 @@ const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateDriverTaskError {
+    #[error("update prepration failed: {0}")]
+    UpdatePreprationFailed(String),
+    #[error("aux flash update failed")]
+    AuxFlashUpdateFailed(#[source] CommunicationError),
+    #[error("update chunk delivery failed")]
+    UpdateChunkDeliveryFailed(#[source] CommunicationError),
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostPhase2Request {
     pub hash: [u8; 32],
@@ -721,7 +731,8 @@ impl SingleSp {
         update_id: Uuid,
         slot: u16,
         image: Vec<u8>,
-    ) -> Result<(), UpdateError> {
+    ) -> Result<JoinHandle<Result<(), UpdateDriverTaskError>>, UpdateError>
+    {
         if image.is_empty() {
             return Err(UpdateError::ImageEmpty);
         }
