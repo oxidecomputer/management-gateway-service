@@ -115,11 +115,11 @@ type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 #[derive(Debug, thiserror::Error)]
 pub enum UpdateDriverTaskError {
     #[error("update prepration failed: {0}")]
-    UpdatePreprationFailed(String),
+    UpdatePrepration(String),
     #[error("aux flash update failed")]
-    AuxFlashUpdateFailed(#[source] CommunicationError),
+    AuxFlashUpdate(#[source] CommunicationError),
     #[error("update chunk delivery failed")]
-    UpdateChunkDeliveryFailed(#[source] CommunicationError),
+    UpdateChunkDelivery(#[source] CommunicationError),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

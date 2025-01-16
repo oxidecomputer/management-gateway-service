@@ -168,7 +168,7 @@ async fn drive_sp_update(
                 "err" => &message,
                 "update_id" => %update_id,
             );
-            return Err(UpdateDriverTaskError::UpdatePreprationFailed(message));
+            return Err(UpdateDriverTaskError::UpdatePrepration(message));
         }
     };
 
@@ -196,7 +196,7 @@ async fn drive_sp_update(
                     "id" => %update_id,
                     &err,
                 );
-                return Err(UpdateDriverTaskError::AuxFlashUpdateFailed(err));
+                return Err(UpdateDriverTaskError::AuxFlashUpdate(err));
             }
         }
     }
@@ -221,7 +221,7 @@ async fn drive_sp_update(
                 "id" => %update_id,
                 &err,
             );
-            Err(UpdateDriverTaskError::UpdateChunkDeliveryFailed(err))
+            Err(UpdateDriverTaskError::UpdateChunkDelivery(err))
         }
     }
 }
@@ -473,7 +473,7 @@ async fn drive_component_update(
                 "err" => &message,
                 "update_id" => %update_id,
             );
-            return Err(UpdateDriverTaskError::UpdatePreprationFailed(message));
+            return Err(UpdateDriverTaskError::UpdatePrepration(message));
         }
     }
 
@@ -491,7 +491,7 @@ async fn drive_component_update(
                 "id" => %update_id,
                 &err,
             );
-            Err(UpdateDriverTaskError::UpdateChunkDeliveryFailed(err))
+            Err(UpdateDriverTaskError::UpdateChunkDelivery(err))
         }
     }
 }
