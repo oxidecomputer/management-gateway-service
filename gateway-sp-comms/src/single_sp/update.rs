@@ -662,11 +662,20 @@ async fn send_update_in_chunks(
             "offset" => offset,
         );
 
-        image = send_single_update_chunk(cmds_tx, component, id, offset, image)
-            .await?;
+        let result;
+        (image, result) =
+            send_single_update_chunk(cmds_tx, component, id, offset, image)
+                .await;
 
-        // Update our offset according to how far our cursor advanced.
-        offset += (image.position() - prior_pos) as u32;
+        match result {
+            Ok(()) => {
+                // Update our offset according to how far our cursor advanced.
+                offset += (image.position() - prior_pos) as u32;
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        }
     }
     Ok(())
 }
@@ -681,7 +690,7 @@ async fn send_single_update_chunk(
     id: UpdateId,
     offset: u32,
     data: Cursor<Vec<u8>>,
-) -> Result<Cursor<Vec<u8>>> {
+) -> (Cursor<Vec<u8>>, Result<()>) {
     let update_chunk = UpdateChunk { component, id, offset };
     let (result, data) = super::rpc_with_trailing_data(
         cmds_tx,
@@ -690,7 +699,7 @@ async fn send_single_update_chunk(
     )
     .await;
 
-    result.and_then(expect_update_chunk_ack)?;
+    let result = result.and_then(expect_update_chunk_ack);
 
-    Ok(data)
+    (data, result)
 }
