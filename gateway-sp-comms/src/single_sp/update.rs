@@ -684,87 +684,25 @@ async fn send_update_in_chunks(
                 // Ideally `InvalidUpdateChunk` would return the offset the SP
                 // wants. We could add a new error variant for that; fow now,
                 // try to recover by asking the SP what chunk it expected.
-                let status = match super::rpc(
-                    cmds_tx,
-                    MgsRequest::UpdateStatus(component),
-                    None,
-                )
-                .await
-                .result
-                .and_then(expect_update_status)
+                if let Some(sp_offset) =
+                    determine_update_resume_point_via_update_status(
+                        cmds_tx,
+                        component,
+                        update_id,
+                        image.get_ref().len(),
+                        log,
+                    )
+                    .await
                 {
-                    Ok(status) => status,
-                    Err(status_err) => {
-                        error!(
-                            log,
-                            "invalid update chunk recovery failed: \
-                             could not get update status from SP";
-                            &status_err,
-                        );
-                        return Err(err);
-                    }
-                };
-
-                // We can only recover if the SP still thinks this update is in
-                // progress.
-                let UpdateStatus::InProgress(progress) = status else {
-                    error!(
-                        log,
-                        "invalid update chunk recovery failed: \
-                         SP update status is not in progress";
-                        "status" => ?status,
-                    );
-                    return Err(err);
-                };
-
-                let UpdateInProgressStatus { id, bytes_received, total_size } =
-                    progress;
-                let id = Uuid::from(id);
-
-                if id != update_id {
-                    error!(
-                        log,
-                        "invalid update chunk recovery failed: \
-                         a different update is in progress";
-                        "our_update_id" => %update_id,
-                        "sp_update_id" => %id,
-                    );
+                    // Rewind both our offset and the cursor on the data.
+                    offset = sp_offset;
+                    image.set_position(u64::from(sp_offset));
+                } else {
+                    // `determine_update_resume_point_via_update_status()`
+                    // already logged any meaningful problems fetching the
+                    // status; all we can do is bail out.
                     return Err(err);
                 }
-
-                if usize::try_from(total_size).expect("u32 fits in usize")
-                    != image.get_ref().len()
-                {
-                    error!(
-                        log,
-                        "invalid update chunk recovery failed: \
-                         SP expects an incorrect image length";
-                        "our_image_len" => image.get_ref().len(),
-                        "sp_expects_len" => total_size,
-                    );
-                    return Err(err);
-                }
-
-                if bytes_received > total_size {
-                    error!(
-                        log,
-                        "invalid update chunk recovery failed: \
-                         invalid update status from SP \
-                         (bytes_received > total_size ?!)";
-                        "status" => ?status,
-                    );
-                    return Err(err);
-                }
-
-                warn!(
-                    log,
-                    "invalid update chunk recovery: attempting to resume \
-                     from offset {bytes_received}"
-                );
-
-                // Rewind both our offset and the cursor on the data.
-                offset = bytes_received;
-                image.set_position(u64::from(bytes_received));
             }
             Err(err) => {
                 return Err(err);
@@ -796,4 +734,100 @@ async fn send_single_update_chunk(
     let result = result.and_then(expect_update_chunk_ack);
 
     (data, result)
+}
+
+/// Attempt to determine what offset the SP is expecting mid-update.
+///
+/// We use this when receiving an `InvalidUpdateChunk` from the SP, which
+/// indicates it's still expecting our update but we've gotten out of sync on
+/// how far along it is (e.g., via a lost packet containing an ACK from the SP
+/// for some successful chunk that we believe we need to resend).
+async fn determine_update_resume_point_via_update_status(
+    cmds_tx: &mpsc::Sender<InnerCommand>,
+    component: SpComponent,
+    update_id: Uuid,
+    image_len: usize,
+    log: &Logger,
+) -> Option<u32> {
+    let status =
+        match super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
+            .await
+            .result
+            .and_then(expect_update_status)
+        {
+            Ok(status) => status,
+            Err(status_err) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     could not get update status from SP";
+                    &status_err,
+                );
+                return None;
+            }
+        };
+
+    // We can only recover if the SP still thinks this update is in progress.
+    let UpdateStatus::InProgress(progress) = status else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             SP update status is not in progress";
+            "status" => ?status,
+        );
+        return None;
+    };
+
+    let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
+    let id = Uuid::from(id);
+
+    // This error check is not load-bearing; if we try to resume with our update
+    // ID and some other update is in progress, the SP will reject it with a
+    // different error (`InvalidUpdateId`). But it's easy enough to check here
+    // too to avoid that round trip in almost all cases, and it makes the
+    // "should never happen" cases below more sensible if we know the other
+    // fields relate to this same update ID.
+    if id != update_id {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             a different update is in progress";
+            "our_update_id" => %update_id,
+            "sp_update_id" => %id,
+        );
+        return None;
+    }
+
+    // This should never happen; if the update ID matches, we and the SP should
+    // both know how long the image is.
+    if usize::try_from(total_size).expect("u32 fits in usize") != image_len {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             SP expects an incorrect image length";
+            "our_image_len" => image_len,
+            "sp_expects_len" => total_size,
+        );
+        return None;
+    }
+
+    // This should never happen; the SP should never claim to have received more
+    // bytes than the total image length.
+    if bytes_received > total_size {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             invalid update status from SP \
+             (bytes_received > total_size ?!)";
+            "status" => ?status,
+        );
+        return None;
+    }
+
+    warn!(
+        log,
+        "invalid update chunk recovery: attempting to resume \
+         from offset {bytes_received}"
+    );
+    Some(bytes_received)
 }
