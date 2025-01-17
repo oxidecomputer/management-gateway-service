@@ -91,6 +91,9 @@ use self::update::start_rot_update;
 use self::update::start_sp_update;
 use self::update::update_status;
 
+pub use self::update::UpdateDriverTask;
+pub use self::update::UpdateDriverTaskError;
+
 // Once we've discovered an SP, continue to send discovery packets on this
 // interval to detect changes.
 //
@@ -721,7 +724,7 @@ impl SingleSp {
         update_id: Uuid,
         slot: u16,
         image: Vec<u8>,
-    ) -> Result<(), UpdateError> {
+    ) -> Result<UpdateDriverTask, UpdateError> {
         if image.is_empty() {
             return Err(UpdateError::ImageEmpty);
         }

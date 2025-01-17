@@ -1788,12 +1788,23 @@ async fn update(
 ) -> Result<()> {
     let update_id = Uuid::new_v4();
     info!(log, "generated update ID"; "id" => %update_id);
-    sp.start_update(component, update_id, slot, data)
-        .await
-        .context("failed to start update")?;
+    let mut update_driver = Some(
+        sp.start_update(component, update_id, slot, data)
+            .await
+            .context("failed to start update")?,
+    );
 
     let sp_update_id = UpdateId::from(update_id);
     loop {
+        // Bail if the update driver task has failed.
+        if update_driver.as_ref().map_or(false, |driver| driver.is_finished()) {
+            let update_driver = update_driver.take().unwrap();
+            update_driver
+                .await
+                .context("update driver task died")?
+                .context("update driver task failed")?;
+        }
+
         let status = sp
             .update_status(component)
             .await

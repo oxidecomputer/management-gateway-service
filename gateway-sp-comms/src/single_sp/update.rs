@@ -7,8 +7,11 @@
 use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
+use crate::error::CommunicationError;
 use crate::error::UpdateError;
 use crate::sp_response_expect::*;
+use futures::Future;
+use futures::FutureExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
@@ -29,7 +32,53 @@ use std::io::Read;
 use std::time::Duration;
 use tlvc::TlvcReader;
 use tokio::sync::mpsc;
+use tokio::task::JoinError;
+use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateDriverTaskError {
+    #[error("update preparation failed: {0}")]
+    UpdatePreparation(String),
+    #[error("aux flash update failed")]
+    AuxFlashUpdate(#[source] CommunicationError),
+    #[error("update chunk delivery failed")]
+    UpdateChunkDelivery(#[source] CommunicationError),
+}
+
+/// A newtype wrapper around the [`JoinHandle`] for the tokio task responsible
+/// for driving an update.
+///
+/// Allows callers to check for completion (and whether that completion
+/// succeeded or failed), but does not allow callers to abort the update task.
+pub struct UpdateDriverTask {
+    inner: JoinHandle<Result<(), UpdateDriverTaskError>>,
+}
+
+impl UpdateDriverTask {
+    fn spawn<T>(task: T) -> Self
+    where
+        T: Future<Output = Result<(), UpdateDriverTaskError>> + Send + 'static,
+    {
+        let inner = tokio::task::spawn(task);
+        Self { inner }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.inner.is_finished()
+    }
+}
+
+impl Future for UpdateDriverTask {
+    type Output = Result<Result<(), UpdateDriverTaskError>, JoinError>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.inner.poll_unpin(cx)
+    }
+}
 
 /// Start an update to the SP itself.
 ///
@@ -40,7 +89,7 @@ pub(super) async fn start_sp_update(
     update_id: Uuid,
     image: Vec<u8>,
     log: &Logger,
-) -> Result<(), UpdateError> {
+) -> Result<UpdateDriverTask, UpdateError> {
     let archive = RawHubrisArchive::from_vec(image)?;
 
     let sp_image = archive.image.to_binary()?;
@@ -103,7 +152,7 @@ pub(super) async fn start_sp_update(
     };
 
     info!(
-            log, "starting SP update";
+        log, "starting SP update";
         "id" => %update_id,
         "aux_flash_chck" => ?aux_flash_chck,
         "aux_flash_size" => aux_flash_size,
@@ -123,15 +172,13 @@ pub(super) async fn start_sp_update(
     .result
     .and_then(expect_sp_update_prepare_ack)?;
 
-    tokio::spawn(drive_sp_update(
+    Ok(UpdateDriverTask::spawn(drive_sp_update(
         cmds_tx.clone(),
         update_id,
         aux_image,
         sp_image,
         log.clone(),
-    ));
-
-    Ok(())
+    )))
 }
 
 /// Function that should be `tokio::spawn`'d to drive an SP update to
@@ -142,7 +189,7 @@ async fn drive_sp_update(
     aux_image: Option<Vec<u8>>,
     sp_image: Vec<u8>,
     log: Logger,
-) {
+) -> Result<(), UpdateDriverTaskError> {
     let id = update_id.into();
 
     // Wait until the SP has finished preparing for this update.
@@ -157,18 +204,18 @@ async fn drive_sp_update(
     {
         Ok(sp_matched_chck) => {
             info!(
-                    log, "update preparation complete";
+                log, "update preparation complete";
                 "update_id" => %update_id,
             );
             sp_matched_chck
         }
         Err(message) => {
             error!(
-                    log, "update preparation failed";
-                "err" => message,
+                log, "update preparation failed";
+                "err" => &message,
                 "update_id" => %update_id,
             );
-            return;
+            return Err(UpdateDriverTaskError::UpdatePreparation(message));
         }
     };
 
@@ -192,11 +239,11 @@ async fn drive_sp_update(
             }
             Err(err) => {
                 error!(
-                        log, "aux flash update failed";
+                    log, "aux flash update failed";
                     "id" => %update_id,
-                    err,
+                    &err,
                 );
-                return;
+                return Err(UpdateDriverTaskError::AuxFlashUpdate(err));
             }
         }
     }
@@ -213,13 +260,15 @@ async fn drive_sp_update(
     {
         Ok(()) => {
             info!(log, "update complete"; "id" => %update_id);
+            Ok(())
         }
         Err(err) => {
             error!(
-                    log, "update failed";
+                log, "update failed";
                 "id" => %update_id,
-                err,
+                &err,
             );
+            Err(UpdateDriverTaskError::UpdateChunkDelivery(err))
         }
     }
 }
@@ -309,7 +358,7 @@ pub(super) async fn start_rot_update(
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
-) -> Result<(), UpdateError> {
+) -> Result<UpdateDriverTask, UpdateError> {
     let rot_image = match component {
         SpComponent::ROT => {
             match slot {
@@ -318,11 +367,13 @@ pub(super) async fn start_rot_update(
                     let archive = RawHubrisArchive::from_vec(image)?;
                     let rot_image = archive.image.to_binary()?;
 
-                    // Sanity check on `hubtools`: Prior to using hubtools, we would manually
-                    // extract `img/final.bin` from the archive (which is a zip file); we're now
-                    // using `archive.image.to_binary()` which _should_ be the same thing. Check
-                    // here and log a warning if it is not. We should never see this, but if we
-                    // do it's likely something is about to go wrong, and it'd be nice to have a
+                    // Sanity check on `hubtools`: Prior to using hubtools, we
+                    // would manually extract `img/final.bin` from the archive
+                    // (which is a zip file); we're now using
+                    // `archive.image.to_binary()` which _should_ be the same
+                    // thing. Check here and log a warning if it is not. We
+                    // should never see this, but if we do it's likely something
+                    // is about to go wrong, and it'd be nice to have a
                     // breadcrumb.
                     if let Ok(final_bin) = archive.extract_file("img/final.bin")
                     {
@@ -334,8 +385,8 @@ pub(super) async fn start_rot_update(
                         }
                     }
 
-                    // Preflight check 1: Does the image name of this archive match the target
-                    // slot?
+                    // Preflight check 1: Does the image name of this archive
+                    // match the target slot?
                     match archive.image_name() {
                         Ok(image_name) => match (image_name.as_str(), slot) {
                             ("a", 0) | ("b", 1) => (), // OK!
@@ -346,14 +397,16 @@ pub(super) async fn start_rot_update(
                                 })
                             }
                         },
-                        // At the time of this writing `image-name` is a recent addition to
-                        // hubris archives, so skip this check if we don't have one.
+                        // At the time of this writing `image-name` is a recent
+                        // addition to hubris archives, so skip this check if we
+                        // don't have one.
                         Err(HubtoolsError::MissingFile(..)) => (),
                         Err(err) => return Err(err.into()),
                     }
 
-                    // TODO: Add a caboose BORD preflight check just like the SP has, once the
-                    // RoT has a caboose and we have RPC calls to read its values.
+                    // TODO: Add a caboose BORD preflight check just like the SP
+                    // has, once the RoT has a caboose and we have RPC calls to
+                    // read its values.
                     rot_image
                 }
                 _ => return Err(UpdateError::InvalidSlotIdForOperation),
@@ -407,12 +460,12 @@ pub(super) async fn start_component_update(
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
-) -> Result<(), UpdateError> {
+) -> Result<UpdateDriverTask, UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
 
     info!(
-            log, "starting update";
+        log, "starting update";
         "component" => component.as_str(),
         "id" => %update_id,
         "total_size" => total_size,
@@ -431,15 +484,13 @@ pub(super) async fn start_component_update(
     .result
     .and_then(expect_component_update_prepare_ack)?;
 
-    tokio::spawn(drive_component_update(
+    Ok(UpdateDriverTask::spawn(drive_component_update(
         cmds_tx.clone(),
         component,
         update_id,
         image,
         log.clone(),
-    ));
-
-    Ok(())
+    )))
 }
 
 /// Function that should be `tokio::spawn`'d to drive a component update to
@@ -450,7 +501,7 @@ async fn drive_component_update(
     update_id: Uuid,
     image: Vec<u8>,
     log: Logger,
-) {
+) -> Result<(), UpdateDriverTaskError> {
     let id = update_id.into();
 
     // Wait until the SP has finished preparing for this update.
@@ -459,17 +510,17 @@ async fn drive_component_update(
     {
         Ok(_) => {
             info!(
-                    log, "update preparation complete";
+                log, "update preparation complete";
                 "update_id" => %update_id,
             );
         }
         Err(message) => {
             error!(
-                    log, "update preparation failed";
-                "err" => message,
+                log, "update preparation failed";
+                "err" => &message,
                 "update_id" => %update_id,
             );
-            return;
+            return Err(UpdateDriverTaskError::UpdatePreparation(message));
         }
     }
 
@@ -479,13 +530,15 @@ async fn drive_component_update(
     {
         Ok(()) => {
             info!(log, "update complete"; "id" => %update_id);
+            Ok(())
         }
         Err(err) => {
             error!(
-                    log, "update failed";
+                log, "update failed";
                 "id" => %update_id,
-                err,
+                &err,
             );
+            Err(UpdateDriverTaskError::UpdateChunkDelivery(err))
         }
     }
 }
@@ -604,7 +657,7 @@ async fn send_update_in_chunks(
     while !CursorExt::is_empty(&image) {
         let prior_pos = image.position();
         debug!(
-                log, "sending update chunk";
+            log, "sending update chunk";
             "id" => %update_id,
             "offset" => offset,
         );
