@@ -15,9 +15,11 @@ use futures::FutureExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
+use gateway_messages::SpError;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::UpdateChunk;
 use gateway_messages::UpdateId;
+use gateway_messages::UpdateInProgressStatus;
 use gateway_messages::UpdateStatus;
 use hubtools::Error as HubtoolsError;
 use hubtools::RawHubrisArchive;
@@ -671,6 +673,98 @@ async fn send_update_in_chunks(
             Ok(()) => {
                 // Update our offset according to how far our cursor advanced.
                 offset += (image.position() - prior_pos) as u32;
+            }
+            Err(
+                err @ CommunicationError::SpError(SpError::InvalidUpdateChunk),
+            ) => {
+                warn!(
+                    log,
+                    "received invalid update chunk from SP; attempting recovery"
+                );
+                // Ideally `InvalidUpdateChunk` would return the offset the SP
+                // wants. We could add a new error variant for that; fow now,
+                // try to recover by asking the SP what chunk it expected.
+                let status = match super::rpc(
+                    cmds_tx,
+                    MgsRequest::UpdateStatus(component),
+                    None,
+                )
+                .await
+                .result
+                .and_then(expect_update_status)
+                {
+                    Ok(status) => status,
+                    Err(status_err) => {
+                        error!(
+                            log,
+                            "invalid update chunk recovery failed: \
+                             could not get update status from SP";
+                            &status_err,
+                        );
+                        return Err(err);
+                    }
+                };
+
+                // We can only recover if the SP still thinks this update is in
+                // progress.
+                let UpdateStatus::InProgress(progress) = status else {
+                    error!(
+                        log,
+                        "invalid update chunk recovery failed: \
+                         SP update status is not in progress";
+                        "status" => ?status,
+                    );
+                    return Err(err);
+                };
+
+                let UpdateInProgressStatus { id, bytes_received, total_size } =
+                    progress;
+                let id = Uuid::from(id);
+
+                if id != update_id {
+                    error!(
+                        log,
+                        "invalid update chunk recovery failed: \
+                         a different update is in progress";
+                        "our_update_id" => %update_id,
+                        "sp_update_id" => %id,
+                    );
+                    return Err(err);
+                }
+
+                if usize::try_from(total_size).expect("u32 fits in usize")
+                    != image.get_ref().len()
+                {
+                    error!(
+                        log,
+                        "invalid update chunk recovery failed: \
+                         SP expects an incorrect image length";
+                        "our_image_len" => image.get_ref().len(),
+                        "sp_expects_len" => total_size,
+                    );
+                    return Err(err);
+                }
+
+                if bytes_received > total_size {
+                    error!(
+                        log,
+                        "invalid update chunk recovery failed: \
+                         invalid update status from SP \
+                         (bytes_received > total_size ?!)";
+                        "status" => ?status,
+                    );
+                    return Err(err);
+                }
+
+                warn!(
+                    log,
+                    "invalid update chunk recovery: attempting to resume \
+                     from offset {bytes_received}"
+                );
+
+                // Rewind both our offset and the cursor on the data.
+                offset = bytes_received;
+                image.set_position(u64::from(bytes_received));
             }
             Err(err) => {
                 return Err(err);
