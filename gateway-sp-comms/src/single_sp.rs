@@ -91,6 +91,9 @@ use self::update::start_rot_update;
 use self::update::start_sp_update;
 use self::update::update_status;
 
+pub use self::update::UpdateDriverTask;
+pub use self::update::UpdateDriverTaskError;
+
 // Once we've discovered an SP, continue to send discovery packets on this
 // interval to detect changes.
 //
@@ -111,16 +114,6 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
-
-#[derive(Debug, thiserror::Error)]
-pub enum UpdateDriverTaskError {
-    #[error("update preparation failed: {0}")]
-    UpdatePreparation(String),
-    #[error("aux flash update failed")]
-    AuxFlashUpdate(#[source] CommunicationError),
-    #[error("update chunk delivery failed")]
-    UpdateChunkDelivery(#[source] CommunicationError),
-}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct HostPhase2Request {
@@ -731,8 +724,7 @@ impl SingleSp {
         update_id: Uuid,
         slot: u16,
         image: Vec<u8>,
-    ) -> Result<JoinHandle<Result<(), UpdateDriverTaskError>>, UpdateError>
-    {
+    ) -> Result<UpdateDriverTask, UpdateError> {
         if image.is_empty() {
             return Err(UpdateError::ImageEmpty);
         }

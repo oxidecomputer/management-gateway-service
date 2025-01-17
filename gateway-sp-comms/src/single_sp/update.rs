@@ -7,9 +7,11 @@
 use super::CursorExt;
 use super::InnerCommand;
 use super::Result;
-use super::UpdateDriverTaskError;
+use crate::error::CommunicationError;
 use crate::error::UpdateError;
 use crate::sp_response_expect::*;
+use futures::Future;
+use futures::FutureExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
@@ -30,8 +32,53 @@ use std::io::Read;
 use std::time::Duration;
 use tlvc::TlvcReader;
 use tokio::sync::mpsc;
+use tokio::task::JoinError;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
+
+#[derive(Debug, thiserror::Error)]
+pub enum UpdateDriverTaskError {
+    #[error("update preparation failed: {0}")]
+    UpdatePreparation(String),
+    #[error("aux flash update failed")]
+    AuxFlashUpdate(#[source] CommunicationError),
+    #[error("update chunk delivery failed")]
+    UpdateChunkDelivery(#[source] CommunicationError),
+}
+
+/// A newtype wrapper around the [`JoinHandle`] for the tokio task responsible
+/// for driving an update.
+///
+/// Allows callers to check for completion (and whether that completion
+/// succeeded or failed), but does not allow callers to abort the update task.
+pub struct UpdateDriverTask {
+    inner: JoinHandle<Result<(), UpdateDriverTaskError>>,
+}
+
+impl UpdateDriverTask {
+    fn spawn<T>(task: T) -> Self
+    where
+        T: Future<Output = Result<(), UpdateDriverTaskError>> + Send + 'static,
+    {
+        let inner = tokio::task::spawn(task);
+        Self { inner }
+    }
+
+    pub fn is_finished(&self) -> bool {
+        self.inner.is_finished()
+    }
+}
+
+impl Future for UpdateDriverTask {
+    type Output = Result<Result<(), UpdateDriverTaskError>, JoinError>;
+
+    fn poll(
+        mut self: std::pin::Pin<&mut Self>,
+        cx: &mut std::task::Context<'_>,
+    ) -> std::task::Poll<Self::Output> {
+        self.inner.poll_unpin(cx)
+    }
+}
 
 /// Start an update to the SP itself.
 ///
@@ -42,7 +89,7 @@ pub(super) async fn start_sp_update(
     update_id: Uuid,
     image: Vec<u8>,
     log: &Logger,
-) -> Result<JoinHandle<Result<(), UpdateDriverTaskError>>, UpdateError> {
+) -> Result<UpdateDriverTask, UpdateError> {
     let archive = RawHubrisArchive::from_vec(image)?;
 
     let sp_image = archive.image.to_binary()?;
@@ -125,7 +172,7 @@ pub(super) async fn start_sp_update(
     .result
     .and_then(expect_sp_update_prepare_ack)?;
 
-    Ok(tokio::spawn(drive_sp_update(
+    Ok(UpdateDriverTask::spawn(drive_sp_update(
         cmds_tx.clone(),
         update_id,
         aux_image,
@@ -311,7 +358,7 @@ pub(super) async fn start_rot_update(
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
-) -> Result<JoinHandle<Result<(), UpdateDriverTaskError>>, UpdateError> {
+) -> Result<UpdateDriverTask, UpdateError> {
     let rot_image = match component {
         SpComponent::ROT => {
             match slot {
@@ -413,7 +460,7 @@ pub(super) async fn start_component_update(
     slot: u16,
     image: Vec<u8>,
     log: &Logger,
-) -> Result<JoinHandle<Result<(), UpdateDriverTaskError>>, UpdateError> {
+) -> Result<UpdateDriverTask, UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
 
@@ -437,7 +484,7 @@ pub(super) async fn start_component_update(
     .result
     .and_then(expect_component_update_prepare_ack)?;
 
-    Ok(tokio::spawn(drive_component_update(
+    Ok(UpdateDriverTask::spawn(drive_component_update(
         cmds_tx.clone(),
         component,
         update_id,
@@ -610,7 +657,7 @@ async fn send_update_in_chunks(
     while !CursorExt::is_empty(&image) {
         let prior_pos = image.position();
         debug!(
-                log, "sending update chunk";
+            log, "sending update chunk";
             "id" => %update_id,
             "offset" => offset,
         );
