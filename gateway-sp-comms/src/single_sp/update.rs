@@ -749,13 +749,23 @@ async fn determine_update_resume_point_via_update_status(
     image_len: usize,
     log: &Logger,
 ) -> Option<u32> {
-    let status =
+    // We can only recover if the SP still thinks this update is in progress.
+    let progress =
         match super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
             .await
             .result
             .and_then(expect_update_status)
         {
-            Ok(status) => status,
+            Ok(UpdateStatus::InProgress(progress)) => progress,
+            Ok(other_status) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     SP update status is not in progress";
+                    "status" => ?other_status,
+                );
+                return None;
+            }
             Err(status_err) => {
                 error!(
                     log,
@@ -766,17 +776,6 @@ async fn determine_update_resume_point_via_update_status(
                 return None;
             }
         };
-
-    // We can only recover if the SP still thinks this update is in progress.
-    let UpdateStatus::InProgress(progress) = status else {
-        error!(
-            log,
-            "invalid update chunk recovery failed: \
-             SP update status is not in progress";
-            "status" => ?status,
-        );
-        return None;
-    };
 
     let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
     let id = Uuid::from(id);
@@ -819,7 +818,8 @@ async fn determine_update_resume_point_via_update_status(
             "invalid update chunk recovery failed: \
              invalid update status from SP \
              (bytes_received > total_size ?!)";
-            "status" => ?status,
+            "bytes_received" => bytes_received,
+            "total_size" => total_size,
         );
         return None;
     }
