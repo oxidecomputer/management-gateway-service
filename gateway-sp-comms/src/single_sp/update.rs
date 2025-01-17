@@ -168,7 +168,7 @@ async fn drive_sp_update(
                 "err" => &message,
                 "update_id" => %update_id,
             );
-            return Err(UpdateDriverTaskError::UpdatePrepration(message));
+            return Err(UpdateDriverTaskError::UpdatePreparation(message));
         }
     };
 
@@ -473,7 +473,7 @@ async fn drive_component_update(
                 "err" => &message,
                 "update_id" => %update_id,
             );
-            return Err(UpdateDriverTaskError::UpdatePrepration(message));
+            return Err(UpdateDriverTaskError::UpdatePreparation(message));
         }
     }
 
