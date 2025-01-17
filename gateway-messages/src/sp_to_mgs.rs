@@ -984,7 +984,7 @@ pub enum SpError {
     /// Received an invalid update chunk; the SP was expecting an update chunk
     /// with a different offset.
     ///
-    /// This error may indicate packet less from the SP to MGS (e.g., MGS will
+    /// This error may indicate packet loss from the SP to MGS (e.g., MGS will
     /// resend an already-received-by-the-SP update chunk if it missed an ACK).
     /// This error should be recoverable by asking the SP for its update status
     /// to determine which chunk it wants and resuming from there. MGS and
