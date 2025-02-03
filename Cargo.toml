@@ -39,7 +39,7 @@ paste = "1.0.15"
 rand = "0.8.5"
 serde = { version = "1.0", default-features = false, features = ["derive"] }
 serde-big-array = "0.5.1"
-serde_json = "1.0.137"
+serde_json = "1.0.138"
 serde_repr = { version = "0.1" }
 sha2 = "0.10"
 slog = { version = "2.7", features = ["max_level_trace", "release_max_level_trace"] }
