@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use async_recursion::async_recursion;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -38,6 +39,9 @@ use gateway_sp_comms::SpRetryConfig;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
+use rhai::{Engine, Scope, Dynamic};
+use rhai::packages::Package;
+use rhai_fs::FilesystemPackage;
 use serde_json::json;
 use slog::debug;
 use slog::info;
@@ -124,6 +128,13 @@ struct Args {
     #[clap(long, default_value = "2000")]
     per_attempt_timeout_millis: u64,
 
+    #[clap(subcommand)]
+    command: Command,
+}
+
+/// Command line program that can send MGS messages to a single SP.
+#[derive(Parser, Debug)]
+struct RhaiArgs {
     #[clap(subcommand)]
     command: Command,
 }
@@ -381,6 +392,15 @@ enum Command {
         /// Reset without the automatic safety rollback watchdog (if applicable)
         #[clap(long)]
         disable_watchdog: bool,
+    },
+
+    /// Run a Rhai script within faux-mgs
+    Rhai {
+        /// Path to Rhia script
+        script: PathBuf,
+        /// Additional arguments passed to Rhia scripe
+        #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
+        script_args: Vec<String>,
     },
 
     /// Controls the system LED
@@ -826,7 +846,7 @@ async fn main() -> Result<()> {
         .into_iter()
         .map(|sp| {
             let interface = sp.interface().to_string();
-            run_command(
+            run_any_command(
                 sp,
                 args.command.clone(),
                 args.json.is_some(),
@@ -894,8 +914,24 @@ fn ssh_list_keys(socket: &PathBuf) -> Result<Vec<ssh_key::PublicKey>> {
     client.list_identities().context("failed to list identities")
 }
 
-async fn run_command(
+async fn run_any_command(
     sp: SingleSp,
+    command: Command,
+    json: bool,
+    log: Logger,
+) -> Result<Output> {
+    match command {
+        Command::Rhai { script, script_args } => {
+            interpreter(&sp, log, script, script_args).await
+        }
+        _ => {
+            run_command(&sp, command, json, log).await
+        }
+    }
+}
+
+async fn run_command(
+    sp: &SingleSp,
     command: Command,
     json: bool,
     log: Logger,
@@ -1255,7 +1291,7 @@ async fn run_command(
             let data = fs::read(&image).with_context(|| {
                 format!("failed to read {}", image.display())
             })?;
-            update(&log, &sp, component, slot, data).await.with_context(
+            update(&log, sp, component, slot, data).await.with_context(
                 || {
                     format!(
                         "updating {} slot {} to {} failed",
@@ -1299,7 +1335,7 @@ async fn run_command(
                     ..
                 } => {
                     let id = Uuid::from(id);
-                    format!("update {id} aux flash scan complete (found_match={found_match}")
+                    format!("update {id} aux flash scan complete (found_match={found_match})")
                 }
                 UpdateStatus::InProgress(sub_status) => {
                     let id = Uuid::from(sub_status.id);
@@ -1380,7 +1416,9 @@ async fn run_command(
                 Ok(Output::Lines(vec!["reset complete".to_string()]))
             }
         }
-
+        Command::Rhai { script, script_args } => {
+            interpreter(sp, log, script, script_args).await
+        }
         Command::ResetComponent { component, disable_watchdog } => {
             sp.reset_component_prepare(component).await?;
             info!(log, "SP is prepared to reset component {component}",);
@@ -1471,7 +1509,7 @@ async fn run_command(
                         }
                         monorail_unlock(
                             &log,
-                            &sp,
+                            sp,
                             time_sec,
                             ssh_auth_sock,
                             key,
@@ -1785,6 +1823,142 @@ fn ssh_keygen_sign(
     Ok(sig)
 }
 
+/// Use a Rhai interpreter per SingleSp that can maintain a connection.
+#[async_recursion]
+async fn interpreter(
+    sp: &SingleSp,
+    log: Logger,
+    script: PathBuf,
+    script_args: Vec<String>,
+) -> Result<Output> {
+    // Channel: Script -> Master
+    let (tx_script, rx_master) = std::sync::mpsc::sync_channel::<String>(1);
+    // Channel: Master -> Script
+    let (tx_master, rx_script) = std::sync::mpsc::sync_channel::<String>(1);
+
+    let interface = sp.interface().to_string().to_owned();
+    let wd_timeout_ms = sp.reset_watchdog_timeout_ms() as i64;
+    let handle = std::thread::spawn(
+        move || {
+            // Create Engine
+            let mut engine = Engine::new();
+
+            let fs = FilesystemPackage::new();
+
+            fs.register_into_engine(&mut engine);
+            engine.set_max_expr_depths(100,20);
+
+            let program = fs::read_to_string(&script)
+                .with_context(|| format!("failed to read {}", script.display()))
+                .unwrap();
+
+            // TODO: Consider adding a variable resolver for
+            //   - environment variables
+            //   - Hubris archive info/files
+            // https://rhai.rs/book/engine/var.html#variable-resolver
+
+            // Communication with the script is through JSON objects.
+            engine
+                    // Script can get results of running a faux-mgs "command ..."
+                .register_fn("get",
+                    move || -> Dynamic {
+                        match rx_script.recv() {
+                            Ok(v) => {
+                                serde_json::from_str::<Dynamic>(&v).unwrap()
+                            }
+                            Err(e) => {
+                                let err = format!("{{\"error\": \"{:?}\"}}", e).to_string();
+                                serde_json::from_str::<Dynamic>(&err).unwrap()
+                            }
+                        }
+                    }
+                )
+                    // Script can send an array of strings as faux-mgs "command ..."
+                .register_fn("put",
+                    move |v: Dynamic| {
+                        tx_script.send(
+                            serde_json::to_string(&v).unwrap()
+                        )
+                    }
+                )
+                    // Script can conver a JSON formatted string to a map
+                .register_fn("json_to_map",
+                    move |v: Dynamic| -> Dynamic {
+                        match v.into_string() {
+                            Ok(s) => {
+                                serde_json::from_str::<Dynamic>(&s).unwrap()
+                            }
+                            Err(e) => {
+                                let err = format!("{{\"error\": \"{:?}\"}}", e).to_string();
+                                serde_json::from_str::<Dynamic>(&err).unwrap()
+                            }
+                        }
+                    }
+                );
+
+            match engine.compile(program) {
+                Ok(ast) => {
+                    let mut scope = Scope::new();
+                    // TODO call main with args
+                    scope.push_dynamic("argv", script_args.clone().into());
+                    scope.push_dynamic("rbi_default", RotBootInfo::HIGHEST_KNOWN_VERSION.to_string().into());
+                    scope.push_dynamic("interface", interface.into());
+                    scope.push_dynamic("reset_watchdog_timeout_ms", wd_timeout_ms.into());
+                    // TODO return value of main should be mappable to Output or Err
+                    match engine.call_fn::<i64>(&mut scope, &ast, "main", (script_args.clone(), )) {
+                        Ok(exit_value) => Ok(Output::Json(json!({"exit": exit_value}))),
+                        Err(err) => {
+                            match engine.call_fn::<i64>(&mut scope, &ast, "main", ()) {
+                                Ok(exit_value) => Ok(Output::Json(json!({"exit": exit_value}))),
+                                Err(_) => Err(anyhow!("{err}")),
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    Err(anyhow!(format!("failed to parse {}: {:?}", &script.display(), e)))
+                }
+            }
+        }
+    );
+
+    while let Ok(command_args) = rx_master.recv() {
+        // Service the scripts "put" and "get" functions to send commands and receive results
+        // from those commands.
+        // The script can only send use arrays of strings.
+        if let Ok(serde_json::Value::Array(j)) = serde_json::from_str(&command_args) {
+            let a: Vec<String> = j.iter().map(|v| v.as_str().unwrap().to_string()).collect();
+            info!(log, "vec string: {:?}", a);
+            let mut ra = vec![];
+            // The clap crate is expecting ARGV[0] as the program name, insert a dummy.
+            ra.push("faux-mgs".to_string());
+            ra.append(&mut a.clone());
+
+            let args = RhaiArgs::parse_from(&ra);
+            if let Ok(Output::Json(json)) = run_command(sp, args.command, true, log.clone()).await {
+                let obj = json.as_object().unwrap().clone();
+                info!(log, "sending to rhai script: {:?}", obj);
+                let r = match serde_json::to_string(&obj) {
+                    Ok(s) => s,
+                    Err(e) => {
+                        format!("{{\"error\": \"{:?}\"}}", e).to_string()
+                    }
+                };
+                tx_master.send(r)?
+            } else {
+                break;
+            }
+        } else {
+            break;
+        }
+    }
+
+    match  handle.join() {
+        Ok(result) => result,
+        Err(err) => Err(anyhow!("{:?}", err)),
+    }
+}
+
 fn handle_cxpa(
     name: &str,
     data: [u8; ROT_PAGE_SIZE],
@@ -1965,6 +2139,7 @@ async fn populate_phase2_images(
     Ok(())
 }
 
+#[derive(Clone)]
 enum Output {
     Json(serde_json::Value),
     Lines(Vec<String>),

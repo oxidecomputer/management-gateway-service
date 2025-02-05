@@ -6,6 +6,7 @@ license = "MPL-2.0"
 
 [dependencies]
 anyhow.workspace = true
+async-recursion.workspace = true
 async-trait.workspace = true
 clap.workspace = true
 futures.workspace = true
@@ -14,6 +15,8 @@ hex.workspace = true
 humantime.workspace = true
 nix.workspace = true
 rand.workspace = true
+rhai.workspace = true
+rhai-fs.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
