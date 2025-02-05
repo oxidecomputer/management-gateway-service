@@ -32,3 +32,19 @@ zerocopy.workspace = true
 
 gateway-messages = { workspace = true, features = ["std"] }
 gateway-sp-comms.workspace = true
+
+async-recursion = { workspace = true, optional = true }
+hubtools = { workspace = true, optional = true }
+lpc55_areas = { workspace = true, optional = true }
+lpc55_sign= { workspace = true, optional = true }
+rhai-chrono = { workspace = true, optional = true }
+rhai-env = { workspace = true, optional = true }
+rhai-fs = { workspace = true, optional = true }
+rhai = { workspace = true, optional = true }
+thiserror = { workspace = true, optional = true }
+toml = { workspace = true, optional = true }
+
+[features]
+# XXX remove rhaiscript as a defailt feature
+default = ["rhaiscript"]
+rhaiscript = [ "dep:async-recursion", "dep:hubtools", "dep:lpc55_areas", "dep:lpc55_sign", "dep:rhai", "dep:rhai-chrono", "dep:rhai-env", "dep:rhai-fs", "dep:thiserror", "dep:toml"]

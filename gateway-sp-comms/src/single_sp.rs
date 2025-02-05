@@ -430,6 +430,10 @@ impl SingleSp {
         &self.interface
     }
 
+    pub fn reset_watchdog_timeout_ms(&self) -> u32 {
+        self.reset_watchdog_timeout_ms
+    }
+
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
     /// SP's address.
     pub fn sp_addr_watch(
