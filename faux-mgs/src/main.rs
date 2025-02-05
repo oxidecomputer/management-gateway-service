@@ -63,6 +63,8 @@ use uuid::Uuid;
 use zerocopy::IntoBytes;
 
 mod picocom_map;
+#[cfg(feature = "rhaiscript")]
+mod rhaiscript;
 mod usart;
 
 /// Command line program that can send MGS messages to a single SP.
@@ -124,6 +126,14 @@ struct Args {
     #[clap(long, default_value = "2000")]
     per_attempt_timeout_millis: u64,
 
+    #[clap(subcommand)]
+    command: Command,
+}
+
+/// Command line program that can send MGS messages to a single SP.
+#[cfg(feature = "rhaiscript")]
+#[derive(Parser, Debug)]
+struct RhaiArgs {
     #[clap(subcommand)]
     command: Command,
 }
@@ -392,6 +402,16 @@ enum Command {
         /// Reset without the automatic safety rollback watchdog (if applicable)
         #[clap(long)]
         disable_watchdog: bool,
+    },
+
+    /// Run a Rhai script within faux-mgs
+    #[cfg(feature = "rhaiscript")]
+    Rhai {
+        /// Path to Rhia script
+        script: PathBuf,
+        /// Additional arguments passed to Rhia scripe
+        #[clap(trailing_var_arg = true, allow_hyphen_values = true)]
+        script_args: Vec<String>,
     },
 
     /// Controls the system LED
@@ -837,7 +857,7 @@ async fn main() -> Result<()> {
         .into_iter()
         .map(|sp| {
             let interface = sp.interface().to_string();
-            run_command(
+            run_any_command(
                 sp,
                 args.command.clone(),
                 args.json.is_some(),
@@ -911,8 +931,25 @@ fn ssh_list_keys(socket: &PathBuf) -> Result<Vec<ssh_key::PublicKey>> {
     client.list_identities().context("failed to list identities")
 }
 
-async fn run_command(
+/// This function exists to break recursive calls to the Rhai interpreter.
+/// main() calls here but Rhai{...} calls run_command().
+async fn run_any_command(
     sp: SingleSp,
+    command: Command,
+    json: bool,
+    log: Logger,
+) -> Result<Output> {
+    match command {
+        #[cfg(feature = "rhaiscript")]
+        Command::Rhai { script, script_args } => {
+            rhaiscript::interpreter(&sp, log, script, script_args).await
+        }
+        _ => run_command(&sp, command, json, log).await,
+    }
+}
+
+async fn run_command(
+    sp: &SingleSp,
     command: Command,
     json: bool,
     log: Logger,
@@ -1274,7 +1311,7 @@ async fn run_command(
             let data = fs::read(&image).with_context(|| {
                 format!("failed to read {}", image.display())
             })?;
-            update(&log, &sp, component, slot, data).await.with_context(
+            update(&log, sp, component, slot, data).await.with_context(
                 || {
                     format!(
                         "updating {} slot {} to {} failed",
@@ -1399,7 +1436,10 @@ async fn run_command(
                 Ok(Output::Lines(vec!["reset complete".to_string()]))
             }
         }
-
+        #[cfg(feature = "rhaiscript")]
+        Command::Rhai { script, script_args } => {
+            rhaiscript::interpreter(sp, log, script, script_args).await
+        }
         Command::ResetComponent { component, disable_watchdog } => {
             sp.reset_component_prepare(component).await?;
             info!(log, "SP is prepared to reset component {component}",);
@@ -1488,14 +1528,8 @@ async fn run_command(
                         if time_sec == 0 {
                             bail!("--time must be >= 1 second");
                         }
-                        monorail_unlock(
-                            &log,
-                            &sp,
-                            time_sec,
-                            ssh_auth_sock,
-                            key,
-                        )
-                        .await?;
+                        monorail_unlock(&log, sp, time_sec, ssh_auth_sock, key)
+                            .await?;
                     }
                 }
             }
@@ -1984,6 +2018,7 @@ async fn populate_phase2_images(
     Ok(())
 }
 
+#[derive(Clone)]
 enum Output {
     Json(serde_json::Value),
     Lines(Vec<String>),
