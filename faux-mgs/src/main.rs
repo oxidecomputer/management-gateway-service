@@ -52,11 +52,13 @@ use std::fs;
 use std::fs::File;
 use std::io;
 use std::mem;
+use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use tokio::net::UdpSocket;
 use uuid::Uuid;
 use zerocopy::AsBytes;
 
@@ -100,6 +102,13 @@ struct Args {
     /// multiple times.
     #[clap(long, required = true)]
     interface: Vec<String>,
+
+    /// Address to talk to an `sp-sim` instance.
+    ///
+    /// Bypasses the normal mechanism of IPv6 scope ID-based packet
+    /// identification supported by `--interface`.
+    #[clap(long, conflicts_with_all = ["discovery_addr", "interface"])]
+    sp_sim_addr: Option<SocketAddrV6>,
 
     /// Maximum number of attempts to make when sending general (non-reset)
     /// requests to the SP.
@@ -697,21 +706,41 @@ async fn main() -> Result<()> {
     .await
     .context("SharedSocket:bind() failed")?;
 
-    let interfaces = build_requested_interfaces(args.interface)?;
-    let mut sps = Vec::with_capacity(interfaces.len());
-    for interface in interfaces {
-        info!(log, "creating SP handle on interface {interface}");
-        sps.push(
-            SingleSp::new(
-                &shared_socket,
-                SwitchPortConfig {
-                    discovery_addr: args.discovery_addr,
-                    interface,
-                },
-                retry_config,
-            )
-            .await,
+    let mut sps = Vec::new();
+
+    if let Some(sp_sim_addr) = args.sp_sim_addr {
+        info!(
+            log,
+            "creating SP handle on to talk to SP simulator at {sp_sim_addr}"
         );
+        // Bind a new socket for each simulated switch port.
+        let bind_addr: SocketAddrV6 =
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0);
+        let socket = UdpSocket::bind(bind_addr)
+            .await
+            .with_context(|| format!("failed to bind to {bind_addr}"))?;
+        sps.push(SingleSp::new_direct_socket_for_testing(
+            socket,
+            sp_sim_addr,
+            retry_config,
+            log.clone(),
+        ));
+    } else {
+        let interfaces = build_requested_interfaces(args.interface)?;
+        for interface in interfaces {
+            info!(log, "creating SP handle on interface {interface}");
+            sps.push(
+                SingleSp::new(
+                    &shared_socket,
+                    SwitchPortConfig {
+                        discovery_addr: args.discovery_addr,
+                        interface,
+                    },
+                    retry_config,
+                )
+                .await,
+            );
+        }
     }
 
     let num_sps = sps.len();
