@@ -837,6 +837,7 @@ async fn main() -> Result<()> {
         .collect::<FuturesOrdered<_>>();
 
     let mut by_interface = BTreeMap::new();
+    let mut did_fail = false;
     while let Some((interface, result)) = all_results.next().await {
         let prefix = if args.json.is_none() && num_sps > 1 {
             format!("{interface:maxwidth$} ")
@@ -853,6 +854,7 @@ async fn main() -> Result<()> {
                 }
             }
             Err(err) => {
+                did_fail = true;
                 if args.json.is_some() {
                     by_interface.insert(interface, Err(format!("{err:#}")));
                 } else {
@@ -874,6 +876,10 @@ async fn main() -> Result<()> {
         None => {
             // nothing to do; already preinted in the loop above
         }
+    }
+
+    if did_fail {
+        std::process::exit(1);
     }
 
     Ok(())
