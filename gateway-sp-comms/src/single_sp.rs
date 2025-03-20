@@ -919,6 +919,7 @@ impl SingleSp {
     ) -> Result<()> {
         // If the SP has an update pending, then try to use the watchdog reset
         let mut use_watchdog = !disable_watchdog
+            && matches!(component, SpComponent::SP_ITSELF)
             && matches!(
                 self.update_status(component).await?,
                 UpdateStatus::Complete(..)
@@ -1022,6 +1023,15 @@ impl SingleSp {
                 SpError::ResetComponentTriggerWithoutPrepare
                 | SpError::Monorail(MonorailError::ManagementNetworkLocked),
             )) if component == SpComponent::SP_ITSELF => Ok(()),
+
+            // If we reset the Monorail subsystem, then (depending on which port
+            // we're using to talk to the SP) it may not be able to reply; we'll
+            // keep sending the Trigger command, and will expect to receive this
+            // error once the network comes back up.
+            Err(CommunicationError::SpError(
+                SpError::ResetComponentTriggerWithoutPrepare,
+            )) if component == SpComponent::MONORAIL => Ok(()),
+
             Err(other) => Err(other),
         };
 
