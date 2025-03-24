@@ -45,6 +45,5 @@ thiserror = { workspace = true, optional = true }
 toml = { workspace = true, optional = true }
 
 [features]
-# XXX remove rhaiscript as a defailt feature
 default = ["rhaiscript"]
 rhaiscript = [ "dep:async-recursion", "dep:hubtools", "dep:lpc55_areas", "dep:lpc55_sign", "dep:rhai", "dep:rhai-chrono", "dep:rhai-env", "dep:rhai-fs", "dep:thiserror", "dep:toml"]
