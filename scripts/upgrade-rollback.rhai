@@ -16,7 +16,7 @@ fn main() {
     // Display start time
     let start_ts = timestamp();
     let start_time = datetime_local();
-    print(`Starting at ${start_time}`);
+    debug(`info|Starting at ${start_time}`);
 
     let conf = process_cli(argv);
     switch type_of(conf) {
@@ -58,7 +58,7 @@ fn main() {
                 print(`The SP probably needs to be reset before continuing`);
                 print(`Trying to abort the update with id=${id}`);
                 let r = faux_mgs(["update-abort", component, `${id}`]);
-                debug(`update-abort = ${r}`);
+                debug(`info|update-abort = ${r}`);
             }
         }
         if problems == 0 {
@@ -107,7 +107,7 @@ fn main() {
     }
 
     // Update RoT with baseline image
-    debug(`Flash baseline rot hubris`);
+    debug(`info|Flash baseline rot hubris`);
     if flash_rot && !update_rot_hubris(conf.base.rot_a, conf.base.rot_b) {
         return 1
     }
@@ -120,7 +120,7 @@ fn main() {
         let result = image_check("base", images);
         if result?.error != () || result.ok.sp || result.ok.rot {
             // Not able to check images or one or both base images not installed.
-            debug(`image_check error or failed BASE image updates: ${result}`);
+            debug(`warn|image_check error or failed BASE image updates: ${result}`);
             return 1;
         }
     }
@@ -144,25 +144,25 @@ fn main() {
             "rot_b_path": conf.base.rot_b,
         }
     ] {
-        print("");
-        print(`## ${v.up_down} to ${v.label} images`);
-        debug(`${v.up_down} SP Hubris to ${v.label} image`);
-        if !update_sp(v.sp_path) {
-            print(`Failed to ${v.up_down} SP Hubris to ${v.label} image`);
-            return 1;
-        }
-        debug(`${v.up_down} Rot Hubris to ${v.label} image`);
+        debug(`info|${v.up_down} Rot Hubris to ${v.label} image`);
         if !update_rot_hubris(v.rot_a_path, v.rot_b_path) {
-            print(`Failed to ${v.up_down} RoT Hubris to ${v.label} image: ${r}`);
+            debug(`error|Failed to ${v.up_down} RoT Hubris to ${v.label} image: ${r}`);
             return 1
         }
+
+        debug(`info|${v.up_down} SP Hubris to ${v.label} image`);
+        if !update_sp(v.sp_path) {
+            debug(`error|Failed to ${v.up_down} SP Hubris to ${v.label} image: ${r}`);
+            return 1;
+        }
+
         let result = image_check(v.branch, images);
         if result?.error != () || result.ok.sp || result.ok.rot {
             // Not able to check images or one or both ${branch} images not installed.
-            debug(`image_check error or failed ${label} image updates: ${result}`);
+            debug(`error|image_check error or failed ${label} image updates: ${result}`);
             return 1;
         }
-        print(`### SUCCESS: ${v.up_down} to SP and RoT ${v.label} images`);
+        debug(`info|### SUCCESS: ${v.up_down} to SP and RoT ${v.label} images`);
     }
 
     print("");
@@ -242,15 +242,37 @@ fn process_cli(argv) {
                 print(`No configuration for image ${branch}.${image}`);
             } else {
                 conf[branch][image] = zip_path;
-                debug(`conf.${branch}.${image}=${zip_path}`);
+                debug(`info|conf.${branch}.${image}=${zip_path}`);
             }
         };
     }
+
+    // If ipcc has been specified, then include that as well
+    let faux_ipcc_path = config?.ipcc?.faux_ipcc;
+    let x = 1;
+    let a = if x == 2 {
+      3
+    } else {
+      4
+    };
+    print(x);
+    conf.ipcc = if faux_ipcc_path != () {
+        #{
+          "use_ipcc": true,
+          "faux_ipcc": util::env_expand(config.ipcc.faux_ipcc, config),
+          "port": util::env_expand(config.ipcc?.port, config),
+        }
+    } else {
+        #{
+          "use_ipcc": false,
+        }
+    };
 
     if conf.verbose {
         print("");
         print(`Parsed conf=${conf}`);
     }
+
     conf
 }
 
@@ -350,7 +372,7 @@ fn check_update_in_progress(component) {
     let r = faux_mgs(["update-status", component]);
     debug(`update_status(${component})=${r}`);
     if r?.Err != () {
-        debug(`failed update-status: ${r}`);
+        debug(`error|failed update-status: ${r}`);
         return r;
     }
     if r?.Ok == "None" {
@@ -374,7 +396,7 @@ fn check_update_in_progress(component) {
             "id":  util::to_hexstring(r.Complete),
         };
     }
-    debug(`update-status: ${r}`);
+    debug(`error|update-status: ${r}`);
     return #{"Err": `unknown update-status: ${r}`};
 }
 
@@ -388,7 +410,7 @@ fn update_sp(sp_zip) {
     if r?.ack == "updated" {
         print("flash_sp updated");
     } else {
-        debug("#### FAILED flash_sp update");
+        debug("error|#### FAILED flash_sp update");
         print("FAIL\n");
         return false;
     }
@@ -404,7 +426,7 @@ fn update_sp(sp_zip) {
     let r = faux_mgs(["component-active-slot", "--persist", "-s", "0", "sp"]);
     debug(`persist result = ${r}`);
     if r?["ack"] == () || r.ack != "set" || r.slot != 0 {
-        debug("Failed to persist");
+        debug("error|Failed to persist");
         print("FAIL\n");
         return false;
     }
@@ -414,7 +436,7 @@ fn update_sp(sp_zip) {
     let r = faux_mgs(["reset"]);
     debug(`faux-mgs reset => ${r}`);
     if r?.ack != "reset" {
-        debug(`unexpected sp reset response: ${r}`);
+        debug(`warn|unexpected sp reset response: ${r}`);
         print("FAIL\n");
         return false;
     }
@@ -463,13 +485,13 @@ fn update_rot_hubris(path_a, path_b) {
     let r = faux_mgs(["component-active-slot", "-p", "-s", `${rot_update_slot}`, "rot"]);
     debug(`persist result = ${r}`);
     if r?.ack == () || r.ack != "set" || r.slot != rot_update_slot {
-        debug(`Failed to persist rot: r=${r}`);
+        debug(`error|Failed to persist rot: r=${r}`);
         print("");
         return false;
     }
     let r = faux_mgs(["reset-component", "rot"]);
     if r?.ack != "reset" {
-        debug(`reset failed: ${r}`);
+        debug(`error|reset failed: ${r}`);
         print("");
         return false;
     }
@@ -535,7 +557,7 @@ fn image_check(branch, images) {
 
     let need_flash = rot_needs_flashing(`${branch}`, images.by_gitc);
     if need_flash?.error != () {
-        debug(`Error: ${need_flash}`);
+        debug(`error|${need_flash}`);
         error["rot"] = `${flash_rot}`;
     } else {
         ok["rot"] = need_flash.ok;
@@ -583,13 +605,13 @@ fn rot_needs_flashing(branch, gitc) {
     debug(`gitc[${rot_gitc}]=${gitc?[rot_gitc]}`);
     let known_gitc = gitc?[rot_gitc];
     if known_gitc == () {
-        print("    the RoT is not running a BASE or UNDER-TEST image.");
+        debug("info|the RoT is not running a BASE or UNDER-TEST image.");
         #{"ok": true}
     } else if branch_rot_name in known_gitc {
-        debug(`${branch_rot_name} IS in ${known_gitc}`);
+        debug(`info|${branch_rot_name} IS in ${known_gitc}`);
         #{"ok": false}
     } else {
-        debug(`${branch_rot_name} IS NOT in ${known_gitc}`);
+        debug(`info|${branch_rot_name} IS NOT in ${known_gitc}`);
         #{"ok": true}
     }
 }

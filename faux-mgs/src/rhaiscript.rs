@@ -334,12 +334,11 @@ pub async fn interpreter(
             })
             // Offer proper JSON to Dynamic::Map conversion
             .register_fn("json_to_map", move |v: Dynamic| -> Dynamic {
-                match v.into_string() {
+                match v.clone().into_string() {
                     Ok(s) => match serde_json::from_str::<Dynamic>(&s) {
                         Ok(v) => v,
                         Err(e) => {
-                            let err = format!("{{\"error\": \"{:?}\"}}", e)
-                                .to_string();
+                            let err = json!(e.to_string()).to_string();
                             serde_json::from_str::<Dynamic>(&err).unwrap()
                         }
                     },
