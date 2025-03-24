@@ -6,13 +6,13 @@
 /// Print out commonly available environment variables to demonstrate
 /// the env_expand function.
 fn show_env() {
-    print(`cwd=${cwd().to_string()}`);
-    print("Common environment variables:");
-    print(`    ${env_expand("PWD=${PWD}", #{})}`);
-    print(`    ${env_expand("HOME=${HOME}", #{})}`);
-    print(`    ${env_expand("LOGNAME=${LOGNAME}", #{})}`);
-    print(`    ${env_expand("SHELL=${SHELL}", #{})}`);
-    print(`    ${env_expand("USER=${USER}", #{})}`);
+    debug(`info|cwd=${cwd().to_string()}`);
+    debug("info|Common environment variables:");
+    debug(`info|    ${env_expand("PWD=${PWD}", #{})}`);
+    debug(`info|    ${env_expand("HOME=${HOME}", #{})}`);
+    debug(`info|    ${env_expand("LOGNAME=${LOGNAME}", #{})}`);
+    debug(`info|    ${env_expand("SHELL=${SHELL}", #{})}`);
+    debug(`info|    ${env_expand("USER=${USER}", #{})}`);
 }
 
 // Reformat a byte array as a hex byte string representation.
@@ -65,7 +65,7 @@ fn ab_to_01(v) {
 // For no override, use #{} in place of the override map.
 fn env_expand(s, override) {
     if s == () {
-        print!("Warning: trying to expand ()");
+        debug("error|Warning: trying to expand ()");
         return ();
     }
     // Note: Using an ImmutableString when there are usually
@@ -78,7 +78,7 @@ fn env_expand(s, override) {
     let envmap = envs();
     while remain.len() > 0 {
         if out.len() > 2048 {
-            print(`env_expand error: out.len() has reached ${out.len()}`);
+            debug(`error|env_expand error: out.len() has reached ${out.len()}`);
             return ();
         }
         let i = remain.index_of("${");
@@ -109,8 +109,8 @@ fn env_expand(s, override) {
                 key = key[dot+1..];
                 vars = vars?[topkey];
                 if vars == () {
-                    print("Error: env_expand: out of vars!");
-                    print(`Expansion of "${s}" is "${out}" with remainder "${remain}"`);
+                    debug("error|env_expand: out of vars!");
+                    debug(`error|Expansion of "${s}" is "${out}" with remainder "${remain}"`);
                     return ();
                 }
                 dot = key.index_of(".");
@@ -118,8 +118,8 @@ fn env_expand(s, override) {
             if key in vars {
                 value = vars[key];
             } else {
-                print(`Cannot expand ${orig_key}`);
-                print(`Expansion of "${s}" is "${out}" with remainder "${remain}"`);
+                debug(`error|Cannot expand ${orig_key}`);
+                debug(`error|Expansion of "${s}" is "${out}" with remainder "${remain}"`);
             }
         } else {
             // No dot in key, top-level from `override` or
@@ -130,8 +130,8 @@ fn env_expand(s, override) {
                 value = env(key);
             } else {
                 // TODO: tie into faux-mgs logging
-                print(`Cannot expand ${key}`);
-                print(`Expansion of "${s}" is "${out}" with remainder "${remain}"`);
+                debug(`error|Cannot expand ${key}`);
+                debug(`error|Expansion of "${s}" is "${out}" with remainder "${remain}"`);
                 return ()
             }
         }
@@ -145,8 +145,6 @@ fn env_expand(s, override) {
 /// Make RotBootInfoV3 more rhai friendly.
 fn rot_boot_info() {
     let r = faux_mgs(["rot-boot-info", "--version", "3"]);
-    // print(`RESULTS: ${type_of(r)}:`);
-    // print(`${r}`);
     if r.V3?.active == () {
         return (#{})
     }
@@ -200,19 +198,19 @@ fn caboose_value(component, slot, key) {
 
 // Connect though the SP to get caboose values for all RoT and SP images.
 fn get_device_cabooses() {
-    let caboose = #{};
-    for component in ["stage0", "rot", "sp"] {
+  let caboose = #{};
+  for component in ["stage0", "rot", "sp"] {
     for slot in ["0", "1"] {
-    if (component in caboose) == false {
-        caboose[component] = #{};
+      if (component in caboose) == false {
+          caboose[component] = #{};
+      }
+      if (slot in caboose[component]) == false {
+          caboose[component][slot] = #{};
+      }
+      caboose[component][slot] = get_caboose(component, slot);
     }
-    if (slot in caboose[component]) == false {
-        caboose[component][slot] = #{};
-    }
-    caboose[component][slot] = get_caboose(component, slot);
-}
-}
-caboose
+  }
+  caboose
 }
 
 // Translate the LPC55's Root Key Table Hash to a well-known keyset name or

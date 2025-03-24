@@ -26,5 +26,10 @@
       "rot_b": "${ut_repo}/target/${bord.rot}/dist/b/build-${bord.rot}-image-b.zip",
       "stage0": "${keyset-dvt-dock}/gimlet/bootleby-${ut-b-ver}-${keyset}-gimlet.zip"
     }
+  },
+
+  "ipcc": {
+      "faux_ipcc": "${HOME}/.cargo/bin/faux-ipcc",
+      "port": "/dev/ttyUSB0"
   }
 }
