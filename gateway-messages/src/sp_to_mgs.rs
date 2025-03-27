@@ -4,6 +4,7 @@
 
 //! Types for messages sent from SPs to MGS.
 
+use crate::ereport;
 use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
@@ -1656,5 +1657,70 @@ impl fmt::Display for DumpError {
             Self::BadSequenceNumber => "sequence number is invalid",
         };
         write!(f, "{s}")
+    }
+}
+
+/// Header for responses to [`EreportRequest`]s.
+///
+/// ```text
+///     0         1        2        3
+/// +--------+--------+--------+--------+
+/// | version|-------D|     unused      |
+/// +--------+--------+--------+--------+
+/// |                                   |
+/// +                                   +
+/// |                                   |
+/// +       instance ID (128 bits)      +
+/// |                                   |
+/// +                                   +
+/// |                                   |
+/// +--------+--------+--------+--------+  past this line, only present
+/// |                                   |  when D=1
+/// +   ENA of first record below       +
+/// |                                   |
+/// +--------+--------+--------+--------+
+/// |                                   |
+/// :   zero or more bytes of data,     :
+/// :   continuing to end of packet     :
+/// :                                   :
+/// |                                   |
+/// +--------+--------+--------+--------+
+/// ```
+///
+/// See [RFD 545 §4.4.4] for details.
+/// [RFD 545 §4.4.4]: https://rfd.shared.oxide.computer/rfd/0545#_readresponse
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct EreportResponseHeader {
+    /// The protocol version of this response.
+    pub version: ereport::Version,
+
+    pub flags: EreportResponseFlags,
+
+    /// Currently unused as of this protocol version.
+    _reserved: [u8; 2],
+
+    /// The reporter instance ID (restart nonce) of the SP's snitch task when
+    /// this response was produced.
+    pub generation: ereport::ReporterGeneration,
+}
+
+/// Flags for [`EreportRequest`] packets.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+#[repr(transparent)]
+pub struct EreportResponseFlags(u8);
+
+bitflags::bitflags! {
+    impl EreportResponseFlags: u8 {
+        /// Indicates that ereports are included in this packet.
+        ///
+        /// If this bit is set, a list of `(ENA, ereport CBOR)` pairs are
+        /// encoded after this header. If this bit is unset, no trailing data is
+        /// present in this packet, indicating that MGS has received all known
+        /// ereports.
+        const DATA_PRESENT = 1 << 0;
     }
 }
