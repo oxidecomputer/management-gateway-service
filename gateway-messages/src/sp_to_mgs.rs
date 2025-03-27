@@ -1660,7 +1660,19 @@ impl fmt::Display for DumpError {
     }
 }
 
-/// Header for responses to [`EreportRequest`]s.
+/// A versioned header for the response to an [`EreportRequest`].
+///
+/// See [RFD 545 §4.4.3.1] for details.
+/// [RFD 545 §4.4.3.1]: https://rfd.shared.oxide.computer/rfd/0545#_requestcommit
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum EreportHeader {
+    // /!\ ORDER MATTERS /!\
+    V0(EreportHeaderV0),
+}
+
+/// Header for responses to [`EreportRequestV0`]s.
 ///
 /// ```text
 ///     0         1        2        3
@@ -1692,10 +1704,7 @@ impl fmt::Display for DumpError {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct EreportResponseHeader {
-    /// The protocol version of this response.
-    pub version: ereport::Version,
-
+pub struct EreportHeaderV0 {
     pub flags: EreportResponseFlags,
 
     /// Currently unused as of this protocol version.

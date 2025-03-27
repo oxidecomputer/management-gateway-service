@@ -438,7 +438,19 @@ pub enum DumpRequest {
     },
 }
 
-/// A request for ereports aggregated by the SP's snitch task.
+/// A versioned request for ereports aggregated by the SP's snitch task.
+///
+/// See [RFD 545 §4.4.3.1] for details.
+/// [RFD 545 §4.4.3.1]: https://rfd.shared.oxide.computer/rfd/0545#_requestcommit
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum EreportRequest {
+    // /!\ ORDER MATTERS /!\
+    V0(EreportRequestV0),
+}
+
+/// A request for ereports aggregated by the SP's snitch task, version 0.
 ///
 /// ```text
 ///     0         1        2        3
@@ -468,10 +480,7 @@ pub enum DumpRequest {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct EreportRequest {
-    /// The protocol version of this request.
-    pub version: ereport::Version,
-
+pub struct EreportRequestV0 {
     pub flags: EreportRequestFlags,
 
     /// Currently unused as of this protocol version.
