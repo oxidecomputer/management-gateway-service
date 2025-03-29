@@ -139,7 +139,7 @@ struct Args {
     command: Command,
 }
 
-/// Command line program that can send MGS messages to a single SP.
+/// Rhai program that can send MGS messages to a single SP.
 #[cfg(feature = "rhaiscript")]
 #[derive(Parser, Debug)]
 struct RhaiArgs {
@@ -986,7 +986,9 @@ fn ssh_list_keys(socket: &PathBuf) -> Result<Vec<ssh_key::PublicKey>> {
 }
 
 /// This function exists to break recursive calls to the Rhai interpreter.
-/// main() calls here but Rhai{...} calls run_command().
+/// the faux-mgs main function calls here. However, the `rhai` subcommand
+/// calls run_command() which does not include any calls to the
+/// rhai subcommand.
 async fn run_any_command(
     sp: SingleSp,
     command: Command,
@@ -1002,6 +1004,7 @@ async fn run_any_command(
     }
 }
 
+/// Run faux-mgs commands except for the `rhai` subcommand.
 async fn run_command(
     sp: &SingleSp,
     command: Command,

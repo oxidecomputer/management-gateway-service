@@ -293,15 +293,16 @@ fn get_image_info(conf) {
             let zip_path = conf[branch][image];
             images[branch][image] = #{"path": zip_path};
             let current_ar = new_archive(zip_path);
-            if type_of(current_ar) != "archive" {
+            if type_of(current_ar) != "Archive" {
                 print(`Invalid archive path ${zip_path}`);
                 error = true;
                 continue;
             }
             // images[branch][image]["ar"] = current_ar;
             images[branch][image]["caboose"] = #{};
+            let caboose = current_ar?["caboose"];
             for key in ["BORD", "GITC", "NAME", "SIGN", "VERS"] {
-                images[branch][image]["caboose"][key] = current_ar?[key];
+                images[branch][image]["caboose"][key] = caboose[key];
             }
             if image == "sp" {
                 // TODO: Do some sanity checks to make sure BORD and NAME
@@ -311,8 +312,7 @@ fn get_image_info(conf) {
                 // All others are RoT images and need signature verification.
                 // stage0, rot_a, and rot_b images are verified against the
                 // current RoT device's configured keys in its CMPA.
-                let final_bin = current_ar["img/final.bin"];
-                let verified = verify_rot_image(final_bin, images.cmpa, images.cfpa);
+                let verified = current_ar.verify_rot_image(images.cmpa, images.cfpa);
                 images[branch][image]["verified"] = verified;
                 if !verified {
                     if images?["failed_to_verify"] == () {
@@ -330,7 +330,7 @@ fn get_image_info(conf) {
                 }
 
                 // TODO: There should be a warning if the base and ut image
-                // have the // same GITC. This is true for some stage0 images
+                // have the same GITC. This is true for some stage0 images
                 // that differ only in packaging but not in the image
                 // themselves. Otherwise it represents a release engineering
                 // failure or a case where the test is not configured properly.
