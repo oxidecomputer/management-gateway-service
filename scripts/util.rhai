@@ -129,7 +129,6 @@ fn env_expand(s, override) {
             } else if key in envmap {
                 value = env(key);
             } else {
-                // TODO: tie into faux-mgs logging
                 debug(`error|Cannot expand ${key}`);
                 debug(`error|Expansion of "${s}" is "${out}" with remainder "${remain}"`);
                 return ()
