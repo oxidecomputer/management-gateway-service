@@ -30,6 +30,7 @@ use gateway_messages::UnlockResponse;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_messages::ROT_PAGE_SIZE;
+use gateway_sp_comms::shared_socket;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
@@ -95,6 +96,11 @@ struct Args {
     /// bypass multicast discovery.
     #[clap(long, default_value_t = gateway_sp_comms::default_discovery_addr())]
     discovery_addr: SocketAddrV6,
+
+    /// Address to use to discover SP's ereport ports. May be a specific SP's
+    /// address to bypass multicast discovery.
+    #[clap(long, default_value_t = gateway_sp_comms::default_ereport_discovery_addr())]
+    ereport_discovery_addr: SocketAddrV6,
 
     /// Interface(s) to use to communicate with target SP(s).
     ///
@@ -700,7 +706,10 @@ async fn main() -> Result<()> {
 
     let shared_socket = SharedSocket::bind(
         listen_port,
-        Arc::clone(&host_phase2_provider),
+        shared_socket::ControlPlaneAgentHandler::new(
+            &host_phase2_provider,
+            &log,
+        ),
         log.clone(),
     )
     .await
@@ -734,6 +743,7 @@ async fn main() -> Result<()> {
                     &shared_socket,
                     SwitchPortConfig {
                         discovery_addr: args.discovery_addr,
+                        ereport_discovery_addr: args.ereport_discovery_addr,
                         interface,
                     },
                     retry_config,
