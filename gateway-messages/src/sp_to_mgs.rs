@@ -1686,30 +1686,30 @@ pub enum EreportHeader {
 /// |                                   |
 /// +                                   +
 /// |                                   |
-/// +--------+--------+--------+--------+
-/// :         ~ trailing data ~         : present if kind != 0
-///
-/// trailing data if kind == 1:
-/// +--------+--------+--------+--------+
-/// |                                   |
-/// +   ENA of first record below       +
-/// |                                   |
-/// +--------+--------+--------+--------+
-/// |                                   |
-/// :   zero or more bytes of data,     :
-/// :   continuing to end of packet     :
-/// :                                   :
-/// |                                   |
-/// +--------+--------+--------+--------+
-///
-/// trailing data if kind == 2:
-/// +--------+--------+--------+--------+
-/// |                                   |
-/// :   CBOR fragment of metadata to    :
-/// :   append to subsequent ereports   :
-/// :                                   :
-/// |                                   |
-/// +--------+--------+--------+--------+
+/// +--------+--------+--------+--------+ past this line, only present
+///  ~~~ trailing data ~~~                when kind > 0
+///   |
+///   +--> if kind == 1:
+///   |    +--------+--------+--------+--------+
+///   |    |                                   |
+///   |    +   ENA of first record below       +
+///   |    |                                   |
+///   |    +--------+--------+--------+--------+
+///   |    |                                   |
+///   |    :   zero or more bytes of data,     :
+///   |    :   continuing to end of packet     :
+///   |    :                                   :
+///   |    |                                   |
+///   |    +--------+--------+--------+--------+
+///   |
+///   +--> if kind == 2:
+///        +--------+--------+--------+--------+
+///        |                                   |
+///        :   CBOR fragment of metadata to    :
+///        :   append to subsequent ereports   :
+///        :                                   :
+///        |                                   |
+///        +--------+--------+--------+--------+
 /// ```
 ///
 /// See [RFD 545 §4.4.4] for details.
