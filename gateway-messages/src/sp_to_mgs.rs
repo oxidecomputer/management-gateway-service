@@ -1725,7 +1725,7 @@ pub struct EreportHeaderV0 {
 
     /// The reporter restart ID of the SP's snitch task when this response was
     /// produced.
-    pub generation: ereport::RestartId,
+    pub restart_id: ereport::RestartId,
 }
 
 /// Flags for [`EreportRequest`] packets.
