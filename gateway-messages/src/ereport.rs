@@ -25,4 +25,4 @@ pub struct Ena(pub u64);
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 #[repr(transparent)]
-pub struct ReporterGeneration(pub u128);
+pub struct RestartId(pub u128);

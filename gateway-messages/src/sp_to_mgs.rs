@@ -1682,7 +1682,7 @@ pub enum EreportHeader {
 /// |                                   |
 /// +                                   +
 /// |                                   |
-/// +       instance ID (128 bits)      +
+/// +       restart ID (128 bits)       +
 /// |                                   |
 /// +                                   +
 /// |                                   |
@@ -1710,9 +1710,9 @@ pub struct EreportHeaderV0 {
     /// Currently unused as of this protocol version.
     _reserved: [u8; 2],
 
-    /// The reporter instance ID (restart nonce) of the SP's snitch task when
-    /// this response was produced.
-    pub generation: ereport::ReporterGeneration,
+    /// The reporter restart ID of the SP's snitch task when this response was
+    /// produced.
+    pub generation: ereport::RestartId,
 }
 
 /// Flags for [`EreportRequest`] packets.
