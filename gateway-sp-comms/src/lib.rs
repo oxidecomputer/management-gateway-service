@@ -11,12 +11,12 @@
 //! This crate provides UDP-based communication to the `control-plane-agent`
 //! task of an SP.
 
+pub mod ereport;
 mod host_phase2;
 mod scope_id_cache;
-mod shared_socket;
+pub mod shared_socket;
 mod single_sp;
 mod sp_response_expect;
-
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
 
@@ -56,12 +56,20 @@ pub fn default_discovery_addr() -> SocketAddrV6 {
     SocketAddrV6::new(MGS_TO_SP_MULTICAST_ADDR, SP_PORT, 0, 0)
 }
 
+/// Default address to discover an SP's `snitch` task via UDP multicast.
+pub fn default_ereport_discovery_addr() -> SocketAddrV6 {
+    SocketAddrV6::new(MGS_TO_SP_MULTICAST_ADDR, ereport::SP_PORT, 0, 0)
+}
+
 /// Configuration of a single port of the management network switch.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 pub struct SwitchPortConfig {
     /// Discovery address used to find the SP connected to this port.
     #[serde(default = "default_discovery_addr")]
     pub discovery_addr: SocketAddrV6,
+
+    #[serde(default = "default_ereport_discovery_addr")]
+    pub ereport_discovery_addr: SocketAddrV6,
 
     /// Name of the interface for this switch port. The interface should be
     /// bound to the correct VLAN tag for this port per RFD 250.

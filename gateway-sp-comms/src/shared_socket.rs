@@ -10,6 +10,7 @@
 //! SPs are logically identified by interface names, and scope IDs are mapped to
 //! those interface names.
 
+use async_trait::async_trait;
 use fxhash::FxHashMap;
 use gateway_messages::version;
 use gateway_messages::Header;
@@ -79,26 +80,38 @@ pub struct BindError {
 /// message is forwarded to that `SingleSp` instance via a tokio channel;
 /// otherwise, the packet is discarded.
 #[derive(Debug)]
-pub struct SharedSocket {
+pub struct SharedSocket<T: RecvHandler> {
     socket: SendOnlyUdpSocket,
     scope_id_cache: Arc<ScopeIdCache>,
-    single_sp_handlers:
-        Arc<Mutex<FxHashMap<Name, mpsc::Sender<SingleSpMessage>>>>,
+    single_sp_handlers: SpHandlerMap<T::Message>,
     recv_handler_task: JoinHandle<()>,
     log: Logger,
 }
 
-impl Drop for SharedSocket {
+type SpHandlerMap<M> = Arc<Mutex<FxHashMap<Name, mpsc::Sender<M>>>>;
+
+#[async_trait]
+pub trait RecvHandler {
+    type Message: Send;
+
+    async fn run(
+        self,
+        socket: Arc<UdpSocket>,
+        sps: SpDispatcher<Self::Message>,
+    );
+}
+
+impl<T: RecvHandler> Drop for SharedSocket<T> {
     fn drop(&mut self) {
         self.recv_handler_task.abort();
     }
 }
 
-impl SharedSocket {
+impl<T: RecvHandler + 'static> SharedSocket<T> {
     /// Construct a `SharedSocket` by binding to a specified interface.
-    pub async fn bind<T: HostPhase2Provider>(
+    pub async fn bind(
         port: u16,
-        host_phase2_provider: Arc<T>,
+        handler: T,
         log: Logger,
     ) -> Result<Self, BindError> {
         let addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0);
@@ -106,39 +119,36 @@ impl SharedSocket {
             .await
             .map_err(|err| BindError { addr, err })?;
 
-        Self::new(socket, host_phase2_provider, log)
+        Self::new(socket, handler, log)
     }
 
     /// Construct a `SharedSocket` from an already-bound socket.
     ///
     /// This method is intended primarily for test and CI environments where we
     /// want to bind to a specific address instead of `::`.
-    pub fn from_socket<T: HostPhase2Provider>(
+    pub fn from_socket(
         socket: UdpSocket,
-        host_phase2_provider: Arc<T>,
+        handler: T,
         log: Logger,
     ) -> Result<Self, BindError> {
-        Self::new(socket, host_phase2_provider, log)
+        Self::new(socket, handler, log)
     }
 
-    fn new<T: HostPhase2Provider>(
+    fn new(
         socket: UdpSocket,
-        host_phase2_provider: Arc<T>,
+        handler: T,
         log: Logger,
     ) -> Result<Self, BindError> {
         let socket = Arc::new(socket);
-        let scope_id_cache = Arc::default();
-        let single_sp_handlers = Arc::default();
-
-        let recv_handler = RecvHandler {
-            socket: Arc::clone(&socket),
-            scope_id_cache: Arc::clone(&scope_id_cache),
-            single_sp_handlers: Arc::clone(&single_sp_handlers),
-            host_phase2_provider,
-            log: log.clone(),
-        };
-
-        let recv_handler_task = tokio::spawn(recv_handler.run());
+        let scope_id_cache = Arc::<ScopeIdCache>::default();
+        let single_sp_handlers = SpHandlerMap::<T::Message>::default();
+        let recv_handler_task = tokio::spawn(handler.run(
+            socket.clone(),
+            SpDispatcher {
+                scope_id_cache: scope_id_cache.clone(),
+                single_sp_handlers: single_sp_handlers.clone(),
+            },
+        ));
 
         Ok(Self {
             socket: SendOnlyUdpSocket::from(socket),
@@ -160,7 +170,7 @@ impl SharedSocket {
         &self,
         interface: &str,
         mut discovery_addr: SocketAddrV6,
-    ) -> SingleSpHandle {
+    ) -> SingleSpHandle<T::Message> {
         // We need to pick a queue depth for incoming packets that we forward to
         // the handle we're about to return. If that handle stops pulling
         // packets from the channel (or gets behind), we will start dropping
@@ -229,16 +239,16 @@ pub(crate) enum SingleSpHandleError {
     InterfaceError(#[from] InterfaceError),
 }
 
-pub(crate) struct SingleSpHandle {
+pub(crate) struct SingleSpHandle<T> {
     socket: SendOnlyUdpSocket,
     interface: Name,
     scope_id_cache: Arc<ScopeIdCache>,
     discovery_addr: SocketAddrV6,
-    recv: mpsc::Receiver<SingleSpMessage>,
+    recv: mpsc::Receiver<T>,
     log: Logger,
 }
 
-impl SingleSpHandle {
+impl<T> SingleSpHandle<T> {
     pub(crate) fn interface(&self) -> &str {
         &self.interface
     }
@@ -353,7 +363,7 @@ impl SingleSpHandle {
         })
     }
 
-    pub(crate) async fn recv(&mut self) -> Option<SingleSpMessage> {
+    pub(crate) async fn recv(&mut self) -> Option<T> {
         // If `recv()` returns `None`, the `RecvHandler` task associated with
         // the shared socket we're using has panicked, or we're in Tokio runtime
         // shutdown (where tasks are destroyed in arbitrary order).  Relevant
@@ -416,7 +426,7 @@ mod send_only {
 }
 
 #[derive(Debug, Error, SlogInlineError)]
-enum RecvError {
+pub(crate) enum RecvError {
     #[error("failed to deserialize message header")]
     DeserializeHeader(#[source] hubpack::Error),
     #[error("failed to deserialize message body")]
@@ -438,7 +448,7 @@ enum RecvError {
 // packet then send it an instance of this enum to handle.
 #[derive(Debug, Clone)]
 #[allow(clippy::large_enum_variant)]
-pub(crate) enum SingleSpMessage {
+pub enum SingleSpMessage {
     HostPhase2Request(HostPhase2Request),
     SerialConsole {
         component: SpComponent,
@@ -453,20 +463,37 @@ pub(crate) enum SingleSpMessage {
     },
 }
 
-struct RecvHandler<T> {
-    socket: Arc<UdpSocket>,
-    scope_id_cache: Arc<ScopeIdCache>,
-    single_sp_handlers:
-        Arc<Mutex<FxHashMap<Name, mpsc::Sender<SingleSpMessage>>>>,
+pub struct ControlPlaneAgentHandler<T> {
     host_phase2_provider: Arc<T>,
     log: Logger,
 }
 
-impl<T: HostPhase2Provider> RecvHandler<T> {
-    async fn run(self) {
+impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
+    pub fn new(host_phase2_provider: &Arc<T>, log: &Logger) -> Self {
+        Self {
+            host_phase2_provider: host_phase2_provider.clone(),
+            log: log.clone(),
+        }
+    }
+}
+
+#[derive(Clone)]
+pub struct SpDispatcher<T> {
+    pub(crate) scope_id_cache: Arc<ScopeIdCache>,
+    pub(crate) single_sp_handlers: SpHandlerMap<T>,
+}
+
+#[async_trait]
+impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
+    type Message = SingleSpMessage;
+    async fn run(
+        self,
+        socket: Arc<UdpSocket>,
+        sps: SpDispatcher<Self::Message>,
+    ) {
         let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
         loop {
-            let (n, peer) = match self.socket.recv_from(&mut buf).await {
+            let (n, peer) = match socket.recv_from(&mut buf).await {
                 Ok((n, SocketAddr::V6(addr))) => (n, addr),
                 // We only use IPv6; we can't receive from an IPv4 peer.
                 Ok((_, SocketAddr::V4(_))) => unreachable!(),
@@ -488,7 +515,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
             // Before doing anything else, check our peer's scope ID: If we
             // don't have a `SingleSp` handler for the interface identified by
             // that scope ID, discard this packet.
-            let peer_interface = match self
+            let peer_interface = match sps
                 .scope_id_cache
                 .index_to_name(peer.scope_id())
                 .await
@@ -504,7 +531,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                     continue;
                 }
             };
-            if !self
+            if !sps
                 .single_sp_handlers
                 .lock()
                 .await
@@ -518,7 +545,8 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
             }
 
             let data = &buf[..n];
-            let (header, kind, trailing_data) = match self.parse_message(data) {
+            let (header, kind, trailing_data) = match Self::parse_message(data)
+            {
                 Ok((header, kind, data)) => (header, kind, data),
                 Err(err) => {
                     warn!(
@@ -532,8 +560,9 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
             };
 
             let message = Message { header, kind };
-            if let Err(err) =
-                self.handle_message(&message, trailing_data, peer).await
+            if let Err(err) = self
+                .handle_message(&socket, &sps, &message, trailing_data, peer)
+                .await
             {
                 warn!(
                     self.log, "failed to handle incoming message";
@@ -545,11 +574,12 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
             }
         }
     }
+}
 
-    fn parse_message<'a>(
-        &self,
-        data: &'a [u8],
-    ) -> Result<(Header, MessageKind, &'a [u8]), RecvError> {
+impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
+    fn parse_message(
+        data: &[u8],
+    ) -> Result<(Header, MessageKind, &[u8]), RecvError> {
         // Peel off the header first to check the version.
         let (header, remaining) = gateway_messages::deserialize::<Header>(data)
             .map_err(RecvError::DeserializeHeader)?;
@@ -584,6 +614,8 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
 
     async fn handle_message(
         &self,
+        socket: &Arc<UdpSocket>,
+        sps: &SpDispatcher<SingleSpMessage>,
         message: &Message,
         sp_trailing_data: &[u8],
         peer: SocketAddrV6,
@@ -618,13 +650,8 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                 // same block of data.
                 tokio::spawn(
                     SendHostPhase2ResponseTask {
-                        scope_id_cache: Arc::clone(&self.scope_id_cache),
-                        single_sp_handlers: Arc::clone(
-                            &self.single_sp_handlers,
-                        ),
-                        socket: SendOnlyUdpSocket::from(Arc::clone(
-                            &self.socket,
-                        )),
+                        sps: sps.clone(),
+                        socket: SendOnlyUdpSocket::from(Arc::clone(socket)),
                         host_phase2_provider: Arc::clone(
                             &self.host_phase2_provider,
                         ),
@@ -642,9 +669,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                 component,
                 offset,
             }) => {
-                forward_to_single_sp(
-                    &self.scope_id_cache,
-                    &self.single_sp_handlers,
+                sps.forward_to_single_sp(
                     peer,
                     SingleSpMessage::SerialConsole {
                         component,
@@ -655,9 +680,7 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
                 .await
             }
             MessageKind::SpResponse(response) => {
-                forward_to_single_sp(
-                    &self.scope_id_cache,
-                    &self.single_sp_handlers,
+                sps.forward_to_single_sp(
                     peer,
                     SingleSpMessage::SpResponse {
                         peer,
@@ -672,47 +695,48 @@ impl<T: HostPhase2Provider> RecvHandler<T> {
     }
 }
 
-async fn forward_to_single_sp(
-    scope_id_cache: &ScopeIdCache,
-    single_sp_handlers: &Mutex<FxHashMap<Name, mpsc::Sender<SingleSpMessage>>>,
-    peer: SocketAddrV6,
-    message: SingleSpMessage,
-) -> Result<(), RecvError> {
-    let interface = scope_id_cache
-        .index_to_name(peer.scope_id())
-        .await
-        .map_err(|err| RecvError::InterfaceForScopeId { addr: peer, err })?;
+impl<T> SpDispatcher<T> {
+    pub(crate) async fn forward_to_single_sp(
+        &self,
+        peer: SocketAddrV6,
+        message: T,
+    ) -> Result<(), RecvError> {
+        let interface =
+            self.scope_id_cache.index_to_name(peer.scope_id()).await.map_err(
+                |err| RecvError::InterfaceForScopeId { addr: peer, err },
+            )?;
 
-    let mut single_sp_handlers = single_sp_handlers.lock().await;
-    let slot = single_sp_handlers.entry(interface.clone());
+        let mut single_sp_handlers = self.single_sp_handlers.lock().await;
+        let slot = single_sp_handlers.entry(interface.clone());
 
-    let entry = match slot {
-        hash_map::Entry::Occupied(entry) => entry,
-        hash_map::Entry::Vacant(_) => {
-            // This error is _extremely_ unlikely, because we checked
-            // immediately after receiving that we have a handler for the
-            // scope ID identified by `peer`. It's not impossible, though,
-            // if we lose a race and the interface in question is destroyed
-            // between our check above and our check now.
-            return Err(RecvError::NoHandler {
-                interface: interface.to_string(),
-            });
-        }
-    };
+        let entry = match slot {
+            hash_map::Entry::Occupied(entry) => entry,
+            hash_map::Entry::Vacant(_) => {
+                // This error is _extremely_ unlikely, because we checked
+                // immediately after receiving that we have a handler for the
+                // scope ID identified by `peer`. It's not impossible, though,
+                // if we lose a race and the interface in question is destroyed
+                // between our check above and our check now.
+                return Err(RecvError::NoHandler {
+                    interface: interface.to_string(),
+                });
+            }
+        };
 
-    // We are running in the active `recv()` task, and we don't want to
-    // allow a sluggish `SingleSp` handler to block us. We use a bounded
-    // channel and `try_send`: if there's no room in the channel, we'll log
-    // an error and discard the packet.
-    match entry.get().try_send(message) {
-        Ok(()) => Ok(()),
-        Err(TrySendError::Full(_)) => {
-            Err(RecvError::HandlerBusy { interface: interface.to_string() })
-        }
-        Err(TrySendError::Closed(_)) => {
-            // The handler is gone; remove it from our map _and_ fail.
-            entry.remove();
-            Err(RecvError::NoHandler { interface: interface.to_string() })
+        // We are running in the active `recv()` task, and we don't want to
+        // allow a sluggish `SingleSp` handler to block us. We use a bounded
+        // channel and `try_send`: if there's no room in the channel, we'll log
+        // an error and discard the packet.
+        match entry.get().try_send(message) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                Err(RecvError::HandlerBusy { interface: interface.to_string() })
+            }
+            Err(TrySendError::Closed(_)) => {
+                // The handler is gone; remove it from our map _and_ fail.
+                entry.remove();
+                Err(RecvError::NoHandler { interface: interface.to_string() })
+            }
         }
     }
 }
@@ -721,9 +745,7 @@ async fn forward_to_single_sp(
 // host phase 2 data and report the request/response back to the relevant single
 // SP handler.
 struct SendHostPhase2ResponseTask<T> {
-    scope_id_cache: Arc<ScopeIdCache>,
-    single_sp_handlers:
-        Arc<Mutex<FxHashMap<Name, mpsc::Sender<SingleSpMessage>>>>,
+    sps: SpDispatcher<SingleSpMessage>,
     socket: SendOnlyUdpSocket,
     host_phase2_provider: Arc<T>,
     peer: SocketAddrV6,
@@ -797,18 +819,20 @@ impl<T: HostPhase2Provider> SendHostPhase2ResponseTask<T> {
                 if let Some(data_sent) = data_sent {
                     // Notify our handler of this request so it can report
                     // progress to its clients.
-                    if let Err(err) = forward_to_single_sp(
-                        &self.scope_id_cache,
-                        &self.single_sp_handlers,
-                        self.peer,
-                        SingleSpMessage::HostPhase2Request(HostPhase2Request {
-                            hash,
-                            offset,
-                            data_sent,
-                            received: Instant::now(),
-                        }),
-                    )
-                    .await
+                    if let Err(err) = self
+                        .sps
+                        .forward_to_single_sp(
+                            self.peer,
+                            SingleSpMessage::HostPhase2Request(
+                                HostPhase2Request {
+                                    hash,
+                                    offset,
+                                    data_sent,
+                                    received: Instant::now(),
+                                },
+                            ),
+                        )
+                        .await
                     {
                         warn!(
                             self.log,
