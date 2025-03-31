@@ -1677,7 +1677,7 @@ pub enum EreportHeader {
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|-------D|     unused      |
+/// | version|  kind  |     unused      |
 /// +--------+--------+--------+--------+
 /// |                                   |
 /// +                                   +
@@ -1686,14 +1686,27 @@ pub enum EreportHeader {
 /// |                                   |
 /// +                                   +
 /// |                                   |
-/// +--------+--------+--------+--------+  past this line, only present
-/// |                                   |  when D=1
+/// +--------+--------+--------+--------+
+/// :         ~ trailing data ~         : present if kind != 0
+///
+/// trailing data if kind == 1:
+/// +--------+--------+--------+--------+
+/// |                                   |
 /// +   ENA of first record below       +
 /// |                                   |
 /// +--------+--------+--------+--------+
 /// |                                   |
 /// :   zero or more bytes of data,     :
 /// :   continuing to end of packet     :
+/// :                                   :
+/// |                                   |
+/// +--------+--------+--------+--------+
+///
+/// trailing data if kind == 2:
+/// +--------+--------+--------+--------+
+/// |                                   |
+/// :   CBOR fragment of metadata to    :
+/// :   append to subsequent ereports   :
 /// :                                   :
 /// |                                   |
 /// +--------+--------+--------+--------+
@@ -1705,7 +1718,7 @@ pub enum EreportHeader {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub struct EreportHeaderV0 {
-    pub flags: EreportResponseFlags,
+    pub kind: EreportResponseKind,
 
     /// Currently unused as of this protocol version.
     _reserved: [u8; 2],
@@ -1719,17 +1732,24 @@ pub struct EreportHeaderV0 {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-#[repr(transparent)]
-pub struct EreportResponseFlags(u8);
-
-bitflags::bitflags! {
-    impl EreportResponseFlags: u8 {
-        /// Indicates that ereports are included in this packet.
-        ///
-        /// If this bit is set, a list of `(ENA, ereport CBOR)` pairs are
-        /// encoded after this header. If this bit is unset, no trailing data is
-        /// present in this packet, indicating that MGS has received all known
-        /// ereports.
-        const DATA_PRESENT = 1 << 0;
-    }
+#[repr(u8)]
+pub enum EreportResponseKind {
+    // /!\ ORDER MATTERS HERE TOO /!\
+    /// The requested restart ID is still current, but there are no new ereports
+    /// with which to respond. In this case, the packet's trailing data is
+    /// empty.
+    Empty,
+    /// The requested restart ID is still current, and there are new ereports
+    /// with ENAs greater than the last seen ENA provided in the request.
+    ///
+    /// In this case, the packet's trailing data will consist of the first ENA
+    /// in the response, followed by a CBOR list containing responsive ereports
+    /// up to the maximum size of the packet.
+    Data,
+    /// The requested restart ID is no longer current.
+    ///
+    /// The trailing data of this packet will consist of a CBOR map fragment
+    /// containing metadata which should be appended to all subsequent ereports
+    /// received from this SP, as long as the restart ID remains the same.
+    Restarted,
 }
