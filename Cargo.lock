@@ -958,6 +958,7 @@ dependencies = [
  "paste",
  "serde",
  "serde-big-array",
+ "serde_cbor",
  "slog",
  "slog-error-chain",
  "socket2 0.5.9",
@@ -1057,6 +1058,12 @@ dependencies = [
  "tokio-util",
  "tracing",
 ]
+
+[[package]]
+name = "half"
+version = "1.8.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b43ede17f21864e81be2fa654110bf1e793774238d86ef8555c37e6519c0403"
 
 [[package]]
 name = "hash32"
@@ -2354,6 +2361,16 @@ dependencies = [
  "array-init",
  "serde",
  "smallvec 0.6.14",
+]
+
+[[package]]
+name = "serde_cbor"
+version = "0.11.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2bef2ebfde456fb76bbcf9f59315333decc4fda0b2b44b420243c11e0f5ec1f5"
+dependencies = [
+ "half",
+ "serde",
 ]
 
 [[package]]
