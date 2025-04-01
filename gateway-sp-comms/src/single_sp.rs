@@ -6,6 +6,7 @@
 
 //! Interface for communicating with a single SP.
 
+use crate::ereport;
 use crate::error::CommunicationError;
 use crate::error::UpdateError;
 use crate::shared_socket::ControlPlaneAgentHandler;
@@ -354,7 +355,7 @@ impl SingleSp {
     // Shared implementation of `new` and `new_direct_socket_for_testing` that
     // doesn't care whether we're using a `SharedSocket` or a
     // `InnerSocketWrapper` (the latter for tests).
-    fn new_impl<T: InnerSocket + Send + 'static>(
+    fn new_impl<T: InnerSocket<SingleSpMessage> + Send + 'static>(
         socket: T,
         interface: String,
         retry_config: SpRetryConfig,
@@ -1891,15 +1892,15 @@ enum InnerCommand {
 }
 
 #[async_trait]
-trait InnerSocket {
+trait InnerSocket<Message> {
     fn log(&self) -> &Logger;
     fn discovery_addr(&self) -> SocketAddrV6;
     async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError>;
-    async fn recv(&mut self) -> Option<SingleSpMessage>;
+    async fn recv(&mut self) -> Option<Message>;
 }
 
 #[async_trait]
-impl InnerSocket for SingleSpHandle<SingleSpMessage> {
+impl<T: Send> InnerSocket<T> for SingleSpHandle<T> {
     fn log(&self) -> &Logger {
         SingleSpHandle::log(self)
     }
@@ -1912,7 +1913,7 @@ impl InnerSocket for SingleSpHandle<SingleSpMessage> {
         SingleSpHandle::send(self, data).await
     }
 
-    async fn recv(&mut self) -> Option<SingleSpMessage> {
+    async fn recv(&mut self) -> Option<T> {
         SingleSpHandle::recv(self).await
     }
 }
@@ -1924,7 +1925,7 @@ struct InnerSocketWrapper {
 }
 
 #[async_trait]
-impl InnerSocket for InnerSocketWrapper {
+impl InnerSocket<SingleSpMessage> for InnerSocketWrapper {
     fn log(&self) -> &Logger {
         &self.log
     }
@@ -2012,6 +2013,38 @@ impl InnerSocket for InnerSocketWrapper {
     }
 }
 
+#[async_trait]
+impl InnerSocket<ereport::EreportMessage> for InnerSocketWrapper {
+    fn log(&self) -> &Logger {
+        &self.log
+    }
+
+    fn discovery_addr(&self) -> SocketAddrV6 {
+        self.discovery_addr
+    }
+
+    async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError> {
+        self.socket
+            .send_to(data, self.discovery_addr)
+            .await
+            .map(|n| assert_eq!(n, data.len()))
+            .map_err(|err| SingleSpHandleError::SendTo {
+                addr: self.discovery_addr,
+                interface: "(direct socket handle)".to_string(),
+                err,
+            })
+    }
+
+    // This function is only used if we were created with
+    // `new_direct_socket_for_testing()`, so we're a little lazy with error
+    // handling. The real `SingleSpHandle` handles errors internally but may
+    // return `None` at runtime shutdown; this `recv()` is more infallible
+    // (always returning `Some(..)`)
+    async fn recv(&mut self) -> Option<ereport::EreportMessage> {
+        unimplemented!("eliza")
+    }
+}
+
 struct Inner<T> {
     socket_handle: T,
     sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
@@ -2023,7 +2056,7 @@ struct Inner<T> {
     most_recent_host_phase2_request: Option<HostPhase2Request>,
 }
 
-impl<T: InnerSocket> Inner<T> {
+impl<T: InnerSocket<SingleSpMessage>> Inner<T> {
     // This is a private function; squishing the number of arguments down seems
     // like more trouble than it's worth.
     #[allow(clippy::too_many_arguments)]
@@ -2608,21 +2641,21 @@ mod tests {
     // A fake `InnerSocket` whose `recv()` method is connected to a tokio
     // channel.
     #[derive(Debug)]
-    struct ChannelInnerSocket {
+    struct ChannelInnerSocket<T = SingleSpMessage> {
         log: Logger,
         packets_sent: Vec<Vec<u8>>,
-        recv: mpsc::UnboundedReceiver<SingleSpMessage>,
+        recv: mpsc::UnboundedReceiver<T>,
     }
 
-    impl ChannelInnerSocket {
-        fn new(log: Logger) -> (Self, mpsc::UnboundedSender<SingleSpMessage>) {
+    impl<T> ChannelInnerSocket<T> {
+        fn new(log: Logger) -> (Self, mpsc::UnboundedSender<T>) {
             let (recv_tx, recv) = mpsc::unbounded_channel();
             (Self { log, packets_sent: Vec::new(), recv }, recv_tx)
         }
     }
 
     #[async_trait]
-    impl InnerSocket for ChannelInnerSocket {
+    impl<T: Send> InnerSocket<T> for ChannelInnerSocket<T> {
         fn log(&self) -> &Logger {
             &self.log
         }
@@ -2639,7 +2672,7 @@ mod tests {
             Ok(())
         }
 
-        async fn recv(&mut self) -> Option<SingleSpMessage> {
+        async fn recv(&mut self) -> Option<T> {
             let m = self.recv.recv().await;
             if m.is_none() {
                 warn!(self.log, "recv() failed; hopefully we are exiting");
