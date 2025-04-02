@@ -959,6 +959,7 @@ dependencies = [
  "serde",
  "serde-big-array",
  "serde_cbor",
+ "serde_json",
  "slog",
  "slog-error-chain",
  "socket2 0.5.9",

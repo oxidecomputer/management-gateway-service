@@ -56,8 +56,8 @@ pub fn default_discovery_addr() -> SocketAddrV6 {
     SocketAddrV6::new(MGS_TO_SP_MULTICAST_ADDR, SP_PORT, 0, 0)
 }
 
-/// Default address to discover an SP's `snitch` task via UDP multicast.
-pub fn default_ereport_discovery_addr() -> SocketAddrV6 {
+/// Default address for ereports.
+pub fn default_ereport_addr() -> SocketAddrV6 {
     SocketAddrV6::new(MGS_TO_SP_MULTICAST_ADDR, ereport::SP_PORT, 0, 0)
 }
 
@@ -68,8 +68,8 @@ pub struct SwitchPortConfig {
     #[serde(default = "default_discovery_addr")]
     pub discovery_addr: SocketAddrV6,
 
-    #[serde(default = "default_ereport_discovery_addr")]
-    pub ereport_discovery_addr: SocketAddrV6,
+    #[serde(default = "default_ereport_addr")]
+    pub ereport_addr: SocketAddrV6,
 
     /// Name of the interface for this switch port. The interface should be
     /// bound to the correct VLAN tag for this port per RFD 250.
