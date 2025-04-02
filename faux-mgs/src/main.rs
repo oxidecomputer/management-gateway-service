@@ -99,8 +99,8 @@ struct Args {
 
     /// Address to use to discover SP's ereport ports. May be a specific SP's
     /// address to bypass multicast discovery.
-    #[clap(long, default_value_t = gateway_sp_comms::default_ereport_discovery_addr())]
-    ereport_discovery_addr: SocketAddrV6,
+    #[clap(long, default_value_t = gateway_sp_comms::default_ereport_addr())]
+    ereport_addr: SocketAddrV6,
 
     /// Interface(s) to use to communicate with target SP(s).
     ///
@@ -731,6 +731,8 @@ async fn main() -> Result<()> {
         sps.push(SingleSp::new_direct_socket_for_testing(
             socket,
             sp_sim_addr,
+            todo!("eliza"),
+            todo!("eliza"),
             retry_config,
             log.clone(),
         ));
@@ -741,9 +743,10 @@ async fn main() -> Result<()> {
             sps.push(
                 SingleSp::new(
                     &shared_socket,
+                    todo!("eliza put ereports"),
                     SwitchPortConfig {
                         discovery_addr: args.discovery_addr,
-                        ereport_discovery_addr: args.ereport_discovery_addr,
+                        ereport_addr: args.ereport_addr,
                         interface,
                     },
                     retry_config,

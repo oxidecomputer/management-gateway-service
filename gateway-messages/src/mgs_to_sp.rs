@@ -512,7 +512,7 @@ pub struct EreportRequestV0 {
     ///
     /// This value is only present if the [`EreportRequestFlags::COMMIT`] bit is
     /// set.
-    pub committed_ena: Option<ereport::Ena>,
+    pub committed_ena: ereport::Ena,
 }
 
 /// Flags for [`EreportRequest`] packets.
@@ -529,5 +529,25 @@ bitflags::bitflags! {
         /// If this is not set, the "committed ENA" field will be zero, but this
         /// does not indicate that ENA 0 has been committed.
         const COMMIT = 1 << 0;
+    }
+}
+
+impl EreportRequestV0 {
+    pub const fn new(
+        restart_id: ereport::RestartId,
+        start_ena: ereport::Ena,
+        committed_ena: Option<ereport::Ena>,
+    ) -> Self {
+        let (committed_ena, flags) = match committed_ena {
+            Some(ena) => (ena, EreportRequestFlags::COMMIT),
+            None => (ereport::Ena(0), EreportRequestFlags::empty()),
+        };
+        Self {
+            flags,
+            _reserved: [0u8; 2],
+            restart_id,
+            start_ena,
+            committed_ena,
+        }
     }
 }
