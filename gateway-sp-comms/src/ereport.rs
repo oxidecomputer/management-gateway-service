@@ -180,7 +180,9 @@ where
                     }
                 }
             };
-            req.rsp_tx.send(result);
+            if req.rsp_tx.send(result).is_err() {
+                warn!(self.log(), "request cancelled");
+            };
         }
     }
 
@@ -270,18 +272,22 @@ fn decode_packet(
             let mut json_ereports = Vec::with_capacity(cbor_ereports.len());
             let mut task_names = Vec::new();
             let mut ena = start_ena;
-            for mut parts in cbor_ereports {
-                let ereport = parts.pop().ok_or(
-                    DecodeError::MalformedEreport("ereport list empty"),
-                )?;
+            for (n, mut parts) in cbor_ereports.into_iter().enumerate() {
+                let ereport =
+                    parts.pop().ok_or(DecodeError::MalformedEreport {
+                        n,
+                        msg: "ereport list empty",
+                    })?;
                 let uptime =
-                    parts.pop().ok_or(DecodeError::MalformedEreport(
-                        "missing Hubris uptime list entry",
-                    ))?;
+                    parts.pop().ok_or(DecodeError::MalformedEreport {
+                        n,
+                        msg: "missing Hubris uptime list entry",
+                    })?;
                 let task_gen =
-                    parts.pop().ok_or(DecodeError::MalformedEreport(
-                        "missing task generation list entry",
-                    ))?;
+                    parts.pop().ok_or(DecodeError::MalformedEreport {
+                        n,
+                        msg: "missing task generation list entry",
+                    })?;
                 let task_name = match parts.pop() {
                     Some(CborValue::Text(name)) => {
                         task_names.push(name.clone());
@@ -290,23 +296,34 @@ fn decode_packet(
                     Some(CborValue::Integer(i)) => task_names
                         .get(i as usize)
                         .cloned()
-                        .ok_or(DecodeError::BadTaskNameIndex(i as usize))?,
-                    Some(x) => return Err(DecodeError::InvalidTaskNameType(x)),
+                        .ok_or(DecodeError::BadTaskNameIndex {
+                            n,
+                            index: i as usize,
+                        })?,
+                    Some(actual) => {
+                        return Err(DecodeError::InvalidTaskNameType {
+                            n,
+                            actual,
+                        })
+                    }
                     None => {
-                        return Err(DecodeError::MalformedEreport(
-                            "missing task name list entry",
-                        ))
+                        return Err(DecodeError::MalformedEreport {
+                            n,
+                            msg: "missing task name list entry",
+                        })
                     }
                 };
                 if !parts.is_empty() {
-                    return Err(DecodeError::MalformedEreport(
-                        "unexpected bonus stuff in ereports list",
-                    ));
+                    return Err(DecodeError::MalformedEreport {
+                        n,
+                        msg: "unexpected bonus stuff in ereports list",
+                    });
                 }
                 let CborValue::Map(cbor_ereport) = ereport else {
-                    return Err(DecodeError::MalformedEreport(
-                        "expected ereport to be an object",
-                    ));
+                    return Err(DecodeError::MalformedEreport {
+                        n,
+                        msg: "expected ereport to be an object",
+                    });
                 };
                 let mut data = serde_json::Map::with_capacity(
                     // Let's just do One Big Allocation with enough space for
@@ -324,7 +341,7 @@ fn decode_packet(
                             + 1,
                 );
                 convert_cbor_object_into(cbor_ereport, &mut data)
-                    .map_err(DecodeError::EreportJson)?;
+                    .map_err(DecodeError::mk_json(n, "body"))?;
                 // jam the metadata fragment onto it
                 data.extend(
                     metadata
@@ -339,16 +356,16 @@ fn decode_packet(
                 data.insert(
                     "hubris_task_gen".to_string(),
                     convert_cbor_value(task_gen)
-                        .map_err(DecodeError::EreportJson)?,
+                        .map_err(DecodeError::mk_json(n, "hubris_task_gen"))?,
                 );
                 data.insert(
                     "hubris_uptime_ms".to_string(),
                     convert_cbor_value(uptime)
-                        .map_err(DecodeError::EreportJson)?,
+                        .map_err(DecodeError::mk_json(n, "hubris_uptime_ms"))?,
                 );
                 json_ereports.push(Ereport { ena, data });
 
-                // Increment the ENA for the next ereprot in the packet.
+                // Increment the ENA for the next ereport in the packet.
                 ena.0 += 1;
             }
 
@@ -391,18 +408,32 @@ pub enum DecodeError {
     Ena(#[source] hubpack::Error),
     #[error("failed to deserialize ereports")]
     EreportsDeserialize(#[source] serde_cbor::Error),
-    #[error("failed to convert CBOR ereports to JSON")]
-    EreportJson(#[source] CborToJsonError),
-    #[error("malformed ereport: {0}")]
-    MalformedEreport(&'static str),
+    #[error("failed to convert ereport[{n}] CBOR {what} to JSON")]
+    EreportJson {
+        n: usize,
+        what: &'static str,
+        #[source]
+        error: CborToJsonError,
+    },
+    #[error("malformed ereport[{n}]: {msg}")]
+    MalformedEreport { n: usize, msg: &'static str },
     #[error("failed to deserialize ereport metadata refresh fragment")]
     MetadataDeserialize(#[source] serde_cbor::Error),
     #[error("failed to convert metadata refresh fragment to JSON")]
     MetadataJson(#[source] CborToJsonError),
-    #[error("invalid task name index {0}")]
-    BadTaskNameIndex(usize),
-    #[error("task name must be a string or integer")]
-    InvalidTaskNameType(CborValue),
+    #[error("ereport[{n}] invalid task name index {index}")]
+    BadTaskNameIndex { n: usize, index: usize },
+    #[error("ereport[{n}] task name must be a string or integer, but found: {actual:?}")]
+    InvalidTaskNameType { n: usize, actual: CborValue },
+}
+
+impl DecodeError {
+    fn mk_json(
+        n: usize,
+        what: &'static str,
+    ) -> impl Fn(CborToJsonError) -> Self {
+        move |error| Self::EreportJson { n, what, error }
+    }
 }
 
 fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
