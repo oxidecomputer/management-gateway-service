@@ -30,6 +30,7 @@ use gateway_messages::UnlockResponse;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_messages::ROT_PAGE_SIZE;
+use gateway_sp_comms::ereport;
 use gateway_sp_comms::shared_socket;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SharedSocket;
@@ -92,15 +93,15 @@ struct Args {
     #[clap(long)]
     listen_port: Option<u16>,
 
+    /// Ereport port to bind to locally [default: 0 for client commands, 22223
+    /// for server commands]
+    #[clap(long)]
+    ereport_port: Option<u16>,
+
     /// Address to use to discover the SP. May be a specific SP's address to
     /// bypass multicast discovery.
     #[clap(long, default_value_t = gateway_sp_comms::default_discovery_addr())]
     discovery_addr: SocketAddrV6,
-
-    /// Address to use to discover SP's ereport ports. May be a specific SP's
-    /// address to bypass multicast discovery.
-    #[clap(long, default_value_t = gateway_sp_comms::default_ereport_addr())]
-    ereport_addr: SocketAddrV6,
 
     /// Interface(s) to use to communicate with target SP(s).
     ///
@@ -548,6 +549,15 @@ impl Command {
             _ => 0,
         }
     }
+
+    fn default_ereport_port(&self) -> u16 {
+        match self {
+            // Server commands; use standard MGS port
+            Command::ServeHostPhase2 { .. } => ereport::MGS_PORT,
+            // Client commands: use port 0
+            _ => 0,
+        }
+    }
 }
 
 fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
@@ -698,6 +708,8 @@ async fn main() -> Result<()> {
 
     let listen_port =
         args.listen_port.unwrap_or_else(|| args.command.default_listen_port());
+    let ereport_port =
+        args.listen_port.unwrap_or_else(|| args.command.default_ereport_port());
 
     // For faux-mgs, we'll serve all images present in the directory the user
     // requests, so don't cap the LRU cache size.
@@ -714,6 +726,16 @@ async fn main() -> Result<()> {
     )
     .await
     .context("SharedSocket:bind() failed")?;
+    let ereport_socket = {
+        let log = log.new(slog::o!("component" => "ereport"));
+        SharedSocket::bind(
+            ereport_port,
+            ereport::EreportHandler::new(log.clone()),
+            log.clone(),
+        )
+        .await
+        .context("SharedSocket::bind() for ereport socket failed")?
+    };
 
     let mut sps = Vec::new();
 
@@ -728,25 +750,39 @@ async fn main() -> Result<()> {
         let socket = UdpSocket::bind(bind_addr)
             .await
             .with_context(|| format!("failed to bind to {bind_addr}"))?;
+        let ereport_bind_addr: SocketAddrV6 =
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0);
+        let ereport_socket =
+            UdpSocket::bind(ereport_bind_addr).await.with_context(|| {
+                format!("failed to bind to {ereport_bind_addr}")
+            })?;
         sps.push(SingleSp::new_direct_socket_for_testing(
             socket,
             sp_sim_addr,
-            todo!("eliza"),
-            todo!("eliza"),
+            ereport_socket,
+            SocketAddrV6::new(
+                *sp_sim_addr.ip(),
+                gateway_sp_comms::ereport::SP_PORT,
+                0,
+                0,
+            ),
             retry_config,
             log.clone(),
         ));
     } else {
         let interfaces = build_requested_interfaces(args.interface)?;
+
+        let mut ereport_addr = args.discovery_addr;
+        ereport_addr.set_port(gateway_sp_comms::ereport::SP_PORT);
         for interface in interfaces {
             info!(log, "creating SP handle on interface {interface}");
             sps.push(
                 SingleSp::new(
                     &shared_socket,
-                    todo!("eliza put ereports"),
+                    &ereport_socket,
                     SwitchPortConfig {
                         discovery_addr: args.discovery_addr,
-                        ereport_addr: args.ereport_addr,
+                        ereport_addr,
                         interface,
                     },
                     retry_config,

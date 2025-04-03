@@ -297,6 +297,7 @@ pub struct SingleSp {
 impl Drop for SingleSp {
     fn drop(&mut self) {
         self.inner_task.abort();
+        self.ereport_task.abort();
     }
 }
 
@@ -403,7 +404,7 @@ impl SingleSp {
             retry_config.reset_watchdog_timeout_ms();
 
         let (ereport_work, ereport_req_tx) =
-            ereport::Worker::new(retry_config.clone(), ereport_socket);
+            ereport::Worker::new(retry_config, ereport_socket);
         let inner = Inner::new(socket, sp_addr_tx, retry_config, cmds_rx);
 
         let inner_task = tokio::spawn(inner.run());

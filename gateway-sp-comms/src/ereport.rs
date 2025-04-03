@@ -34,9 +34,16 @@ use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 pub const SP_PORT: u16 = 0xDEAD;
+pub const MGS_PORT: u16 = 0xDEAF;
 
 pub struct EreportHandler {
     log: slog::Logger,
+}
+
+impl EreportHandler {
+    pub fn new(log: slog::Logger) -> Self {
+        Self { log }
+    }
 }
 
 #[derive(Debug)]
