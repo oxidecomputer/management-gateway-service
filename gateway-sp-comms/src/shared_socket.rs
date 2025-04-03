@@ -28,6 +28,7 @@ use slog::warn;
 use slog::Logger;
 use slog_error_chain::SlogInlineError;
 use std::collections::hash_map;
+use std::fmt;
 use std::io;
 use std::net::Ipv6Addr;
 use std::net::SocketAddr;
@@ -79,13 +80,35 @@ pub struct BindError {
 /// the packet). If it matches an interface that has a `SingleSp` handler, the
 /// message is forwarded to that `SingleSp` instance via a tokio channel;
 /// otherwise, the packet is discarded.
-#[derive(Debug)]
-pub struct SharedSocket<T: RecvHandler> {
+pub struct SharedSocket<T: Send> {
     socket: SendOnlyUdpSocket,
     scope_id_cache: Arc<ScopeIdCache>,
-    single_sp_handlers: SpHandlerMap<T::Message>,
+    single_sp_handlers: SpHandlerMap<T>,
     recv_handler_task: JoinHandle<()>,
     log: Logger,
+}
+
+// Hand-rolled `Debug` impl as the message type (`T`) needn't be `Debug` for the
+// `SharedSocket` to be debug.
+impl<T: Send> fmt::Debug for SharedSocket<T> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Destructure all of `self` here so that adding a new field gets us a
+        // compiler error as a reminder to include (or ignore) it.
+        let Self {
+            socket,
+            scope_id_cache,
+            single_sp_handlers,
+            recv_handler_task,
+            log,
+        } = self;
+        f.debug_struct("SharedSocket")
+            .field("socket", socket)
+            .field("scope_id_cache", scope_id_cache)
+            .field("single_sp_handlers", single_sp_handlers)
+            .field("recv_handler_task", recv_handler_task)
+            .field("log", log)
+            .finish()
+    }
 }
 
 type SpHandlerMap<M> = Arc<Mutex<FxHashMap<Name, mpsc::Sender<M>>>>;
@@ -101,17 +124,17 @@ pub trait RecvHandler {
     );
 }
 
-impl<T: RecvHandler> Drop for SharedSocket<T> {
+impl<T: Send> Drop for SharedSocket<T> {
     fn drop(&mut self) {
         self.recv_handler_task.abort();
     }
 }
 
-impl<T: RecvHandler + 'static> SharedSocket<T> {
+impl<T: Send> SharedSocket<T> {
     /// Construct a `SharedSocket` by binding to a specified interface.
     pub async fn bind(
         port: u16,
-        handler: T,
+        handler: impl RecvHandler<Message = T> + Send + 'static,
         log: Logger,
     ) -> Result<Self, BindError> {
         let addr = SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, port, 0, 0);
@@ -128,7 +151,7 @@ impl<T: RecvHandler + 'static> SharedSocket<T> {
     /// want to bind to a specific address instead of `::`.
     pub fn from_socket(
         socket: UdpSocket,
-        handler: T,
+        handler: impl RecvHandler<Message = T> + Send + 'static,
         log: Logger,
     ) -> Result<Self, BindError> {
         Self::new(socket, handler, log)
@@ -136,12 +159,12 @@ impl<T: RecvHandler + 'static> SharedSocket<T> {
 
     fn new(
         socket: UdpSocket,
-        handler: T,
+        handler: impl RecvHandler<Message = T> + Send + 'static,
         log: Logger,
     ) -> Result<Self, BindError> {
         let socket = Arc::new(socket);
         let scope_id_cache = Arc::<ScopeIdCache>::default();
-        let single_sp_handlers = SpHandlerMap::<T::Message>::default();
+        let single_sp_handlers = SpHandlerMap::<T>::default();
         let recv_handler_task = tokio::spawn(handler.run(
             socket.clone(),
             SpDispatcher {
@@ -170,7 +193,7 @@ impl<T: RecvHandler + 'static> SharedSocket<T> {
         &self,
         interface: &str,
         mut discovery_addr: SocketAddrV6,
-    ) -> SingleSpHandle<T::Message> {
+    ) -> SingleSpHandle<T> {
         // We need to pick a queue depth for incoming packets that we forward to
         // the handle we're about to return. If that handle stops pulling
         // packets from the channel (or gets behind), we will start dropping
@@ -463,6 +486,7 @@ pub enum SingleSpMessage {
     },
 }
 
+#[derive(Debug)]
 pub struct ControlPlaneAgentHandler<T> {
     host_phase2_provider: Arc<T>,
     log: Logger,
