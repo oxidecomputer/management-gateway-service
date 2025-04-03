@@ -10,12 +10,10 @@ use crate::ereport;
 use crate::error::CommunicationError;
 use crate::error::EreportError;
 use crate::error::UpdateError;
-use crate::shared_socket::ControlPlaneAgentHandler;
 use crate::shared_socket::SingleSpHandle;
 use crate::shared_socket::SingleSpHandleError;
 use crate::shared_socket::SingleSpMessage;
 use crate::sp_response_expect::*;
-use crate::HostPhase2Provider;
 use crate::SharedSocket;
 use crate::SwitchPortConfig;
 use crate::VersionedSpState;
@@ -318,9 +316,9 @@ impl SingleSp {
     ///    determined by the previous step). If this bind fails (e.g., because
     ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
     ///    a "UDP bind failed" error from all methods forever.
-    pub async fn new<T: HostPhase2Provider>(
-        shared_socket: &SharedSocket<ControlPlaneAgentHandler<T>>,
-        ereport_socket: &SharedSocket<ereport::EreportHandler>,
+    pub async fn new(
+        shared_socket: &SharedSocket<crate::shared_socket::SingleSpMessage>,
+        ereport_socket: &SharedSocket<Vec<u8>>,
         config: SwitchPortConfig,
         retry_config: SpRetryConfig,
     ) -> Self {
