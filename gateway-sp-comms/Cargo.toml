@@ -29,7 +29,7 @@ thiserror.workspace = true
 tlvc.workspace = true
 tokio.workspace = true
 usdt.workspace = true
-uuid.workspace = true
+uuid = { workspace = true, features = ["v4"] }
 zip.workspace = true
 
 gateway-messages = { workspace = true, features = ["std"] }

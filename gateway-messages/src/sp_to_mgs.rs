@@ -1728,6 +1728,24 @@ pub struct EreportHeaderV0 {
     pub restart_id: ereport::RestartId,
 }
 
+impl EreportHeaderV0 {
+    pub const fn new_data(restart_id: ereport::RestartId) -> Self {
+        Self { kind: EreportResponseKind::Data, _reserved: [0; 2], restart_id }
+    }
+
+    pub const fn new_empty(restart_id: ereport::RestartId) -> Self {
+        Self { kind: EreportResponseKind::Empty, _reserved: [0; 2], restart_id }
+    }
+
+    pub const fn new_restarted(restart_id: ereport::RestartId) -> Self {
+        Self {
+            kind: EreportResponseKind::Restarted,
+            _reserved: [0; 2],
+            restart_id,
+        }
+    }
+}
+
 /// Flags for [`EreportRequest`] packets.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
