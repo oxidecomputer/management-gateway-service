@@ -9,8 +9,8 @@ use crate::shared_socket;
 use crate::single_sp;
 use crate::SpRetryConfig;
 use async_trait::async_trait;
-use gateway_messages::ereport::Ena;
-use gateway_messages::ereport::RestartId;
+pub use gateway_messages::ereport::Ena;
+pub use gateway_messages::ereport::RestartId;
 use gateway_messages::EreportHeader;
 use gateway_messages::EreportHeaderV0;
 use gateway_messages::EreportRequest;
@@ -50,10 +50,10 @@ pub struct Ereport {
 }
 
 pub(crate) struct WorkerRequest {
-    restart_id: RestartId,
-    start_ena: Ena,
-    committed_ena: Option<Ena>,
-    rsp_tx: oneshot::Sender<Result<EreportTranche, EreportError>>,
+    pub(crate) restart_id: RestartId,
+    pub(crate) start_ena: Ena,
+    pub(crate) committed_ena: Option<Ena>,
+    pub(crate) rsp_tx: oneshot::Sender<Result<EreportTranche, EreportError>>,
 }
 
 pub(crate) struct Worker<S> {

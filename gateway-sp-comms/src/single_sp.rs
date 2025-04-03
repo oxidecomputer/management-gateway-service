@@ -8,6 +8,7 @@
 
 use crate::ereport;
 use crate::error::CommunicationError;
+use crate::error::EreportError;
 use crate::error::UpdateError;
 use crate::shared_socket::ControlPlaneAgentHandler;
 use crate::shared_socket::SingleSpHandle;
@@ -1391,6 +1392,25 @@ impl SingleSp {
             vers,
             memory: map,
         })
+    }
+
+    pub async fn ereports(
+        &self,
+        restart_id: ereport::RestartId,
+        start_ena: ereport::Ena,
+        committed_ena: Option<ereport::Ena>,
+    ) -> Result<ereport::EreportTranche, EreportError> {
+        let (rsp_tx, rsp_rx) = oneshot::channel();
+        self.ereport_req_tx
+            .send(ereport::WorkerRequest {
+                restart_id,
+                start_ena,
+                committed_ena,
+                rsp_tx,
+            })
+            .await
+            .expect("ereport worker should not have unexpectedly died");
+        rsp_rx.await.expect("ereport requests are never cancelled")
     }
 }
 
