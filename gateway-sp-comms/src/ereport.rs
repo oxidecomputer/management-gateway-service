@@ -4,6 +4,7 @@
 
 // Copyright 2025 Oxide Computer Company
 
+use crate::error::CommunicationError;
 use crate::error::EreportError;
 use crate::shared_socket;
 use crate::single_sp;
@@ -129,7 +130,7 @@ where
                             .send(Err(EreportError::ThisIsntMetadata))
                             .is_err()
                         {
-                            warn!(self.log(), "receiver cancelled");
+                            warn!(self.log(), "ereport request cancelled");
                         };
                         continue;
                     }
@@ -137,10 +138,10 @@ where
                         warn!(
                             self.log(),
                             "error requesting SP ereport metadata";
-                            "error" => %error,
+                            &error,
                         );
                         if req.rsp_tx.send(Err(error)).is_err() {
-                            warn!(self.log(), "receiver cancelled");
+                            warn!(self.log(), "ereport request cancelled");
                         }
                         continue;
                     }
@@ -166,7 +167,7 @@ where
                         warn!(
                             self.log(),
                             "error requesting SP ereports";
-                            "error" => &error,
+                            &error,
                             "req_restart_id" => ?restart_id,
                             "req_start_ena" => ?start_ena,
                             "req_committed_ena" => ?committed_ena
@@ -203,7 +204,7 @@ where
                 }
             };
             if req.rsp_tx.send(result).is_err() {
-                warn!(self.log(), "request cancelled");
+                warn!(self.log(), "ereport request cancelled");
             };
         }
     }
@@ -248,8 +249,10 @@ where
             }
         }
 
-        Err(EreportError::ExhaustedNumAttempts(
-            self.retry_config.max_attempts_general,
+        Err(EreportError::Communication(
+            CommunicationError::ExhaustedNumAttempts(
+                self.retry_config.max_attempts_general,
+            ),
         ))
     }
 }
