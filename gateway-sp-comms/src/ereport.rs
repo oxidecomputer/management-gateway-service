@@ -148,13 +148,16 @@ where
             }
 
             // Okay, actually get some ereports.
+            let mut restart_id = req.restart_id;
+            let mut start_ena = req.start_ena;
+            let mut committed_ena = req.committed_ena;
             let result = loop {
                 match self
                     .request_ereports(&EreportRequest::V0(
                         EreportRequestV0::new(
-                            req.restart_id,
-                            req.start_ena,
-                            req.committed_ena,
+                            restart_id,
+                            start_ena,
+                            committed_ena,
                         ),
                     ))
                     .await
@@ -164,25 +167,37 @@ where
                             self.log(),
                             "error requesting SP ereports";
                             "error" => &error,
-                            "req_restart_id" => ?req.restart_id,
-                            "req_start_ena" => ?req.start_ena,
-                            "req_committed_ena" => ?req.committed_ena
+                            "req_restart_id" => ?restart_id,
+                            "req_start_ena" => ?start_ena,
+                            "req_committed_ena" => ?committed_ena
                         );
                         break Err(error);
                     }
-                    Ok((restart_id, Response::Metadata(metadata))) => {
+                    Ok((new_restart_id, Response::Metadata(metadata))) => {
                         info!(
                             self.log(),
                             "SP has restarted";
-                            "req_restart_id" => ?req.restart_id,
-                            "req_start_ena" => ?req.start_ena,
-                            "req_committed_ena" => ?req.committed_ena,
-                            "sp_restart_id" => ?restart_id,
+                            "req_restart_id" => ?restart_id,
+                            "req_start_ena" => ?start_ena,
+                            "req_committed_ena" => ?committed_ena,
+                            "sp_restart_id" => ?new_restart_id,
                             "metadata" => ?metadata,
                         );
                         self.metadata = Some(metadata);
+                        // Reset the request for the new restart ID, starting at
+                        // ENA 0 and not committing any of this restart's ENA.
+                        restart_id = new_restart_id;
+                        start_ena = Ena(0);
+                        committed_ena = None;
                     }
                     Ok((restart_id, Response::Ereports(ereports))) => {
+                        debug!(
+                            self.log(),
+                            "received {} ereports", ereports.len();
+                            "req_restart_id" => ?restart_id,
+                            "req_start_ena" => ?start_ena,
+                            "req_committed_ena" => ?committed_ena,
+                        );
                         break Ok(EreportTranche { restart_id, ereports });
                     }
                 }
