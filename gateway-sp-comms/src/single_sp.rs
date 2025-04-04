@@ -2089,7 +2089,19 @@ impl InnerSocket<Vec<u8>> for InnerSocketWrapper {
     // return `None` at runtime shutdown; this `recv()` is more infallible
     // (always returning `Some(..)`)
     async fn recv(&mut self) -> Option<Vec<u8>> {
-        unimplemented!("eliza")
+        let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+        loop {
+            let (peer, buf) = match self.socket.recv_from(&mut buf).await {
+                Ok((n, SocketAddr::V6(peer))) => (peer, &buf[..n]),
+                Ok((_, SocketAddr::V4(_))) => unreachable!(),
+                Err(err) => {
+                    error!(self.log, "failed to recv"; "err" => %err);
+                    continue;
+                }
+            };
+            trace!(self.log, "received {} bytes", buf.len(); "peer" => %peer);
+            return Some(buf.to_vec());
+        }
     }
 }
 
