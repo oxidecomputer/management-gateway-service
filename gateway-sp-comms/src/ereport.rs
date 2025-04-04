@@ -162,8 +162,8 @@ where
                     Err(error) => {
                         warn!(
                             self.log(),
-                            "error requesting SP ereport metadata";
-                            "error" => %error,
+                            "error requesting SP ereports";
+                            "error" => &error,
                             "req_restart_id" => ?req.restart_id,
                             "req_start_ena" => ?req.start_ena,
                             "req_committed_ena" => ?req.committed_ena
