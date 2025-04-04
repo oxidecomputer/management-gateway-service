@@ -121,17 +121,7 @@ pub enum UpdateError {
 #[derive(Debug, thiserror::Error, SlogInlineError)]
 pub enum EreportError {
     #[error(transparent)]
-    InterfaceError(#[from] InterfaceError),
-    #[error("scope ID of interface {interface} changing too frequently")]
-    ScopeIdChangingFrequently { interface: String },
-    #[error("failed to join multicast group {group} on {interface}: {err}")]
-    JoinMulticast { group: Ipv6Addr, interface: String, err: io::Error },
-    #[error("failed to send UDP packet to {addr} on {interface}: {err}")]
-    UdpSendTo { addr: SocketAddrV6, interface: String, err: io::Error },
-    #[error("failed to recv UDP packet: {0}")]
-    UdpRecv(io::Error),
-    #[error("no response received after {0} attempts")]
-    ExhaustedNumAttempts(usize),
+    Communication(#[from] CommunicationError),
     #[error("unexpected response message for metadata request")]
     ThisIsntMetadata,
     #[error(transparent)]
@@ -140,17 +130,6 @@ pub enum EreportError {
 
 impl From<SingleSpHandleError> for EreportError {
     fn from(err: SingleSpHandleError) -> Self {
-        match err {
-            SingleSpHandleError::JoinMulticast { group, interface, err } => {
-                Self::JoinMulticast { group, interface, err }
-            }
-            SingleSpHandleError::ScopeIdChangingFrequently { interface } => {
-                Self::ScopeIdChangingFrequently { interface }
-            }
-            SingleSpHandleError::SendTo { addr, interface, err } => {
-                Self::UdpSendTo { addr, interface, err }
-            }
-            SingleSpHandleError::InterfaceError(err) => Self::from(err),
-        }
+        Self::Communication(err.into())
     }
 }
