@@ -70,7 +70,7 @@ pub enum EreportRequest {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub struct RequestV0 {
-    pub flags: RequestFlags,
+    pub flags: RequestFlagsV0,
 
     /// Currently unused as of this protocol version.
     _reserved: [u8; 2],
@@ -99,7 +99,7 @@ pub struct RequestV0 {
     /// this value. If the restart ID has changed from the provided one, the
     /// reporter will not discard data.
     ///
-    /// This value is only present if the [`EreportRequestFlags::COMMIT`] bit is
+    /// This value is only present if the [`RequestFlagsV0::COMMIT`] bit is
     /// set.
     pub committed_ena: Ena,
 }
@@ -109,10 +109,10 @@ pub struct RequestV0 {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 #[repr(transparent)]
-pub struct RequestFlags(u8);
+pub struct RequestFlagsV0(u8);
 
 bitflags::bitflags! {
-    impl RequestFlags: u8 {
+    impl RequestFlagsV0: u8 {
         /// Indicates that a "committed ENA" field is present in this request.
         ///
         /// If this is not set, the "committed ENA" field will be zero, but this
@@ -128,8 +128,8 @@ impl RequestV0 {
         committed_ena: Option<Ena>,
     ) -> Self {
         let (committed_ena, flags) = match committed_ena {
-            Some(ena) => (ena, RequestFlags::COMMIT),
-            None => (Ena(0), RequestFlags::empty()),
+            Some(ena) => (ena, RequestFlagsV0::COMMIT),
+            None => (Ena(0), RequestFlagsV0::empty()),
         };
         Self {
             flags,
@@ -148,9 +148,9 @@ impl RequestV0 {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub enum EreportHeader {
+pub enum EreportResponseHeader {
     // /!\ ORDER MATTERS /!\
-    V0(HeaderV0),
+    V0(ResponseHeaderV0),
 }
 
 /// Header for responses to [`EreportRequestV0`]s.
@@ -198,8 +198,8 @@ pub enum EreportHeader {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct HeaderV0 {
-    pub kind: ResponseKind,
+pub struct ResponseHeaderV0 {
+    pub kind: ResponseKindV0,
 
     /// Currently unused as of this protocol version.
     _reserved: [u8; 2],
@@ -209,26 +209,26 @@ pub struct HeaderV0 {
     pub restart_id: RestartId,
 }
 
-impl HeaderV0 {
+impl ResponseHeaderV0 {
     pub const fn new_data(restart_id: RestartId) -> Self {
-        Self { kind: ResponseKind::Data, _reserved: [0; 2], restart_id }
+        Self { kind: ResponseKindV0::Data, _reserved: [0; 2], restart_id }
     }
 
     pub const fn new_empty(restart_id: RestartId) -> Self {
-        Self { kind: ResponseKind::Empty, _reserved: [0; 2], restart_id }
+        Self { kind: ResponseKindV0::Empty, _reserved: [0; 2], restart_id }
     }
 
     pub const fn new_restarted(restart_id: RestartId) -> Self {
-        Self { kind: ResponseKind::Restarted, _reserved: [0; 2], restart_id }
+        Self { kind: ResponseKindV0::Restarted, _reserved: [0; 2], restart_id }
     }
 }
 
-/// Flags for [`EreportRequest`] packets.
+/// Indicates the type of a v0 ereport response packet.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 #[repr(u8)]
-pub enum ResponseKind {
+pub enum ResponseKindV0 {
     // /!\ ORDER MATTERS HERE TOO /!\
     /// The requested restart ID is still current, but there are no new ereports
     /// with which to respond. In this case, the packet's trailing data is
