@@ -11,12 +11,12 @@ use crate::single_sp;
 use crate::SpRetryConfig;
 use async_trait::async_trait;
 pub use gateway_messages::ereport::Ena;
+use gateway_messages::ereport::EreportHeader;
+use gateway_messages::ereport::EreportHeaderV0;
+use gateway_messages::ereport::EreportRequest;
+use gateway_messages::ereport::EreportRequestV0;
+use gateway_messages::ereport::EreportResponseKind;
 pub use gateway_messages::ereport::RestartId;
-use gateway_messages::EreportHeader;
-use gateway_messages::EreportHeaderV0;
-use gateway_messages::EreportRequest;
-use gateway_messages::EreportRequestV0;
-use gateway_messages::EreportResponseKind;
 use serde_cbor::Value as CborValue;
 use serde_json::Value as JsonValue;
 use slog::debug;
@@ -358,7 +358,7 @@ fn decode_packet(
                             // plus the number of fields from the metadata fragment
                             // we'll append to it
                             + metadata.as_ref().map(|m| m.len()).unwrap_or(0)
-                            // the task name
+                            // the task name'
                             + 1
                             // the task generation
                             + 1
