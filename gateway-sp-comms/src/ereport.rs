@@ -11,11 +11,11 @@ use crate::single_sp;
 use crate::SpRetryConfig;
 use async_trait::async_trait;
 pub use gateway_messages::ereport::Ena;
-use gateway_messages::ereport::EreportHeader;
 use gateway_messages::ereport::EreportRequest;
-use gateway_messages::ereport::HeaderV0;
+use gateway_messages::ereport::EreportResponseHeader;
 use gateway_messages::ereport::RequestV0;
-use gateway_messages::ereport::ResponseKind;
+use gateway_messages::ereport::ResponseHeaderV0;
+use gateway_messages::ereport::ResponseKindV0;
 pub use gateway_messages::ereport::RestartId;
 use serde_cbor::Value as CborValue;
 use serde_json::Value as JsonValue;
@@ -261,18 +261,19 @@ fn decode_packet(
     metadata: &Option<serde_json::Map<String, JsonValue>>,
     packet: &[u8],
 ) -> Result<(RestartId, Response), DecodeError> {
-    let (header, rest) = gateway_messages::deserialize::<EreportHeader>(packet)
-        .map_err(DecodeError::Header)?;
+    let (header, rest) =
+        gateway_messages::deserialize::<EreportResponseHeader>(packet)
+            .map_err(DecodeError::Header)?;
     match header {
         // Packet is empty
-        EreportHeader::V0(HeaderV0 {
-            kind: ResponseKind::Empty,
+        EreportResponseHeader::V0(ResponseHeaderV0 {
+            kind: ResponseKindV0::Empty,
             restart_id,
             ..
         }) => Ok((restart_id, Response::Ereports(Vec::new()))),
         // Packet is data
-        EreportHeader::V0(HeaderV0 {
-            kind: ResponseKind::Data,
+        EreportResponseHeader::V0(ResponseHeaderV0 {
+            kind: ResponseKindV0::Data,
             restart_id,
             ..
         }) => {
@@ -398,8 +399,8 @@ fn decode_packet(
         }
         // The party you are attempting to dial is not available. Please refresh
         // your metadata and try again.
-        EreportHeader::V0(HeaderV0 {
-            kind: ResponseKind::Restarted,
+        EreportResponseHeader::V0(ResponseHeaderV0 {
+            kind: ResponseKindV0::Restarted,
             restart_id,
             ..
         }) => {
@@ -674,7 +675,8 @@ mod test {
         let restart_id = RestartId(0xfeedf00d);
         let start_ena = Ena(42);
 
-        let header = EreportHeader::V0(HeaderV0::new_data(restart_id));
+        let header =
+            EreportResponseHeader::V0(ResponseHeaderV0::new_data(restart_id));
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
