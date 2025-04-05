@@ -12,10 +12,10 @@ use crate::SpRetryConfig;
 use async_trait::async_trait;
 pub use gateway_messages::ereport::Ena;
 use gateway_messages::ereport::EreportHeader;
-use gateway_messages::ereport::EreportHeaderV0;
 use gateway_messages::ereport::EreportRequest;
-use gateway_messages::ereport::EreportRequestV0;
-use gateway_messages::ereport::EreportResponseKind;
+use gateway_messages::ereport::HeaderV0;
+use gateway_messages::ereport::RequestV0;
+use gateway_messages::ereport::ResponseKind;
 pub use gateway_messages::ereport::RestartId;
 use serde_cbor::Value as CborValue;
 use serde_json::Value as JsonValue;
@@ -101,9 +101,11 @@ where
             if self.metadata.is_none() {
                 trace!(self.log(), "requesting initial SP metadata...");
                 match self
-                    .request_ereports(&EreportRequest::V0(
-                        EreportRequestV0::new(RestartId(0), Ena(0), None),
-                    ))
+                    .request_ereports(&EreportRequest::V0(RequestV0::new(
+                        RestartId(0),
+                        Ena(0),
+                        None,
+                    )))
                     .await
                 {
                     Ok((restart_id, Response::Metadata(metadata))) => {
@@ -154,13 +156,11 @@ where
             let mut committed_ena = req.committed_ena;
             let result = loop {
                 match self
-                    .request_ereports(&EreportRequest::V0(
-                        EreportRequestV0::new(
-                            restart_id,
-                            start_ena,
-                            committed_ena,
-                        ),
-                    ))
+                    .request_ereports(&EreportRequest::V0(RequestV0::new(
+                        restart_id,
+                        start_ena,
+                        committed_ena,
+                    )))
                     .await
                 {
                     Err(error) => {
@@ -265,14 +265,14 @@ fn decode_packet(
         .map_err(DecodeError::Header)?;
     match header {
         // Packet is empty
-        EreportHeader::V0(EreportHeaderV0 {
-            kind: EreportResponseKind::Empty,
+        EreportHeader::V0(HeaderV0 {
+            kind: ResponseKind::Empty,
             restart_id,
             ..
         }) => Ok((restart_id, Response::Ereports(Vec::new()))),
         // Packet is data
-        EreportHeader::V0(EreportHeaderV0 {
-            kind: EreportResponseKind::Data,
+        EreportHeader::V0(HeaderV0 {
+            kind: ResponseKind::Data,
             restart_id,
             ..
         }) => {
@@ -398,8 +398,8 @@ fn decode_packet(
         }
         // The party you are attempting to dial is not available. Please refresh
         // your metadata and try again.
-        EreportHeader::V0(EreportHeaderV0 {
-            kind: EreportResponseKind::Restarted,
+        EreportHeader::V0(HeaderV0 {
+            kind: ResponseKind::Restarted,
             restart_id,
             ..
         }) => {
@@ -674,7 +674,7 @@ mod test {
         let restart_id = RestartId(0xfeedf00d);
         let start_ena = Ena(42);
 
-        let header = EreportHeader::V0(EreportHeaderV0::new_data(restart_id));
+        let header = EreportHeader::V0(HeaderV0::new_data(restart_id));
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
