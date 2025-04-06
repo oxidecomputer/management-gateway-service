@@ -114,14 +114,6 @@ impl<T: Send> fmt::Debug for SharedSocket<T> {
 
 type SpHandlerMap<M> = Arc<Mutex<FxHashMap<Name, mpsc::Sender<M>>>>;
 
-/// A handler for messages received on a [`SharedSocket`].
-#[async_trait]
-pub trait RecvHandler {
-    type Message: Send;
-
-    async fn run(self, socket: RecvSocket<Self::Message>);
-}
-
 impl<T: Send> Drop for SharedSocket<T> {
     fn drop(&mut self) {
         self.recv_handler_task.abort();
@@ -486,23 +478,40 @@ pub enum SingleSpMessage {
     },
 }
 
-#[derive(Debug)]
-pub struct ControlPlaneAgentHandler<T> {
-    host_phase2_provider: Arc<T>,
+/// A handler for packets received on a [`SharedSocket`].
+///
+/// Implementations of this trait are responsible for handling packets received
+/// on that UDP socket and dispatching messages to `SingleSp` handlers as
+/// appropriate.
+///
+/// The [`RecvHandler::run`] method provides the implementation of the handler
+/// task. Typically, it should be a loop, where each iteration calls the
+/// [`RecvSocket::recv_packet`] method to receive the next UDP packet, and then
+/// figures out what to do with that packet.
+#[async_trait]
+pub trait RecvHandler {
+    /// The type of messages dispatched to `SingleSp` handlers.
+    type Message: Send;
+
+    /// Run the receive handler with the provided [`RecvSocket`].
+    //
+    // This interface is represented as a single `run()` method that implements
+    // the entire lifespan of the receive handler task (which is typically a
+    // loop). This is in contrast to a trait with a method that's called to
+    // handle a single packet on each iteration of the task's run loop. This
+    // design is due to the use of `async-trait`: each time an `async fn` on a
+    // trait annotated with `#[async_trait]` is called, a new `Pin<Box<dyn
+    // Future<...>>>` is created. Allocating a new `Future` for each received
+    // packet would be kind of unfortunate, so instead, we allocate only a
+    // single future for the entire run loop.
+    async fn run(self, socket: RecvSocket<Self::Message>);
 }
 
-impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
-    pub fn new(host_phase2_provider: &Arc<T>) -> Self {
-        Self { host_phase2_provider: host_phase2_provider.clone() }
-    }
-}
-
-#[derive(Clone)]
-pub struct SpDispatcher<T> {
-    pub(crate) scope_id_cache: Arc<ScopeIdCache>,
-    pub(crate) single_sp_handlers: SpHandlerMap<T>,
-}
-
+/// The receiving side of a [`SharedSocket`], containing the socket itself and a
+/// [`SpDispatcher`] mapping peer socket addresses to `SingleSp` handler tasks.
+///
+/// This type is passed into the [`RecvHandler::run`] method when a socket's
+/// [`RecvHandler`] task is spawned.
 pub struct RecvSocket<T> {
     pub(crate) socket: Arc<UdpSocket>,
     pub(crate) log: Logger,
@@ -510,6 +519,13 @@ pub struct RecvSocket<T> {
 }
 
 impl<T> RecvSocket<T> {
+    /// Receive a packet from the shared UDP socket, returning the data
+    /// contained in the packet as a borrowed slice, along with the peer address
+    /// of the SP from which the packet was received.
+    ///
+    /// This method retries until a packet is successfully received from a
+    /// recognizable peer interface, discarding any packets sent by unknown
+    /// peers.
     pub(crate) async fn recv_packet<'buf>(
         &self,
         buf: &'buf mut [u8],
@@ -574,6 +590,67 @@ impl<T> RecvSocket<T> {
     }
 }
 
+#[derive(Clone)]
+pub struct SpDispatcher<T> {
+    pub(crate) scope_id_cache: Arc<ScopeIdCache>,
+    pub(crate) single_sp_handlers: SpHandlerMap<T>,
+}
+
+impl<T> SpDispatcher<T> {
+    /// Forward `message` to the [`SingleSp`] handler for the SP with peer
+    /// address `peer`.
+    ///
+    /// # Returns
+    ///
+    /// - [`Ok`]`(())` if the message was forwarded to the signle SP handler.
+    /// - [`Err`]`(`[`RecvError`]`)` if no handler exists for the provided
+    ///   `peer` address, or the handler task's channel is full (indicating that
+    ///   the handler is overloaded).
+    pub(crate) async fn forward_to_single_sp(
+        &self,
+        peer: SocketAddrV6,
+        message: T,
+    ) -> Result<(), RecvError> {
+        let interface =
+            self.scope_id_cache.index_to_name(peer.scope_id()).await.map_err(
+                |err| RecvError::InterfaceForScopeId { addr: peer, err },
+            )?;
+
+        let mut single_sp_handlers = self.single_sp_handlers.lock().await;
+        let slot = single_sp_handlers.entry(interface.clone());
+
+        let entry = match slot {
+            hash_map::Entry::Occupied(entry) => entry,
+            hash_map::Entry::Vacant(_) => {
+                // This error is _extremely_ unlikely, because we checked
+                // immediately after receiving that we have a handler for the
+                // scope ID identified by `peer`. It's not impossible, though,
+                // if we lose a race and the interface in question is destroyed
+                // between our check above and our check now.
+                return Err(RecvError::NoHandler {
+                    interface: interface.to_string(),
+                });
+            }
+        };
+
+        // We are running in the active `recv()` task, and we don't want to
+        // allow a sluggish `SingleSp` handler to block us. We use a bounded
+        // channel and `try_send`: if there's no room in the channel, we'll log
+        // an error and discard the packet.
+        match entry.get().try_send(message) {
+            Ok(()) => Ok(()),
+            Err(TrySendError::Full(_)) => {
+                Err(RecvError::HandlerBusy { interface: interface.to_string() })
+            }
+            Err(TrySendError::Closed(_)) => {
+                // The handler is gone; remove it from our map _and_ fail.
+                entry.remove();
+                Err(RecvError::NoHandler { interface: interface.to_string() })
+            }
+        }
+    }
+}
+
 #[async_trait]
 impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
     type Message = SingleSpMessage;
@@ -609,6 +686,17 @@ impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
                 continue;
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub struct ControlPlaneAgentHandler<T> {
+    host_phase2_provider: Arc<T>,
+}
+
+impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
+    pub fn new(host_phase2_provider: &Arc<T>) -> Self {
+        Self { host_phase2_provider: host_phase2_provider.clone() }
     }
 }
 
@@ -731,52 +819,6 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
                         },
                     )
                     .await
-            }
-        }
-    }
-}
-
-impl<T> SpDispatcher<T> {
-    pub(crate) async fn forward_to_single_sp(
-        &self,
-        peer: SocketAddrV6,
-        message: T,
-    ) -> Result<(), RecvError> {
-        let interface =
-            self.scope_id_cache.index_to_name(peer.scope_id()).await.map_err(
-                |err| RecvError::InterfaceForScopeId { addr: peer, err },
-            )?;
-
-        let mut single_sp_handlers = self.single_sp_handlers.lock().await;
-        let slot = single_sp_handlers.entry(interface.clone());
-
-        let entry = match slot {
-            hash_map::Entry::Occupied(entry) => entry,
-            hash_map::Entry::Vacant(_) => {
-                // This error is _extremely_ unlikely, because we checked
-                // immediately after receiving that we have a handler for the
-                // scope ID identified by `peer`. It's not impossible, though,
-                // if we lose a race and the interface in question is destroyed
-                // between our check above and our check now.
-                return Err(RecvError::NoHandler {
-                    interface: interface.to_string(),
-                });
-            }
-        };
-
-        // We are running in the active `recv()` task, and we don't want to
-        // allow a sluggish `SingleSp` handler to block us. We use a bounded
-        // channel and `try_send`: if there's no room in the channel, we'll log
-        // an error and discard the packet.
-        match entry.get().try_send(message) {
-            Ok(()) => Ok(()),
-            Err(TrySendError::Full(_)) => {
-                Err(RecvError::HandlerBusy { interface: interface.to_string() })
-            }
-            Err(TrySendError::Closed(_)) => {
-                // The handler is gone; remove it from our map _and_ fail.
-                entry.remove();
-                Err(RecvError::NoHandler { interface: interface.to_string() })
             }
         }
     }
