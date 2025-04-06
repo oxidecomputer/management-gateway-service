@@ -26,26 +26,15 @@ use slog::trace;
 use slog::warn;
 use slog_error_chain::SlogInlineError;
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
-use std::sync::Arc;
-use std::time::Duration;
 use thiserror::Error;
-use tokio::net::UdpSocket;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
 pub const SP_PORT: u16 = 0xDEAD;
 pub const MGS_PORT: u16 = 0xDEAF;
 
-pub struct EreportHandler {
-    log: slog::Logger,
-}
-
-impl EreportHandler {
-    pub fn new(log: slog::Logger) -> Self {
-        Self { log }
-    }
-}
+#[derive(Debug, Default)]
+pub struct EreportHandler {}
 
 #[derive(Debug)]
 pub struct EreportTranche {
@@ -533,78 +522,16 @@ pub enum CborToJsonError {
 #[async_trait]
 impl shared_socket::RecvHandler for EreportHandler {
     type Message = Vec<u8>;
-    async fn run(
-        self,
-        socket: Arc<UdpSocket>,
-        sps: shared_socket::SpDispatcher<Self::Message>,
-    ) {
-        // TODO(eliza): a bunch of this code is identical to
-        // `ControlPlaneAgentHandler; `RecvHandler` trait could probably just be
-        // a "parse and handle message" callback...
-
-        // TODO(eliza): double check that `MAX_SERIALIZED_SIZE` is indeed the
-        // largest UDP datagram we can receive from a SP?
+    async fn run(self, socket: shared_socket::RecvSocket<Vec<u8>>) {
         let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
         loop {
-            let (n, peer) = match socket.recv_from(&mut buf).await {
-                Ok((n, SocketAddr::V6(addr))) => (n, addr),
-                // We only use IPv6; we can't receive from an IPv4 peer.
-                Ok((_, SocketAddr::V4(_))) => unreachable!(),
-                Err(err) => {
-                    // Failing to recv _probably_ means our socket is
-                    // irrecoverably broken, but there isn't much we can do
-                    // about that from here. We'll sleep to avoid spamming the
-                    // logs, but someone will have to notice we're dead and
-                    // restart us.
-                    error!(
-                        self.log,
-                        "failed to recv on shared MGS ereport socket";
-                        "err" => %err,
-                    );
-                    tokio::time::sleep(Duration::from_secs(1)).await;
-                    continue;
-                }
-            };
+            let (peer, data) = socket.recv_packet(&mut buf).await;
 
-            // Before doing anything else, check our peer's scope ID: If we
-            // don't have a `SingleSp` handler for the interface identified by
-            // that scope ID, discard this packet.
-            let peer_interface = match sps
-                .scope_id_cache
-                .index_to_name(peer.scope_id())
-                .await
-            {
-                Ok(name) => name,
-                Err(err) => {
-                    warn!(
-                        self.log,
-                        "failed to look up interface for peer; discarding packet";
-                        "peer" => %peer,
-                        err,
-                    );
-                    continue;
-                }
-            };
-            if !sps
-                .single_sp_handlers
-                .lock()
-                .await
-                .contains_key(&peer_interface)
-            {
-                warn!(
-                    self.log,
-                    "discarding packet from unknown interface";
-                    "interface" => peer_interface.to_string(),
-                );
-                continue;
-            }
-
-            let data = &buf[..n];
             if let Err(err) =
-                sps.forward_to_single_sp(peer, data.to_vec()).await
+                socket.sps.forward_to_single_sp(peer, data.to_vec()).await
             {
                 warn!(
-                    self.log,
+                    socket.log,
                     "failed to forward incoming ereport message to handler";
                     "peer" => %peer,
                     err,
