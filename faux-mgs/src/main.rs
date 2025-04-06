@@ -718,20 +718,16 @@ async fn main() -> Result<()> {
 
     let shared_socket = SharedSocket::bind(
         listen_port,
-        shared_socket::ControlPlaneAgentHandler::new(
-            &host_phase2_provider,
-            &log,
-        ),
-        log.clone(),
+        shared_socket::ControlPlaneAgentHandler::new(&host_phase2_provider),
+        log.new(slog::o!("socket" => "control-plane-agent")),
     )
     .await
     .context("SharedSocket:bind() failed")?;
     let ereport_socket = {
-        let log = log.new(slog::o!("component" => "ereport"));
         SharedSocket::bind(
             ereport_port,
-            ereport::EreportHandler::new(log.clone()),
-            log.clone(),
+            ereport::EreportHandler::default(),
+            log.new(slog::o!("socket" => "ereport")),
         )
         .await
         .context("SharedSocket::bind() for ereport socket failed")?

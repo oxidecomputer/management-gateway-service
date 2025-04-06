@@ -47,6 +47,7 @@ use crate::error::HostPhase2Error;
 use crate::scope_id_cache::InterfaceError;
 use crate::scope_id_cache::Name;
 use crate::scope_id_cache::ScopeIdCache;
+use crate::shared_socket;
 use crate::single_sp::HostPhase2Request;
 use crate::HostPhase2Provider;
 use crate::SP_TO_MGS_MULTICAST_ADDR;
@@ -113,15 +114,12 @@ impl<T: Send> fmt::Debug for SharedSocket<T> {
 
 type SpHandlerMap<M> = Arc<Mutex<FxHashMap<Name, mpsc::Sender<M>>>>;
 
+/// A handler for messages received on a [`SharedSocket`].
 #[async_trait]
 pub trait RecvHandler {
     type Message: Send;
 
-    async fn run(
-        self,
-        socket: Arc<UdpSocket>,
-        sps: SpDispatcher<Self::Message>,
-    );
+    async fn run(self, socket: RecvSocket<Self::Message>);
 }
 
 impl<T: Send> Drop for SharedSocket<T> {
@@ -165,13 +163,15 @@ impl<T: Send> SharedSocket<T> {
         let socket = Arc::new(socket);
         let scope_id_cache = Arc::<ScopeIdCache>::default();
         let single_sp_handlers = SpHandlerMap::<T>::default();
-        let recv_handler_task = tokio::spawn(handler.run(
-            socket.clone(),
-            SpDispatcher {
-                scope_id_cache: scope_id_cache.clone(),
-                single_sp_handlers: single_sp_handlers.clone(),
-            },
-        ));
+        let recv_handler_task =
+            tokio::spawn(handler.run(shared_socket::RecvSocket {
+                socket: socket.clone(),
+                sps: SpDispatcher {
+                    scope_id_cache: scope_id_cache.clone(),
+                    single_sp_handlers: single_sp_handlers.clone(),
+                },
+                log: log.clone(),
+            }));
 
         Ok(Self {
             socket: SendOnlyUdpSocket::from(socket),
@@ -489,15 +489,11 @@ pub enum SingleSpMessage {
 #[derive(Debug)]
 pub struct ControlPlaneAgentHandler<T> {
     host_phase2_provider: Arc<T>,
-    log: Logger,
 }
 
 impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
-    pub fn new(host_phase2_provider: &Arc<T>, log: &Logger) -> Self {
-        Self {
-            host_phase2_provider: host_phase2_provider.clone(),
-            log: log.clone(),
-        }
+    pub fn new(host_phase2_provider: &Arc<T>) -> Self {
+        Self { host_phase2_provider: host_phase2_provider.clone() }
     }
 }
 
@@ -507,17 +503,19 @@ pub struct SpDispatcher<T> {
     pub(crate) single_sp_handlers: SpHandlerMap<T>,
 }
 
-#[async_trait]
-impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
-    type Message = SingleSpMessage;
-    async fn run(
-        self,
-        socket: Arc<UdpSocket>,
-        sps: SpDispatcher<Self::Message>,
-    ) {
-        let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+pub struct RecvSocket<T> {
+    pub(crate) socket: Arc<UdpSocket>,
+    pub(crate) log: Logger,
+    pub(crate) sps: SpDispatcher<T>,
+}
+
+impl<T> RecvSocket<T> {
+    pub(crate) async fn recv_packet<'buf>(
+        &self,
+        buf: &'buf mut [u8],
+    ) -> (SocketAddrV6, &'buf [u8]) {
         loop {
-            let (n, peer) = match socket.recv_from(&mut buf).await {
+            let (n, peer) = match self.socket.recv_from(buf).await {
                 Ok((n, SocketAddr::V6(addr))) => (n, addr),
                 // We only use IPv6; we can't receive from an IPv4 peer.
                 Ok((_, SocketAddr::V4(_))) => unreachable!(),
@@ -539,7 +537,8 @@ impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
             // Before doing anything else, check our peer's scope ID: If we
             // don't have a `SingleSp` handler for the interface identified by
             // that scope ID, discard this packet.
-            let peer_interface = match sps
+            let peer_interface = match self
+                .sps
                 .scope_id_cache
                 .index_to_name(peer.scope_id())
                 .await
@@ -555,7 +554,8 @@ impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
                     continue;
                 }
             };
-            if !sps
+            if !self
+                .sps
                 .single_sp_handlers
                 .lock()
                 .await
@@ -569,12 +569,24 @@ impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
             }
 
             let data = &buf[..n];
+            return (peer, data);
+        }
+    }
+}
+
+#[async_trait]
+impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
+    type Message = SingleSpMessage;
+    async fn run(self, socket: RecvSocket<Self::Message>) {
+        let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+        loop {
+            let (peer, data) = socket.recv_packet(&mut buf).await;
             let (header, kind, trailing_data) = match Self::parse_message(data)
             {
                 Ok((header, kind, data)) => (header, kind, data),
                 Err(err) => {
                     warn!(
-                        self.log, "failed to parse incoming packet";
+                        socket.log, "failed to parse incoming packet";
                         "data" => ?data,
                         "peer" => %peer,
                         err,
@@ -585,11 +597,11 @@ impl<T: HostPhase2Provider> RecvHandler for ControlPlaneAgentHandler<T> {
 
             let message = Message { header, kind };
             if let Err(err) = self
-                .handle_message(&socket, &sps, &message, trailing_data, peer)
+                .handle_message(&socket, &message, trailing_data, peer)
                 .await
             {
                 warn!(
-                    self.log, "failed to handle incoming message";
+                    socket.log, "failed to handle incoming message";
                     "message" => ?Message { header, kind },
                     "peer" => %peer,
                     err,
@@ -638,8 +650,7 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
 
     async fn handle_message(
         &self,
-        socket: &Arc<UdpSocket>,
-        sps: &SpDispatcher<SingleSpMessage>,
+        socket: &RecvSocket<SingleSpMessage>,
         message: &Message,
         sp_trailing_data: &[u8],
         peer: SocketAddrV6,
@@ -660,7 +671,7 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
             }) => {
                 if !sp_trailing_data.is_empty() {
                     warn!(
-                        self.log,
+                        socket.log,
                         "ignoring unexpected trailing data";
                         "request" => ?message,
                         "length" => sp_trailing_data.len(),
@@ -674,8 +685,10 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
                 // same block of data.
                 tokio::spawn(
                     SendHostPhase2ResponseTask {
-                        sps: sps.clone(),
-                        socket: SendOnlyUdpSocket::from(Arc::clone(socket)),
+                        sps: socket.sps.clone(),
+                        socket: SendOnlyUdpSocket::from(Arc::clone(
+                            &socket.socket,
+                        )),
                         host_phase2_provider: Arc::clone(
                             &self.host_phase2_provider,
                         ),
@@ -683,7 +696,7 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
                         message_id: message.header.message_id,
                         hash,
                         offset,
-                        log: self.log.clone(),
+                        log: socket.log.clone(),
                     }
                     .run(),
                 );
@@ -693,27 +706,31 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
                 component,
                 offset,
             }) => {
-                sps.forward_to_single_sp(
-                    peer,
-                    SingleSpMessage::SerialConsole {
-                        component,
-                        offset,
-                        data: sp_trailing_data.to_vec(),
-                    },
-                )
-                .await
+                socket
+                    .sps
+                    .forward_to_single_sp(
+                        peer,
+                        SingleSpMessage::SerialConsole {
+                            component,
+                            offset,
+                            data: sp_trailing_data.to_vec(),
+                        },
+                    )
+                    .await
             }
             MessageKind::SpResponse(response) => {
-                sps.forward_to_single_sp(
-                    peer,
-                    SingleSpMessage::SpResponse {
+                socket
+                    .sps
+                    .forward_to_single_sp(
                         peer,
-                        header: message.header,
-                        response: *response,
-                        data: sp_trailing_data.to_vec(),
-                    },
-                )
-                .await
+                        SingleSpMessage::SpResponse {
+                            peer,
+                            header: message.header,
+                            response: *response,
+                            data: sp_trailing_data.to_vec(),
+                        },
+                    )
+                    .await
             }
         }
     }
