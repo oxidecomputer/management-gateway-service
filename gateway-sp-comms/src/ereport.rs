@@ -458,8 +458,11 @@ fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
         CborValue::Null => JsonValue::Null,
         CborValue::Bool(b) => JsonValue::Bool(b),
         CborValue::Float(cbor) => {
-            // A JSON number may not be infinite or NaN, so return an error if
-            // the float is unacceptable.
+            // A JSON number may not be infinite or NaN. Let's convert NaNs to
+            // JSON `null`s, and return an error otherwise.
+            if cbor.is_nan() {
+                return Ok(JsonValue::Null);
+            }
             let json = JsonNumber::from_f64(cbor)
                 .ok_or(CborToJsonError::InvalidFloat(cbor))?;
             JsonValue::Number(json)
@@ -482,10 +485,22 @@ fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
             JsonValue::Object(json)
         }
         CborValue::Text(s) => JsonValue::String(s),
-        CborValue::Bytes(_) => todo!("eliza"),
+        CborValue::Bytes(b) => {
+            // Encode CBOR bytes as base64.
+            // TODO(eliza): eventually, we should probably be looking at tags
+            // here...
+            use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
+
+            let base64 = STANDARD_NO_PAD.encode(b);
+            JsonValue::String(base64)
+        }
         CborValue::Tag(_, _) => {
             return Err(CborToJsonError::TagsNotYetImplemented)
         }
+
+        // They really shouldn't have reserved the ability to add new variants
+        // in a semver-compatible change; it's pretty unfortunate to panic here.
+        // Hopefully we catch this in testing...
         _ => unimplemented!("the CBOR crate has added a new variant"),
     })
 }
@@ -507,10 +522,15 @@ fn convert_cbor_object_into(
     Ok(())
 }
 
+/// Errors converting CBOR ereport data received from the SP to JSON data for
+/// the control plane.
 #[derive(Debug, Error, SlogInlineError)]
 pub enum CborToJsonError {
+    /// JSON objects must be maps of `String`s to values, but CBOR permits maps
+    /// to have key types other than strings.
     #[error("non-string object key: {0:?}")]
     NonStringKey(CborValue),
+    /// JSON numbers may not be NaN or infinite.
     #[error("CBOR float {0} was not a valid JSON number")]
     InvalidFloat(f64),
     #[error("CBOR integer too large for JSON: {0}")]
@@ -522,7 +542,19 @@ pub enum CborToJsonError {
 #[async_trait]
 impl shared_socket::RecvHandler for EreportHandler {
     type Message = Vec<u8>;
+
     async fn run(self, socket: shared_socket::RecvSocket<Vec<u8>>) {
+        // Unlike the `RecvHandler` implementation for control-plane-agent
+        // messages, the ereport `RecvHandler` simply takes the received packet,
+        // turns it into a `Vec`, and sends it off to the corresponding
+        // single-SP handler, which actually parses the message.
+        //
+        // This is because we don't need to do more complex dispatching of the
+        // message based on its contents, so we need not parse it here. Instead,
+        // parsing the message in the single-SP handler allows us to return
+        // nicer errors to the caller when a message cannot be parsed correctly,
+        // and also means that the next incoming packet need not wait until the
+        // previous one has been parsed before it can be dispatched.
         let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
         loop {
             let (peer, data) = socket.recv_packet(&mut buf).await;
