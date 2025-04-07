@@ -63,6 +63,8 @@ pub enum EreportRequest {
     /// The SP must respond to this request with a [`EreportResponseHeader::V0`]
     /// packet.
     V0(RequestV0),
+    // IMPORTANT: when adding new variants to this enum, please add them to the
+    // `version_byte_values` test below!
 }
 
 /// A request for ereports aggregated by the SP's snitch task, version 0.
@@ -193,6 +195,8 @@ pub enum EreportResponseHeader {
     ///
     /// This is sent in response to a [`RequestV0`] message.
     V0(ResponseHeaderV0),
+    // IMPORTANT: when adding new variants to this enum, please add them to the
+    // `version_byte_values` test below!
 }
 
 /// Header for responses to [v0 ereport requests](RequestV0).
@@ -289,4 +293,76 @@ pub enum ResponseKindV0 {
     /// containing metadata which should be appended to all subsequent ereports
     /// received from this SP, as long as the restart ID remains the same.
     Restarted,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn serialize<'buf, M>(buf: &'buf mut [u8], msg: &M) -> &'buf [u8]
+    where
+        M: Serialize + fmt::Debug,
+    {
+        match crate::serialize(buf, msg) {
+            Ok(n) => &buf[..n],
+            Err(e) => {
+                panic!("message did not serialize: {e}\n  message: {msg:?}",)
+            }
+        }
+    }
+
+    // Test that the "version" fields in the request and response messages have
+    // the expected values.
+    //
+    // Hubpack serializes enums using single-byte tag values, determined in the
+    // struct's declaration order. Because of this, changing the order of
+    // variants of the versioned request and response enums (`EreportRequest`
+    // and `EreportResponseHeader`) will change the versions they serialize as.
+    // This test ensures we don't accidentally do that, provided that new
+    // versions are added to this test.
+    #[test]
+    fn version_byte_values() {
+        let mut buf = [0u8; EreportRequest::MAX_SIZE];
+        let bytes = serialize(
+            &mut buf,
+            &EreportRequest::V0(RequestV0::new(
+                RestartId(1),
+                Ena(2),
+                Some(Ena(3)),
+            )),
+        );
+        assert_eq!(bytes[0], 0, "Request v0 version byte should be 0");
+
+        let mut buf = [0u8; EreportResponseHeader::MAX_SIZE];
+        let bytes = serialize(
+            &mut buf,
+            &EreportResponseHeader::V0(ResponseHeaderV0::new_data(RestartId(
+                1,
+            ))),
+        );
+        assert_eq!(bytes[0], 0, "ResponseHeader v0 version byte should be 0");
+
+        // IMPORTANT: when adding new variants to the versioned message enums,
+        // please add tests for them here!
+    }
+
+    // Test that the values of the "response kind" field in `ResponseHeaderV0`
+    // messages are the expected ones (e.g., the variants haven't been
+    // reordered).
+    #[test]
+    fn v0_response_kind_values() {
+        let kinds = [
+            (ResponseKindV0::Empty, 0),
+            (ResponseKindV0::Data, 1),
+            (ResponseKindV0::Restarted, 2),
+        ];
+        let mut buf = [0u8; 1];
+        for (variant, expected) in kinds {
+            let bytes = serialize(&mut buf, &variant);
+            assert_eq!(
+                bytes[0], expected,
+                "expected {variant:?} to serialize as {expected}"
+            );
+        }
+    }
 }
