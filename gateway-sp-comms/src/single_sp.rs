@@ -1397,6 +1397,7 @@ impl SingleSp {
         &self,
         restart_id: ereport::RestartId,
         start_ena: ereport::Ena,
+        limit: impl Into<Option<std::num::NonZeroU8>>,
         committed_ena: Option<ereport::Ena>,
     ) -> Result<ereport::EreportTranche, EreportError> {
         let (rsp_tx, rsp_rx) = oneshot::channel();
@@ -1404,6 +1405,7 @@ impl SingleSp {
             .send(ereport::WorkerRequest {
                 restart_id,
                 start_ena,
+                limit: limit.into(),
                 committed_ena,
                 rsp_tx,
             })

@@ -20,6 +20,7 @@
 //! [RFD 545] https://rfd.shared.oxide.computer/rfd/545
 
 use core::fmt;
+use core::num::NonZeroU8;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
@@ -87,7 +88,7 @@ pub enum EreportRequest {
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|-------C|    unused       |
+/// | version|-------C| limit  | unused |
 /// +--------+--------+--------+--------+
 /// |                                   |
 /// +                                   +
@@ -115,8 +116,11 @@ pub enum EreportRequest {
 pub struct RequestV0 {
     pub flags: RequestFlagsV0,
 
+    /// Maximum number of ereports to include in the response packet.
+    pub limit: u8,
+
     /// Currently unused as of this protocol version.
-    _reserved: [u8; 2],
+    _reserved: [u8; 1],
 
     /// The restart ID of the SP's snitch task which the control plane believes
     /// is current.
@@ -168,15 +172,21 @@ impl RequestV0 {
     pub const fn new(
         restart_id: RestartId,
         start_ena: Ena,
+        limit: Option<NonZeroU8>,
         committed_ena: Option<Ena>,
     ) -> Self {
         let (committed_ena, flags) = match committed_ena {
             Some(ena) => (ena, RequestFlagsV0::COMMIT),
             None => (Ena(0), RequestFlagsV0::empty()),
         };
+        let limit = match limit {
+            Some(limit) => limit.get(),
+            None => 0,
+        };
         Self {
             flags,
-            _reserved: [0u8; 2],
+            limit,
+            _reserved: [0u8; 1],
             restart_id,
             start_ena,
             committed_ena,
@@ -194,6 +204,16 @@ impl RequestV0 {
         } else {
             None
         }
+    }
+
+    /// Returns the maximum number of ereports to include in this packet, if one
+    /// was provided.
+    ///
+    /// If this returns `None`, the SP is free to include as many ereports as
+    /// fit in the packet.
+    #[must_use]
+    pub const fn limit(&self) -> Option<NonZeroU8> {
+        NonZeroU8::new(self.limit)
     }
 }
 
@@ -343,7 +363,8 @@ mod tests {
             &EreportRequest::V0(RequestV0::new(
                 RestartId(1),
                 Ena(2),
-                Some(Ena(3)),
+                NonZeroU8::new(3),
+                Some(Ena(4)),
             )),
         );
         assert_eq!(bytes[0], 0, "Request v0 version byte should be 0");
