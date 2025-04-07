@@ -51,7 +51,7 @@ ssh-agent-client-rs = "0.9.1"
 ssh-key = { version = "0.6.7", features = ["p256"] }
 static_assertions = "1.1.0"
 strum_macros = "0.25"
-string_cache = "0.8.8"
+string_cache = "0.8.9"
 termios = "0.3"
 thiserror = "1.0.69"
 tokio = { version = "1.29", features = ["full"] }
