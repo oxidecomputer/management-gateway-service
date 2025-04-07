@@ -17,9 +17,6 @@ use serde::Serialize;
 /// See [RFD 520 §1.1.1] for details.
 ///
 /// [RFD 520 §1.1.1]: https://rfd.shared.oxide.computer/rfd/0520#enas
-// N.B.: it would be nice to reuse the `Ena` type defined in `ereport-types` in
-// the Omicron repo for this, but I'm not sure if it's Considered Good to have
-// dependencies on omicron in this repo...
 #[derive(
     Clone,
     Copy,
@@ -46,10 +43,6 @@ impl fmt::Debug for Ena {
 /// See [RFD 520 §4.2.2] for details.
 ///
 /// [RFD 520 §4.2.2]: https://rfd.shared.oxide.computer/rfd/0520#reporter-crash-recovery
-// N.B.: it would be nice to reuse the `EreporterGenerationUuid` type defined in
-// `ereport-types` in the Omicron repo for this, but that wraps a `Uuid`, which
-// lacks impls for traits like `SerializedSize`, and I'm not sure if it's
-// considered okay to have dependencies on omicron in this repo...
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
@@ -197,10 +190,12 @@ impl RequestV0 {
 pub enum EreportResponseHeader {
     // /!\ ORDER MATTERS /!\
     /// An ereport protocol version 0 response header.
+    ///
+    /// This is sent in response to a [`RequestV0`] message.
     V0(ResponseHeaderV0),
 }
 
-/// Header for responses to [`EreportRequestV0`]s.
+/// Header for responses to [v0 ereport requests](RequestV0).
 ///
 /// ```text
 ///     0         1        2        3
