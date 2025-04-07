@@ -117,7 +117,7 @@ pub struct RequestV0 {
     pub flags: RequestFlagsV0,
 
     /// Maximum number of ereports to include in the response packet.
-    pub limit: u8,
+    limit: u8,
 
     /// Currently unused as of this protocol version.
     _reserved: [u8; 1],
@@ -148,7 +148,7 @@ pub struct RequestV0 {
     ///
     /// This value is only present if the [`RequestFlagsV0::COMMIT`] bit is
     /// set.
-    pub committed_ena: Ena,
+    committed_ena: Ena,
 }
 
 /// Flags for [`EreportRequest`] packets.
