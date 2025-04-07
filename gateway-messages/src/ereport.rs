@@ -4,6 +4,21 @@
 
 // Copyright 2025 Oxide Computer Company
 
+//! Request and response types for the ereport ingestion protocol.
+//!
+//! This module defines both the request message sent by MGS
+//! ([`EreportRequest`]), and the header for the response to that message by the
+//! SP ([`EreportResponseHeader`]).
+//!
+//! For more information on the high-level design of the ereport ingestion
+//! protocol, see [RFD 520] Control Plane Fault Ingestion and Data Model. For
+//! details on the encoding of SP ereport messages, refer to [RFD 544] Embedded
+//! E-report Formats and [RFD 545] Firmware E-report Aggregation and Evacuation.
+//!
+//! [RFD 520] https://rfd.shared.oxide.computer/rfd/520
+//! [RFD 544] https://rfd.shared.oxide.computer/rfd/544
+//! [RFD 545] https://rfd.shared.oxide.computer/rfd/545
+
 use core::fmt;
 use hubpack::SerializedSize;
 use serde::Deserialize;
