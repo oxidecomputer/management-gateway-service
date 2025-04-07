@@ -26,6 +26,7 @@ use slog::trace;
 use slog::warn;
 use slog_error_chain::SlogInlineError;
 use std::collections::BTreeMap;
+use std::num::NonZeroU8;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
@@ -51,6 +52,7 @@ pub struct Ereport {
 pub(crate) struct WorkerRequest {
     pub(crate) restart_id: RestartId,
     pub(crate) start_ena: Ena,
+    pub(crate) limit: Option<NonZeroU8>,
     pub(crate) committed_ena: Option<Ena>,
     pub(crate) rsp_tx: oneshot::Sender<Result<EreportTranche, EreportError>>,
 }
@@ -93,6 +95,7 @@ where
                     .request_ereports(&EreportRequest::V0(RequestV0::new(
                         RestartId(0),
                         Ena(0),
+                        None, // limit field should be ignored for metadata requests, but...
                         None,
                     )))
                     .await
@@ -148,6 +151,7 @@ where
                     .request_ereports(&EreportRequest::V0(RequestV0::new(
                         restart_id,
                         start_ena,
+                        req.limit,
                         committed_ena,
                     )))
                     .await
@@ -159,7 +163,8 @@ where
                             &error,
                             "req_restart_id" => ?restart_id,
                             "req_start_ena" => ?start_ena,
-                            "req_committed_ena" => ?committed_ena
+                            "req_committed_ena" => ?committed_ena,
+                            "limit" => ?req.limit,
                         );
                         break Err(error);
                     }
