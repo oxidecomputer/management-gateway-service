@@ -457,20 +457,27 @@ impl DecodeError {
 }
 
 fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
+    use base64::{
+        engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
+        Engine,
+    };
     use serde_json::value::Number as JsonNumber;
 
+    // See https://www.rfc-editor.org/rfc/rfc8949.html#section-6.1 for advice from the CBOR RFC on how to convert CBOR values to JSON value.
     Ok(match value {
         CborValue::Null => JsonValue::Null,
         CborValue::Bool(b) => JsonValue::Bool(b),
         CborValue::Float(cbor) => {
-            // A JSON number may not be infinite or NaN. Let's convert NaNs to
-            // JSON `null`s, and return an error otherwise.
-            if cbor.is_nan() {
-                return Ok(JsonValue::Null);
-            }
-            let json = JsonNumber::from_f64(cbor)
-                .ok_or(CborToJsonError::InvalidFloat(cbor))?;
-            JsonValue::Number(json)
+            // Per RFC 8949 section 6.1:
+            //
+            // > A floating-point value (major type 7, additional information
+            // > 25 through 27) becomes a JSON number if it is finite (that is,
+            // > it can be represented in a JSON number); if the value is
+            // > non-finite (NaN, or positive or negative Infinity), it is
+            // > represented by the substitute value.
+            JsonNumber::from_f64(cbor)
+                .map(JsonValue::Number)
+                .unwrap_or(JsonValue::Null)
         }
         CborValue::Integer(cbor) => {
             let json = JsonNumber::from_i128(cbor)
@@ -490,17 +497,61 @@ fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
             JsonValue::Object(json)
         }
         CborValue::Text(s) => JsonValue::String(s),
-        CborValue::Bytes(b) => {
-            // Encode CBOR bytes as base64.
-            // TODO(eliza): eventually, we should probably be looking at tags
-            // here...
-            use base64::{engine::general_purpose::STANDARD_NO_PAD, Engine};
 
-            let base64 = STANDARD_NO_PAD.encode(b);
+        // Per RFC 8949 section 6.1:
+        //
+        // > A byte string (major type 2) that is not embedded in a tag that
+        // > specifies a proposed encoding is encoded in base64url without
+        // > padding and becomes a JSON string.
+        CborValue::Bytes(b) => {
+            let base64 = URL_SAFE_NO_PAD.encode(b);
             JsonValue::String(base64)
         }
-        CborValue::Tag(_, _) => {
-            return Err(CborToJsonError::TagsNotYetImplemented)
+
+        CborValue::Tag(tag, value) => {
+            // Per RFC 8949 section 6.1:
+            //
+            // > A byte string (major type 2) that is not embedded in a tag
+            // > that specifies a proposed encoding is encoded in base64url
+            // > without padding and becomes a JSON string.
+            //
+            // > A bignum (major type 6, tag number 2 or 3) is represented
+            // > by encoding its byte string in base64url without padding
+            // > and becomes a JSON string. For tag number 3
+            // > (negative bignum), a "~" (ASCII tilde) is inserted before
+            // > the base-encoded value. (The conversion to a binary blob
+            // > instead of a number is to prevent a likely numeric overflow f
+            // > or the JSON decoder.)
+            //
+            // > For all other tags (major type 6, any other tag number), the
+            // > tag content is represented as a JSON value; the tag number is
+            // > ignored.
+            match (tag, *value) {
+                // Tag 3: Negative bignum
+                (3, CborValue::Bytes(bytes)) => {
+                    let mut string = "~".to_string();
+                    URL_SAFE_NO_PAD.encode_string(bytes, &mut string);
+                    JsonValue::String(string)
+                }
+                // Tag 21: Expected conversion to base64url encoding
+                // Tag 2: Positive bignum
+                (21, CborValue::Bytes(bytes))
+                | (2, CborValue::Bytes(bytes)) => {
+                    let base64 = URL_SAFE_NO_PAD.encode(bytes);
+                    JsonValue::String(base64)
+                }
+                // Tag 22: Expected conversion to base64 encoding
+                (22, CborValue::Bytes(bytes)) => {
+                    let base64 = STANDARD_NO_PAD.encode(bytes);
+                    JsonValue::String(base64)
+                }
+                // Tag 23: Expected conversion to base16 encoding (i.e. hex)
+                (23, CborValue::Bytes(bytes)) => {
+                    let hex = hex::encode(bytes);
+                    JsonValue::String(hex)
+                }
+                (_, value) => convert_cbor_value(value)?,
+            }
         }
 
         // They really shouldn't have reserved the ability to add new variants
