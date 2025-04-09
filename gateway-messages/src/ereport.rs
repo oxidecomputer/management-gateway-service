@@ -87,24 +87,24 @@ pub enum EreportRequest {
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|-------C| limit  | unused |
-/// +--------+--------+--------+--------+
+/// | version|-------C| limit  |        |
+/// +--------+--------+--------+        |
 /// |                                   |
 /// +                                   +
 /// |                                   |
 /// +       restart ID (128 bits)       +
 /// |                                   |
-/// +                                   +
-/// |                                   |
-/// +--------+--------+--------+--------+
-/// |                                   |
-/// +   first ENA desired in response   +
-/// |                                   |
-/// +--------+--------+--------+--------+
-/// |                                   |
-/// +   last ENA written to database    + only present when C bit set
-/// |                                   |
-/// +--------+--------+--------+--------+
+/// +                          +--------+
+/// |                          |        |
+/// +--------+--------+--------+        +
+/// |   first ENA desired in response   |
+/// +        (64 bits)         +--------+
+/// |                          |        |
+/// +--------+--------+--------+        +
+/// |    last ENA written to database   | only present when C bit set
+/// +        (64 bits)         +--------+
+/// |                          |
+/// +--------+--------+--------+
 /// ```
 ///
 /// See [RFD 545 §4.4.3.1] for details.
@@ -117,9 +117,6 @@ pub struct RequestV0 {
 
     /// Maximum number of ereports to include in the response packet.
     pub limit: u8,
-
-    /// Currently unused as of this protocol version.
-    _reserved: [u8; 1],
 
     /// The restart ID of the SP's snitch task which the control plane believes
     /// is current.
@@ -178,14 +175,7 @@ impl RequestV0 {
             Some(ena) => (ena, RequestFlagsV0::COMMIT),
             None => (Ena(0), RequestFlagsV0::empty()),
         };
-        Self {
-            flags,
-            limit,
-            _reserved: [0u8; 1],
-            restart_id,
-            start_ena,
-            committed_ena,
-        }
+        Self { flags, limit, restart_id, start_ena, committed_ena }
     }
 
     /// Returns the "committed ENA" field if this packet contains one.
@@ -231,33 +221,18 @@ pub enum EreportResponseHeader {
 /// |       restart ID (128 bits)       |
 /// +                                   +
 /// |                                   |
-/// +                           +-------+
-/// |                           |  0xBF | beginning of CBOR metadata map
-/// +--------+--------+---------+-------*
-///   |
-///   +--> if kind == 1 (ResponseKindV0::Data):
-///   |    +--------+--------+--------+--------+
-///   |    |                                   |
-///   |    +   ENA of first record below       +
-///   |    |                                   |
-///   |    +--------+--------+--------+--------+
-///   |    |                                   |
-///   |    :   zero or more bytes of data,     :
-///   |    :   continuing to end of packet     :
-///   |    :                                   :
-///   |    |                                   |
-///   |    +--------+--------+--------+--------+
-///   |
-///   +--> if kind == 2 (ResponseKindV0::Restarted):
-///        +--------+--------+--------+--------+
-///        |                                   |
-///        :   CBOR fragment of metadata to    :
-///        :   append to subsequent ereports   :
-///        :                                   :
-///        |                                   |
-///        +--------+--------+--------+--------+
+/// +                          +--------+
+/// |                          |  0xBF  | beginning of CBOR metadata map
+/// +--------+--------+--------+--------+
+/// ... metadata k/v pairs ... |  0xFF  | metadata-only packets may end here
+/// +--------+--------+--------+--------+
+/// |        start ENA (64 bits)        |
+/// +--------+--------+--------+--------+
+/// |  0x9F  |    ... ereports ...
+/// +--------+                 +--------+
+///      ... ereports ...      |  0xFF  |
+///                            +--------+
 /// ```
-///
 /// See [RFD 545 §4.4.4] for details.
 /// [RFD 545 §4.4.4]: https://rfd.shared.oxide.computer/rfd/0545#_readresponse
 #[derive(
