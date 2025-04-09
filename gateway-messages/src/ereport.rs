@@ -20,7 +20,6 @@
 //! [RFD 545] https://rfd.shared.oxide.computer/rfd/545
 
 use core::fmt;
-use core::num::NonZeroU8;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
@@ -117,7 +116,7 @@ pub struct RequestV0 {
     pub flags: RequestFlagsV0,
 
     /// Maximum number of ereports to include in the response packet.
-    limit: u8,
+    pub limit: u8,
 
     /// Currently unused as of this protocol version.
     _reserved: [u8; 1],
@@ -172,16 +171,12 @@ impl RequestV0 {
     pub const fn new(
         restart_id: RestartId,
         start_ena: Ena,
-        limit: Option<NonZeroU8>,
+        limit: u8,
         committed_ena: Option<Ena>,
     ) -> Self {
         let (committed_ena, flags) = match committed_ena {
             Some(ena) => (ena, RequestFlagsV0::COMMIT),
             None => (Ena(0), RequestFlagsV0::empty()),
-        };
-        let limit = match limit {
-            Some(limit) => limit.get(),
-            None => 0,
         };
         Self {
             flags,
@@ -204,16 +199,6 @@ impl RequestV0 {
         } else {
             None
         }
-    }
-
-    /// Returns the maximum number of ereports to include in this packet, if one
-    /// was provided.
-    ///
-    /// If this returns `None`, the SP is free to include as many ereports as
-    /// fit in the packet.
-    #[must_use]
-    pub const fn limit(&self) -> Option<NonZeroU8> {
-        NonZeroU8::new(self.limit)
     }
 }
 
@@ -239,17 +224,16 @@ pub enum EreportResponseHeader {
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|  kind  |     unused      |
-/// +--------+--------+--------+--------+
+/// | version|                          |
+/// +--------+                          +
 /// |                                   |
 /// +                                   +
-/// |                                   |
-/// +       restart ID (128 bits)       +
-/// |                                   |
+/// |       restart ID (128 bits)       |
 /// +                                   +
 /// |                                   |
-/// +--------+--------+--------+--------+ past this line, only present
-///  ~~~ trailing data ~~~                when kind > 0
+/// +                           +-------+
+/// |                           |  0xBF | beginning of CBOR metadata map
+/// +--------+--------+---------+-------*
 ///   |
 ///   +--> if kind == 1 (ResponseKindV0::Data):
 ///   |    +--------+--------+--------+--------+
@@ -280,54 +264,9 @@ pub enum EreportResponseHeader {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub struct ResponseHeaderV0 {
-    pub kind: ResponseKindV0,
-
-    /// Currently unused as of this protocol version.
-    _reserved: [u8; 2],
-
     /// The reporter restart ID of the SP's snitch task when this response was
     /// produced.
     pub restart_id: RestartId,
-}
-
-impl ResponseHeaderV0 {
-    pub const fn new_data(restart_id: RestartId) -> Self {
-        Self { kind: ResponseKindV0::Data, _reserved: [0; 2], restart_id }
-    }
-
-    pub const fn new_empty(restart_id: RestartId) -> Self {
-        Self { kind: ResponseKindV0::Empty, _reserved: [0; 2], restart_id }
-    }
-
-    pub const fn new_restarted(restart_id: RestartId) -> Self {
-        Self { kind: ResponseKindV0::Restarted, _reserved: [0; 2], restart_id }
-    }
-}
-
-/// Indicates the type of a v0 ereport response packet.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
-)]
-#[repr(u8)]
-pub enum ResponseKindV0 {
-    // /!\ ORDER MATTERS HERE TOO /!\
-    /// The requested restart ID is still current, but there are no new ereports
-    /// with which to respond. In this case, the packet's trailing data is
-    /// empty.
-    Empty,
-    /// The requested restart ID is still current, and there are new ereports
-    /// with ENAs greater than the last seen ENA provided in the request.
-    ///
-    /// In this case, the packet's trailing data will consist of the first ENA
-    /// in the response, followed by a CBOR list containing responsive ereports
-    /// up to the maximum size of the packet.
-    Data,
-    /// The requested restart ID is no longer current.
-    ///
-    /// The trailing data of this packet will consist of a CBOR map fragment
-    /// containing metadata which should be appended to all subsequent ereports
-    /// received from this SP, as long as the restart ID remains the same.
-    Restarted,
 }
 
 #[cfg(test)]
@@ -363,7 +302,7 @@ mod tests {
             &EreportRequest::V0(RequestV0::new(
                 RestartId(1),
                 Ena(2),
-                NonZeroU8::new(3),
+                3,
                 Some(Ena(4)),
             )),
         );
@@ -372,33 +311,13 @@ mod tests {
         let mut buf = [0u8; EreportResponseHeader::MAX_SIZE];
         let bytes = serialize(
             &mut buf,
-            &EreportResponseHeader::V0(ResponseHeaderV0::new_data(RestartId(
-                1,
-            ))),
+            &EreportResponseHeader::V0(ResponseHeaderV0 {
+                restart_id: RestartId(1),
+            }),
         );
         assert_eq!(bytes[0], 0, "ResponseHeader v0 version byte should be 0");
 
         // IMPORTANT: when adding new variants to the versioned message enums,
         // please add tests for them here!
-    }
-
-    // Test that the values of the "response kind" field in `ResponseHeaderV0`
-    // messages are the expected ones (e.g., the variants haven't been
-    // reordered).
-    #[test]
-    fn v0_response_kind_values() {
-        let kinds = [
-            (ResponseKindV0::Empty, 0),
-            (ResponseKindV0::Data, 1),
-            (ResponseKindV0::Restarted, 2),
-        ];
-        let mut buf = [0u8; 1];
-        for (variant, expected) in kinds {
-            let bytes = serialize(&mut buf, &variant);
-            assert_eq!(
-                bytes[0], expected,
-                "expected {variant:?} to serialize as {expected}"
-            );
-        }
     }
 }
