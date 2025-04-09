@@ -15,13 +15,12 @@ use gateway_messages::ereport::EreportRequest;
 use gateway_messages::ereport::EreportResponseHeader;
 use gateway_messages::ereport::RequestV0;
 use gateway_messages::ereport::ResponseHeaderV0;
-use gateway_messages::ereport::ResponseKindV0;
 pub use gateway_messages::ereport::RestartId;
+use serde::Deserialize;
 use serde_cbor::Value as CborValue;
 use serde_json::Value as JsonValue;
 use slog::debug;
 use slog::error;
-use slog::info;
 use slog::trace;
 use slog::warn;
 use slog_error_chain::SlogInlineError;
@@ -46,13 +45,13 @@ pub struct EreportTranche {
 #[derive(Debug, Eq, PartialEq)]
 pub struct Ereport {
     pub ena: Ena,
-    pub data: serde_json::Map<String, JsonValue>,
+    pub data: MetadataMap,
 }
 
 pub(crate) struct WorkerRequest {
     pub(crate) restart_id: RestartId,
     pub(crate) start_ena: Ena,
-    pub(crate) limit: Option<NonZeroU8>,
+    pub(crate) limit: NonZeroU8,
     pub(crate) committed_ena: Option<Ena>,
     pub(crate) rsp_tx: oneshot::Sender<Result<EreportTranche, EreportError>>,
 }
@@ -62,8 +61,10 @@ pub(crate) struct Worker<S> {
     retry_config: SpRetryConfig,
     socket: S,
     outbuf: [u8; <EreportRequest as hubpack::SerializedSize>::MAX_SIZE],
-    metadata: Option<serde_json::Map<String, JsonValue>>,
+    metadata: Option<MetadataMap>,
 }
+
+type MetadataMap = serde_json::Map<String, JsonValue>;
 
 impl<S> Worker<S>
 where
@@ -91,42 +92,19 @@ where
             // refresh the SP's metadata, try to do so now.
             if self.metadata.is_none() {
                 trace!(self.log(), "requesting initial SP metadata...");
-                match self
-                    .request_ereports(&EreportRequest::V0(RequestV0::new(
-                        RestartId(0),
-                        Ena(0),
-                        None, // limit field should be ignored for metadata requests, but...
-                        None,
-                    )))
-                    .await
+                match self.request_ereports(RestartId(0), Ena(0), 0, None).await
                 {
-                    Ok((restart_id, Response::Metadata(metadata))) => {
+                    Ok((restart_id, ereports)) => {
+                        debug_assert!(
+                            ereports.is_empty(),
+                            "we asked for limit 0..."
+                        );
                         debug!(
                             self.log(),
                             "received initial SP metadata";
-                            "metadata" => ?metadata,
+                            "metadata" => ?self.metadata,
                             "restart_id" => ?restart_id
                         );
-                        self.metadata = Some(metadata);
-                    }
-                    Ok((restart_id, _)) => {
-                        warn!(
-                            self.log(),
-                            "unexpected response to metadata request (it \
-                             should always be `Restarted`)";
-                            "restart_id" => ?restart_id,
-                        );
-
-                        // TODO(eliza): should we...keep trying, or something? The
-                        // SP is definitely *alive*...
-                        if req
-                            .rsp_tx
-                            .send(Err(EreportError::ThisIsntMetadata))
-                            .is_err()
-                        {
-                            warn!(self.log(), "ereport request cancelled");
-                        };
-                        continue;
                     }
                     Err(error) => {
                         warn!(
@@ -142,64 +120,45 @@ where
                 }
             }
 
-            // Okay, actually get some ereports.
-            let mut restart_id = req.restart_id;
-            let mut start_ena = req.start_ena;
-            let mut committed_ena = req.committed_ena;
-            let result = loop {
-                match self
-                    .request_ereports(&EreportRequest::V0(RequestV0::new(
-                        restart_id,
-                        start_ena,
-                        req.limit,
-                        committed_ena,
-                    )))
-                    .await
-                {
-                    Err(error) => {
-                        warn!(
-                            self.log(),
-                            "error requesting SP ereports";
-                            &error,
-                            "req_restart_id" => ?restart_id,
-                            "req_start_ena" => ?start_ena,
-                            "req_committed_ena" => ?committed_ena,
-                            "limit" => ?req.limit,
-                        );
-                        break Err(error);
-                    }
-                    Ok((new_restart_id, Response::Metadata(metadata))) => {
-                        info!(
-                            self.log(),
-                            "SP has restarted";
-                            "req_restart_id" => ?restart_id,
-                            "req_start_ena" => ?start_ena,
-                            "req_committed_ena" => ?committed_ena,
-                            "sp_restart_id" => ?new_restart_id,
-                            "metadata" => ?metadata,
-                        );
-                        self.metadata = Some(metadata);
-                        // Reset the request for the new restart ID, starting at
-                        // ENA 0 and not committing any of this restart's ENA.
-                        restart_id = new_restart_id;
-                        start_ena = Ena(0);
-                        committed_ena = None;
-                    }
-                    Ok((restart_id, Response::Ereports(ereports))) => {
-                        debug!(
-                            self.log(),
-                            "received {} ereports", ereports.len();
-                            "req_restart_id" => ?restart_id,
-                            "req_start_ena" => ?start_ena,
-                            "req_committed_ena" => ?committed_ena,
-                        );
-                        break Ok(EreportTranche { restart_id, ereports });
-                    }
+            // Okay, now actually get some ereports.
+            let rsp = match self
+                .request_ereports(
+                    req.restart_id,
+                    req.start_ena,
+                    req.limit.get(),
+                    req.committed_ena,
+                )
+                .await
+            {
+                Ok((restart_id, ereports)) => {
+                    debug!(
+                        self.log(),
+                        "received {} ereports", ereports.len();
+                        "restart_id" => ?restart_id,
+                        "req_restart_id" => ?req.restart_id,
+                        "req_start_ena" => ?req.start_ena,
+                        "req_limit" => ?req.limit,
+                        "req_committed_ena" => ?req.committed_ena,
+                    );
+                    Ok(EreportTranche { restart_id, ereports })
+                }
+                Err(error) => {
+                    warn!(
+                        self.log(),
+                        "error requesting SP ereports";
+                        &error,
+                        "req_restart_id" => ?req.restart_id,
+                        "req_start_ena" => ?req.start_ena,
+                        "req_limit" => ?req.limit,
+                        "req_committed_ena" => ?req.committed_ena,
+                    );
+                    Err(error)
                 }
             };
-            if req.rsp_tx.send(result).is_err() {
+
+            if req.rsp_tx.send(rsp).is_err() {
                 warn!(self.log(), "ereport request cancelled");
-            };
+            }
         }
     }
 
@@ -209,8 +168,17 @@ where
 
     async fn request_ereports(
         &mut self,
-        req: &EreportRequest,
-    ) -> Result<(RestartId, Response), EreportError> {
+        restart_id: RestartId,
+        start_ena: Ena,
+        limit: u8,
+        committed_ena: Option<Ena>,
+    ) -> Result<(RestartId, Vec<Ereport>), EreportError> {
+        let req = EreportRequest::V0(RequestV0::new(
+            restart_id,
+            start_ena,
+            limit,
+            committed_ena,
+        ));
         let amt = match gateway_messages::serialize(&mut self.outbuf, &req) {
             Ok(amt) => amt,
             Err(error) => {
@@ -239,7 +207,8 @@ where
             )
             .await
             {
-                return decode_packet(&self.metadata, &msg).map_err(Into::into);
+                return decode_packet(restart_id, &mut self.metadata, &msg)
+                    .map_err(Into::into);
             }
         }
 
@@ -252,172 +221,161 @@ where
 }
 
 fn decode_packet(
-    metadata: &Option<serde_json::Map<String, JsonValue>>,
+    current_restart_id: RestartId,
+    metadata: &mut Option<MetadataMap>,
     packet: &[u8],
-) -> Result<(RestartId, Response), DecodeError> {
-    let (header, rest) =
+) -> Result<(RestartId, Vec<Ereport>), DecodeError> {
+    // Deserialize a CBOR-encoded value from a byte slice, returning the
+    // deserialized value and any remaining trailing data in the slice.
+    fn deserialize_cbor<'data, T: Deserialize<'data>>(
+        data: &'data [u8],
+    ) -> Result<(T, &'data [u8]), serde_cbor::Error> {
+        let mut deserializer = serde_cbor::Deserializer::from_slice(data);
+        let value = T::deserialize(&mut deserializer)?;
+        let rest = &data[deserializer.byte_offset()..];
+        Ok((value, rest))
+    }
+
+    let (header, packet) =
         gateway_messages::deserialize::<EreportResponseHeader>(packet)
             .map_err(DecodeError::Header)?;
-    match header {
-        // Packet is empty
-        EreportResponseHeader::V0(ResponseHeaderV0 {
-            kind: ResponseKindV0::Empty,
-            restart_id,
-            ..
-        }) => Ok((restart_id, Response::Ereports(Vec::new()))),
-        // Packet is data
-        EreportResponseHeader::V0(ResponseHeaderV0 {
-            kind: ResponseKindV0::Data,
-            restart_id,
-            ..
-        }) => {
-            // V0 ereport packets consist of:
-            //
-            // - the first ENA in the packet
-            // - a CBOR list (using the "indeterminate") encoding, where each
-            //   entry is a CBOR list of 4 elements:
-            //      1. the name of the task that produced the ereport
-            //      2. the task's generation number
-            //      3. the system uptime in milliseconds
-            //      4. a CBOR object containing the rest of the ereport
-            //
-            // See RFD 545 4.4 for details:
-            // https://rfd.shared.oxide.computer/rfd/0545#_readresponse
-            let (start_ena, rest) = gateway_messages::deserialize::<Ena>(rest)
-                .map_err(DecodeError::Ena)?;
-            let cbor_ereports =
-                serde_cbor::from_slice::<Vec<Vec<CborValue>>>(rest)
-                    .map_err(DecodeError::EreportsDeserialize)?;
 
-            let mut json_ereports = Vec::with_capacity(cbor_ereports.len());
-            let mut task_names = Vec::new();
-            let mut ena = start_ena;
-            for (n, mut parts) in cbor_ereports.into_iter().enumerate() {
-                let ereport =
-                    parts.pop().ok_or(DecodeError::MalformedEreport {
-                        n,
-                        msg: "ereport list empty",
-                    })?;
-                let uptime =
-                    parts.pop().ok_or(DecodeError::MalformedEreport {
-                        n,
-                        msg: "missing Hubris uptime list entry",
-                    })?;
-                let task_gen =
-                    parts.pop().ok_or(DecodeError::MalformedEreport {
-                        n,
-                        msg: "missing task generation list entry",
-                    })?;
-                let task_name = match parts.pop() {
-                    Some(CborValue::Text(name)) => {
-                        task_names.push(name.clone());
-                        name
-                    }
-                    Some(CborValue::Integer(i)) => task_names
-                        .get(i as usize)
-                        .cloned()
-                        .ok_or(DecodeError::BadTaskNameIndex {
-                            n,
-                            index: i as usize,
-                        })?,
-                    Some(actual) => {
-                        return Err(DecodeError::InvalidTaskNameType {
-                            n,
-                            actual,
-                        })
-                    }
-                    None => {
-                        return Err(DecodeError::MalformedEreport {
-                            n,
-                            msg: "missing task name list entry",
-                        })
-                    }
-                };
-                if !parts.is_empty() {
-                    return Err(DecodeError::MalformedEreport {
-                        n,
-                        msg: "unexpected bonus stuff in ereports list",
-                    });
-                }
-                let CborValue::Map(cbor_ereport) = ereport else {
-                    return Err(DecodeError::MalformedEreport {
-                        n,
-                        msg: "expected ereport to be an object",
-                    });
-                };
-                let mut data = serde_json::Map::with_capacity(
-                    // Let's just do One Big Allocation with enough space for
-                    // the whole thing! We'll need:
-                    // the number of fields in the ereport body
-                    cbor_ereport.len()
-                            // plus the number of fields from the metadata fragment
-                            // we'll append to it
-                            + metadata.as_ref().map(|m| m.len()).unwrap_or(0)
-                            // the task name'
-                            + 1
-                            // the task generation
-                            + 1
-                            // hubris uptime
-                            + 1,
-                );
-                convert_cbor_object_into(cbor_ereport, &mut data)
-                    .map_err(DecodeError::mk_json(n, "body"))?;
-                // jam the metadata fragment onto it
-                data.extend(
-                    metadata
-                        .iter()
-                        .flatten()
-                        .map(|(k, v)| (k.clone(), v.clone())),
-                );
-                data.insert(
-                    "hubris_task_name".to_string(),
-                    JsonValue::String(task_name),
-                );
-                data.insert(
-                    "hubris_task_gen".to_string(),
-                    convert_cbor_value(task_gen)
-                        .map_err(DecodeError::mk_json(n, "hubris_task_gen"))?,
-                );
-                data.insert(
-                    "hubris_uptime_ms".to_string(),
-                    convert_cbor_value(uptime)
-                        .map_err(DecodeError::mk_json(n, "hubris_uptime_ms"))?,
-                );
-                json_ereports.push(Ereport { ena, data });
+    let EreportResponseHeader::V0(ResponseHeaderV0 { restart_id }) = header;
+    // V0 ereport packets consist of:
+    //
+    // 1. A CBOR map (using the "indefinite-length" encoding) of strings to
+    //    CBOR values, containing metadata. If the requested restart ID matches
+    //    the current one, the metadata map will generally be empty.
+    //
+    //    The packet may end here if it contains no ereports.
+    //
+    // 2. If the packet contains ereports, the ENA of the first ereport in the
+    //    packet.
+    //
+    // 3. A CBOR list of ereports (using the "indefinite-length" encoding),
+    //    where each entry is a CBOR list of 4 elements:
+    //      1. The name of the task that produced the ereport
+    //      2. The task's generation number
+    //      3. The system uptime in milliseconds
+    //      4. A CBOR object containing the rest of the ereport
+    //
+    // See RFD 545 4.4 for details:
+    // https://rfd.shared.oxide.computer/rfd/0545#_readresponse
+    //
+    let (cbor_metadata, packet) =
+        deserialize_cbor::<BTreeMap<CborValue, CborValue>>(packet)
+            .map_err(DecodeError::MetadataDeserialize)?;
+    let mut new_metadata = serde_json::Map::with_capacity(cbor_metadata.len());
+    convert_cbor_object_into(cbor_metadata, &mut new_metadata)
+        .map_err(DecodeError::MetadataJson)?;
 
-                // Increment the ENA for the next ereport in the packet.
-                ena.0 += 1;
-            }
-
-            Ok((restart_id, Response::Ereports(json_ereports)))
-        }
-        // The party you are attempting to dial is not available. Please refresh
-        // your metadata and try again.
-        EreportResponseHeader::V0(ResponseHeaderV0 {
-            kind: ResponseKindV0::Restarted,
-            restart_id,
-            ..
-        }) => {
-            let cbor_meta =
-                serde_cbor::from_slice::<BTreeMap<String, CborValue>>(rest)
-                    .map_err(DecodeError::MetadataDeserialize)?;
-            let mut json_meta = serde_json::Map::with_capacity(cbor_meta.len());
-            for (key, value) in cbor_meta {
-                json_meta.insert(
-                    key,
-                    convert_cbor_value(value)
-                        .map_err(DecodeError::MetadataJson)?,
-                );
-            }
-            Ok((restart_id, Response::Metadata(json_meta)))
-        }
+    if !new_metadata.is_empty() || current_restart_id != restart_id {
+        *metadata = Some(new_metadata);
     }
-}
 
-#[derive(Debug)]
-enum Response {
-    Metadata(serde_json::Map<String, JsonValue>),
-    Ereports(Vec<Ereport>),
+    if packet.is_empty() {
+        return Ok((restart_id, Vec::new()));
+    }
+
+    // Okay, there's data left in the packet. This should be interpreted as
+    // ereports. First, the starting ENA of the ereport list:
+    let (start_ena, packet) = gateway_messages::deserialize::<Ena>(packet)
+        .map_err(DecodeError::Ena)?;
+
+    // Now, the ereports themselves:
+    let cbor_ereports = serde_cbor::from_slice::<Vec<Vec<CborValue>>>(packet)
+        .map_err(DecodeError::EreportsDeserialize)?;
+
+    let mut ereports = Vec::with_capacity(cbor_ereports.len());
+    let mut task_names = Vec::new();
+    let mut ena = start_ena;
+    for (n, mut parts) in cbor_ereports.into_iter().enumerate() {
+        let ereport = parts.pop().ok_or(DecodeError::MalformedEreport {
+            n,
+            msg: "ereport list empty",
+        })?;
+        let uptime = parts.pop().ok_or(DecodeError::MalformedEreport {
+            n,
+            msg: "missing Hubris uptime list entry",
+        })?;
+        let task_gen = parts.pop().ok_or(DecodeError::MalformedEreport {
+            n,
+            msg: "missing task generation list entry",
+        })?;
+        let task_name = match parts.pop() {
+            Some(CborValue::Text(name)) => {
+                task_names.push(name.clone());
+                name
+            }
+            Some(CborValue::Integer(i)) => {
+                task_names.get(i as usize).cloned().ok_or(
+                    DecodeError::BadTaskNameIndex { n, index: i as usize },
+                )?
+            }
+            Some(actual) => {
+                return Err(DecodeError::InvalidTaskNameType { n, actual })
+            }
+            None => {
+                return Err(DecodeError::MalformedEreport {
+                    n,
+                    msg: "missing task name list entry",
+                })
+            }
+        };
+        if !parts.is_empty() {
+            return Err(DecodeError::MalformedEreport {
+                n,
+                msg: "unexpected bonus stuff in ereports list",
+            });
+        }
+        let CborValue::Map(cbor_ereport) = ereport else {
+            return Err(DecodeError::MalformedEreport {
+                n,
+                msg: "expected ereport to be an object",
+            });
+        };
+        let mut data = serde_json::Map::with_capacity(
+            // Let's just do One Big Allocation with enough space for
+            // the whole thing! We'll need:
+            // the number of fields in the ereport body
+            cbor_ereport.len()
+                    // plus the number of fields from the metadata fragment
+                    // we'll append to it
+                    + metadata.as_ref().map(|m| m.len()).unwrap_or(0)
+                    // the task name'
+                    + 1
+                    // the task generation
+                    + 1
+                    // hubris uptime
+                    + 1,
+        );
+        convert_cbor_object_into(cbor_ereport, &mut data)
+            .map_err(DecodeError::mk_json(n, "body"))?;
+        // jam the metadata fragment onto it
+        data.extend(
+            metadata.iter().flatten().map(|(k, v)| (k.clone(), v.clone())),
+        );
+        data.insert(
+            "hubris_task_name".to_string(),
+            JsonValue::String(task_name),
+        );
+        data.insert(
+            "hubris_task_gen".to_string(),
+            convert_cbor_value(task_gen)
+                .map_err(DecodeError::mk_json(n, "hubris_task_gen"))?,
+        );
+        data.insert(
+            "hubris_uptime_ms".to_string(),
+            convert_cbor_value(uptime)
+                .map_err(DecodeError::mk_json(n, "hubris_uptime_ms"))?,
+        );
+        ereports.push(Ereport { ena, data });
+
+        // Increment the ENA for the next ereport in the packet.
+        ena.0 += 1;
+    }
+
+    Ok((restart_id, ereports))
 }
 
 #[derive(Debug, Error, SlogInlineError)]
@@ -463,7 +421,8 @@ fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
     };
     use serde_json::value::Number as JsonNumber;
 
-    // See https://www.rfc-editor.org/rfc/rfc8949.html#section-6.1 for advice from the CBOR RFC on how to convert CBOR values to JSON value.
+    // See https://www.rfc-editor.org/rfc/rfc8949.html#section-6.1 for advice
+    // from the CBOR RFC on how to convert CBOR values to JSON value.
     Ok(match value {
         CborValue::Null => JsonValue::Null,
         CborValue::Bool(b) => JsonValue::Bool(b),
@@ -690,13 +649,20 @@ mod test {
         let restart_id = RestartId(0xfeedf00d);
         let start_ena = Ena(42);
 
-        let header =
-            EreportResponseHeader::V0(ResponseHeaderV0::new_data(restart_id));
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
+
+            // Empty metadata map using the "indefinite-length" encoding.
+            packet[len] = 0xbf;
+            packet[len + 1] = 0xff;
+            len += 2;
+
+            // Start ENA
             len += hubpack::serialize(&mut packet[len..], &start_ena)
                 .expect("ENA should serialize");
+
             let mut cursor = Cursor::new(&mut packet[len..]);
             serde_cbor::to_writer(
                 &mut cursor,
@@ -739,23 +705,24 @@ mod test {
         };
         let packet = &packet[..end];
 
-        let meta = Some(json_map! {
+        let initial_meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
-        });
-
-        let (decoded_restart_id, rsp) = match decode_packet(&meta, packet) {
-            Ok((restart_id, rsp)) => (restart_id, rsp),
-            Err(e) => panic!("packet did not decode successfully: {e:#?}"),
         };
+        let mut meta = Some(initial_meta.clone());
+
+        let (decoded_restart_id, ereports) =
+            match decode_packet(restart_id, &mut meta, packet) {
+                Ok((restart_id, rsp)) => (restart_id, rsp),
+                Err(e) => panic!("packet did not decode successfully: {e:#?}"),
+            };
 
         assert_eq!(dbg!(decoded_restart_id), restart_id);
-        let ereports = match rsp {
-            Response::Ereports(ereports) => ereports,
-            Response::Metadata(meta) => {
-                panic!("expected ereports, but decoded metadata: {meta:?}")
-            }
-        };
+        assert_eq!(
+            meta.as_ref(),
+            Some(&initial_meta),
+            "metadata should be unchanged"
+        );
 
         assert_eq!(
             ereports.len(),
@@ -803,6 +770,62 @@ mod test {
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
             },
+        );
+    }
+
+    #[test]
+    fn decode_empty_packets() {
+        let mut packet = [0u8; 1024];
+        let restart_id = RestartId(0xfeedf00d);
+        let start_ena = Ena(0);
+
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+        let end = {
+            let mut len = hubpack::serialize(&mut packet, &header)
+                .expect("header should serialize");
+
+            // Empty metadata map using the "indefinite-length" encoding.
+            packet[len] = 0xbf;
+            packet[len + 1] = 0xff;
+            len += 2;
+
+            // Start ENA
+            len += hubpack::serialize(&mut packet[len..], &start_ena)
+                .expect("ENA should serialize");
+
+            // Empty ereport list using the "indefinite-length" encoding.
+            packet[len] = 0x9f;
+            packet[len + 1] = 0xff;
+            len += 2;
+            len
+        };
+        let packet = &packet[..end];
+
+        let initial_meta = json_map! {
+            KEY_ARCHIVE: "decadefaced".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+        };
+        let mut meta = Some(initial_meta.clone());
+
+        let (decoded_restart_id, ereports) =
+            match decode_packet(restart_id, &mut meta, packet) {
+                Ok((restart_id, rsp)) => (restart_id, rsp),
+                Err(e) => {
+                    panic!("packet did not decode successfully: {e:#?}")
+                }
+            };
+
+        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        assert_eq!(
+            meta.as_ref(),
+            Some(&initial_meta),
+            "metadata should be unchanged"
+        );
+
+        assert_eq!(
+            dbg!(ereports.len()),
+            0,
+            "expected 0 ereports, but got: {ereports:#?}"
         );
     }
 }

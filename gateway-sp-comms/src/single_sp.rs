@@ -1405,7 +1405,7 @@ impl SingleSp {
             .send(ereport::WorkerRequest {
                 restart_id,
                 start_ena,
-                limit: limit.into(),
+                limit: limit.into().unwrap_or(std::num::NonZeroU8::MAX),
                 committed_ena,
                 rsp_tx,
             })
