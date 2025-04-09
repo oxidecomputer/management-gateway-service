@@ -591,6 +591,7 @@ impl shared_socket::RecvHandler for EreportHandler {
 #[cfg(test)]
 mod test {
     use super::*;
+    use serde::Serializer;
     use std::io::Cursor;
 
     enum TaskName<'a> {
@@ -643,6 +644,62 @@ mod test {
     const KEY_UPTIME: &str = "hubris_uptime_ms";
     const KEY_SERIAL: &str = "baseboard_serial";
 
+    fn serialize_ereport_list<'buf>(
+        buf: &'buf mut [u8],
+        ereports: &[Vec<CborValue>],
+    ) -> usize {
+        use serde::ser::SerializeSeq;
+
+        let mut cursor = Cursor::new(buf);
+        // Rather than just using `serde_cbor::to_writer`, we'll manually
+        // construct a `Serializer`, so that we can call the `serialize_seq`
+        // method *without* a length to force it to use the "indefinite-length"
+        // encoding.
+        let mut serializer = serde_cbor::Serializer::new(
+            serde_cbor::ser::IoWrite::new(&mut cursor),
+        );
+        let mut seq =
+            serializer.serialize_seq(None).expect("sequence should start");
+        for ereport in ereports {
+            seq.serialize_element(ereport).expect("element should serialize");
+        }
+        seq.end().expect("sequence should end");
+        cursor.position() as usize
+    }
+
+    fn serialize_metadata<'buf>(
+        buf: &'buf mut [u8],
+        metadata: &MetadataMap,
+    ) -> usize {
+        use serde::ser::SerializeMap;
+
+        let mut cursor = Cursor::new(buf);
+        // Rather than just using `serde_cbor::to_writer`, we'll manually
+        // construct a `Serializer`, so that we can call the `serialize_map`
+        // method *without* a length to force it to use the "indefinite-length"
+        // encoding.
+        let mut serializer = serde_cbor::Serializer::new(
+            serde_cbor::ser::IoWrite::new(&mut cursor),
+        );
+        let mut map = serializer.serialize_map(None).expect("map should start");
+        for (key, value) in metadata {
+            map.serialize_entry(key, value).expect("element should serialize");
+        }
+        map.end().expect("map should end");
+        cursor.position() as usize
+    }
+
+    fn dump_packet(packet: &[u8]) {
+        eprint!("encoded packet [{}B]:", packet.len());
+        for (i, byte) in packet.iter().enumerate() {
+            if i % 16 == 0 {
+                eprint!("\n  ");
+            }
+            eprint!("{:02x} ", byte);
+        }
+        eprintln!("");
+    }
+
     #[test]
     fn decode_ereports() {
         let mut packet = [0u8; 1024];
@@ -654,19 +711,16 @@ mod test {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
 
-            // Empty metadata map using the "indefinite-length" encoding.
-            packet[len] = 0xbf;
-            packet[len + 1] = 0xff;
-            len += 2;
+            // Empty metadata map
+            len +=
+                serialize_metadata(&mut packet[len..], &MetadataMap::default());
 
             // Start ENA
             len += hubpack::serialize(&mut packet[len..], &start_ena)
                 .expect("ENA should serialize");
-
-            let mut cursor = Cursor::new(&mut packet[len..]);
-            serde_cbor::to_writer(
-                &mut cursor,
-                &vec![
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[
                     mk_ereport_list(
                         TaskName::String(TASK_NAME_THINGY),
                         1,
@@ -699,11 +753,11 @@ mod test {
                         },
                     ),
                 ],
-            )
-            .expect("ereports must serialize");
-            len + cursor.position() as usize
+            );
+            len
         };
         let packet = &packet[..end];
+        dump_packet(packet);
 
         let initial_meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
@@ -774,6 +828,184 @@ mod test {
     }
 
     #[test]
+    fn decode_ereports_and_meta() {
+        let mut packet = [0u8; 1024];
+        let restart_id = RestartId(0xfeedf00d);
+
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+
+        let new_meta = json_map! {
+            KEY_ARCHIVE: "defaceddead".to_string(),
+            KEY_SERIAL: "BRM69000666".to_string(),
+            "sled_is_evil": true,
+        };
+        let end = {
+            let mut len = hubpack::serialize(&mut packet, &header)
+                .expect("header should serialize");
+
+            // Metadata map
+            len += serialize_metadata(&mut packet[len..], &new_meta);
+
+            // Start ENA
+            len += hubpack::serialize(&mut packet[len..], &Ena(0))
+                .expect("ENA should serialize");
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[
+                    mk_ereport_list(
+                        TaskName::String(TASK_NAME_THINGY),
+                        1,
+                        569,
+                        cbor_map! {
+                            "class": "flagrant system error".to_string(),
+                            "badness": 10000,
+                        },
+                    ),
+                    mk_ereport_list(
+                        TaskName::String(TASK_NAME_APOLLO_13),
+                        13,
+                        572,
+                        cbor_map! {
+                            "msg": "houston, we have a problem".to_string(),
+                            "crew": vec![
+                                CborValue::from("Lovell".to_string()),
+                                CborValue::from("Swigert".to_string()),
+                                CborValue::from("Hayes".to_string()),
+                            ],
+                        },
+                    ),
+                    mk_ereport_list(
+                        TaskName::Index(0),
+                        1,
+                        575,
+                        cbor_map! {
+                           "class": "problem changed".to_string(),
+                           "bonus_stuff": cbor_map!{ "foo": 1, "bar": 2, },
+                        },
+                    ),
+                ],
+            );
+            len
+        };
+        let packet = &packet[..end];
+        dump_packet(packet);
+
+        let initial_meta = json_map! {
+            KEY_ARCHIVE: "decadefaced".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+        };
+        let mut meta = Some(initial_meta.clone());
+
+        let (decoded_restart_id, ereports) =
+            match decode_packet(RestartId(0xdeadfaced), &mut meta, packet) {
+                Ok((restart_id, rsp)) => (restart_id, rsp),
+                Err(e) => panic!("packet did not decode successfully: {e:#?}"),
+            };
+
+        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        assert_eq!(
+            dbg!(meta.as_ref()),
+            Some(&new_meta),
+            "expected metadata to be updated"
+        );
+
+        assert_eq!(
+            ereports.len(),
+            3,
+            "expected 3 ereports, but got: {ereports:#?}"
+        );
+
+        assert_eq!(dbg!(ereports[0].ena), Ena(0));
+        assert_eq!(
+            dbg!(&ereports[0].data),
+            &json_map! {
+                KEY_ARCHIVE: "defaceddead".to_string(),
+                KEY_SERIAL: "BRM69000666".to_string(),
+                "sled_is_evil": true,
+                KEY_TASK: TASK_NAME_THINGY,
+                KEY_GEN: 1,
+                KEY_UPTIME: 569,
+                "class": "flagrant system error",
+                "badness": 10000,
+            },
+        );
+
+        assert_eq!(dbg!(ereports[1].ena), Ena(1));
+        assert_eq!(
+            dbg!(&ereports[1].data),
+            &json_map! {
+                KEY_ARCHIVE: "defaceddead".to_string(),
+                KEY_SERIAL: "BRM69000666".to_string(),
+                "sled_is_evil": true,
+                KEY_TASK: TASK_NAME_APOLLO_13,
+                KEY_GEN: 13,
+                KEY_UPTIME: 572,
+                "msg": "houston, we have a problem",
+                "crew": ["Lovell", "Swigert", "Hayes"],
+            },
+        );
+
+        assert_eq!(dbg!(ereports[2].ena), Ena(2));
+        assert_eq!(
+            dbg!(&ereports[2].data),
+            &json_map! {
+                KEY_ARCHIVE: "defaceddead".to_string(),
+                KEY_SERIAL: "BRM69000666".to_string(),
+                "sled_is_evil": true,
+                KEY_TASK: TASK_NAME_THINGY,
+                KEY_GEN: 1,
+                KEY_UPTIME: 575,
+                "class": "problem changed",
+                "bonus_stuff": { "foo": 1, "bar": 2, },
+            },
+        );
+    }
+
+    #[test]
+    fn decode_meta_only() {
+        let mut packet = [0u8; 1024];
+        let restart_id = RestartId(0xfeedf00d);
+
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+        let meta = json_map! {
+            KEY_ARCHIVE: "decadefaced".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+            "foo": 1,
+            "bar": [1, 2, 3],
+            "baz": { "hello": "joe", "system_working": true },
+        };
+        let end = {
+            let mut len = hubpack::serialize(&mut packet, &header)
+                .expect("header should serialize");
+
+            len += serialize_metadata(&mut packet[len..], &meta);
+            // That's the whole packet, folks!
+            len
+        };
+
+        let packet = &packet[..end];
+        dump_packet(packet);
+
+        let mut found_meta = None;
+
+        let (decoded_restart_id, ereports) =
+            match decode_packet(restart_id, &mut found_meta, packet) {
+                Ok((restart_id, rsp)) => (restart_id, rsp),
+                Err(e) => {
+                    panic!("packet did not decode successfully: {e:#?}")
+                }
+            };
+        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        assert_eq!(dbg!(found_meta.as_ref()), Some(&meta),);
+
+        assert_eq!(
+            dbg!(&ereports).len(),
+            0,
+            "expected 0 ereports, but got: {ereports:#?}"
+        );
+    }
+
+    #[test]
     fn decode_empty_packets() {
         let mut packet = [0u8; 1024];
         let restart_id = RestartId(0xfeedf00d);
@@ -784,22 +1016,20 @@ mod test {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
 
-            // Empty metadata map using the "indefinite-length" encoding.
-            packet[len] = 0xbf;
-            packet[len + 1] = 0xff;
-            len += 2;
+            // Empty metadata map
+            len +=
+                serialize_metadata(&mut packet[len..], &MetadataMap::default());
 
             // Start ENA
             len += hubpack::serialize(&mut packet[len..], &start_ena)
                 .expect("ENA should serialize");
 
-            // Empty ereport list using the "indefinite-length" encoding.
-            packet[len] = 0x9f;
-            packet[len + 1] = 0xff;
-            len += 2;
+            // Empty ereport list.
+            len += serialize_ereport_list(&mut packet[len..], &[]);
             len
         };
         let packet = &packet[..end];
+        dump_packet(packet);
 
         let initial_meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
@@ -817,13 +1047,13 @@ mod test {
 
         assert_eq!(dbg!(decoded_restart_id), restart_id);
         assert_eq!(
-            meta.as_ref(),
+            dbg!(meta.as_ref()),
             Some(&initial_meta),
             "metadata should be unchanged"
         );
 
         assert_eq!(
-            dbg!(ereports.len()),
+            dbg!(&ereports).len(),
             0,
             "expected 0 ereports, but got: {ereports:#?}"
         );
