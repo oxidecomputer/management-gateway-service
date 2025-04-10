@@ -30,8 +30,8 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 
-pub const SP_PORT: u16 = 0xDEAD;
-pub const MGS_PORT: u16 = 0xDEAF;
+pub const SP_PORT: u16 = 57005; // 0xDEAD
+pub const MGS_PORT: u16 = 57007; // 0xDEAF
 
 #[derive(Debug, Default)]
 pub struct EreportHandler {}
@@ -95,10 +95,19 @@ where
                 match self.request_ereports(RestartId(0), Ena(0), 0, None).await
                 {
                     Ok((restart_id, ereports)) => {
-                        debug_assert!(
-                            ereports.is_empty(),
-                            "we asked for limit 0..."
-                        );
+                        if !ereports.is_empty() {
+                            // The SP was told not to send ereports in this
+                            // request, just metadata. If it sends us ereports,
+                            // that could indicate a bug on the SP side, but we
+                            // assume the metadata is still valid regardless.
+                            warn!(
+                                self.log(),
+                                "received ereports in response to a request \
+                                 with limit 0, seems weird";
+                                "restart_id" => ?restart_id,
+                                "ereports" => ?ereports
+                            );
+                        }
                         debug!(
                             self.log(),
                             "received initial SP metadata";
