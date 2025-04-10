@@ -82,29 +82,54 @@ pub enum EreportRequest {
     // `version_byte_values` test below!
 }
 
+/// An ereport request ID (sequence number)
+///
+/// This is an arbitrary 8-bit value sent in the request packet. The SP is
+/// expected to include this value in the header for the response packet.
+#[derive(
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Ord,
+    PartialOrd,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+)]
+#[repr(transparent)]
+pub struct RequestIdV0(pub u8);
+
+impl RequestIdV0 {
+    pub fn increment(&mut self) {
+        self.0 = self.0.wrapping_add(1);
+    }
+}
+
 /// A request for ereports aggregated by the SP's snitch task, version 0.
 ///
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|-------C| limit  |        |
-/// +--------+--------+--------+        |
+/// | version|-------C| limit  | req ID |
+/// +--------+--------+--------+--------+
 /// |                                   |
 /// +                                   +
 /// |                                   |
 /// +       restart ID (128 bits)       +
 /// |                                   |
-/// +                          +--------+
-/// |                          |        |
-/// +--------+--------+--------+        +
+/// +                                   +
+/// |                                   |
+/// +--------+--------+--------+--------+
 /// |   first ENA desired in response   |
-/// +        (64 bits)         +--------+
-/// |                          |        |
-/// +--------+--------+--------+        +
+/// +            (64 bits)              +
+/// |                                   |
+/// +--------+--------+--------+--------+
 /// |    last ENA written to database   | only present when C bit set
-/// +        (64 bits)         +--------+
-/// |                          |
-/// +--------+--------+--------+
+/// +            (64 bits)              +
+/// |                                   |
+/// +--------+--------+--------+--------+
 /// ```
 ///
 /// See [RFD 545 §4.4.3.1] for details.
@@ -117,6 +142,10 @@ pub struct RequestV0 {
 
     /// Maximum number of ereports to include in the response packet.
     pub limit: u8,
+
+    /// Message ID of this request. The SP must include this value in the
+    /// response header for the response to this request.
+    pub request_id: RequestIdV0,
 
     /// The restart ID of the SP's snitch task which the control plane believes
     /// is current.
@@ -167,6 +196,7 @@ bitflags::bitflags! {
 impl RequestV0 {
     pub const fn new(
         restart_id: RestartId,
+        request_id: RequestIdV0,
         start_ena: Ena,
         limit: u8,
         committed_ena: Option<Ena>,
@@ -175,7 +205,7 @@ impl RequestV0 {
             Some(ena) => (ena, RequestFlagsV0::COMMIT),
             None => (Ena(0), RequestFlagsV0::empty()),
         };
-        Self { flags, limit, restart_id, start_ena, committed_ena }
+        Self { flags, limit, request_id, restart_id, start_ena, committed_ena }
     }
 
     /// Returns the "committed ENA" field if this packet contains one.
@@ -214,24 +244,22 @@ pub enum EreportResponseHeader {
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|                          |
-/// +--------+                          +
+/// | version| req ID |                 |
+/// +--------+--------+                 +
 /// |                                   |
 /// +                                   +
 /// |       restart ID (128 bits)       |
 /// +                                   +
 /// |                                   |
-/// +                          +--------+
-/// |                          |  0xBF  | beginning of CBOR metadata map
+/// +                 +--------+--------+
+/// |                 |  0xBF  |   beginning of CBOR metadata map
 /// +--------+--------+--------+--------+
 /// ... metadata k/v pairs ... |  0xFF  | metadata-only packets may end here
 /// +--------+--------+--------+--------+
 /// |        start ENA (64 bits)        |
 /// +--------+--------+--------+--------+
-/// |  0x9F  |    ... ereports ...
+/// |  0x9F  | ... ereports ...|  0xFF  |
 /// +--------+                 +--------+
-///      ... ereports ...      |  0xFF  |
-///                            +--------+
 /// ```
 /// See [RFD 545 §4.4.4] for details.
 /// [RFD 545 §4.4.4]: https://rfd.shared.oxide.computer/rfd/0545#_readresponse
@@ -239,6 +267,8 @@ pub enum EreportResponseHeader {
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub struct ResponseHeaderV0 {
+    /// The request ID of the request that this message is a response to.
+    pub request_id: RequestIdV0,
     /// The reporter restart ID of the SP's snitch task when this response was
     /// produced.
     pub restart_id: RestartId,
@@ -276,6 +306,7 @@ mod tests {
             &mut buf,
             &EreportRequest::V0(RequestV0::new(
                 RestartId(1),
+                RequestIdV0(1),
                 Ena(2),
                 3,
                 Some(Ena(4)),
@@ -288,6 +319,7 @@ mod tests {
             &mut buf,
             &EreportResponseHeader::V0(ResponseHeaderV0 {
                 restart_id: RestartId(1),
+                request_id: RequestIdV0(1),
             }),
         );
         assert_eq!(bytes[0], 0, "ResponseHeader v0 version byte should be 0");
