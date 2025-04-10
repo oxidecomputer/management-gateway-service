@@ -68,6 +68,10 @@ pub(crate) struct Worker<S> {
     retry_config: SpRetryConfig,
     socket: S,
     outbuf: [u8; <EreportRequest as hubpack::SerializedSize>::MAX_SIZE],
+    /// The current map of metadata added to all received ereports.
+    ///
+    /// When MGS starts up, this is initially `None`, and we must ask the SP for
+    /// metadata before we can start processing ereports.
     metadata: Option<MetadataMap>,
 }
 
