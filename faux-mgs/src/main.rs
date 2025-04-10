@@ -93,10 +93,12 @@ struct Args {
     #[clap(long)]
     listen_port: Option<u16>,
 
-    /// Ereport port to bind to locally [default: 0 for client commands, 22223
-    /// for server commands]
-    #[clap(long)]
-    ereport_port: Option<u16>,
+    /// Ereport port to bind to locally
+    // Note that, unlike `listen_port`, this always defaults to 0, because we
+    // don't need to act as a server with a known port for the ereport
+    // protocol.
+    #[clap(long, default_value_t = 0)]
+    ereport_port: u16,
 
     /// Address to use to discover the SP. May be a specific SP's address to
     /// bypass multicast discovery.
@@ -549,15 +551,6 @@ impl Command {
             _ => 0,
         }
     }
-
-    fn default_ereport_port(&self) -> u16 {
-        match self {
-            // Server commands; use standard MGS port
-            Command::ServeHostPhase2 { .. } => ereport::MGS_PORT,
-            // Client commands: use port 0
-            _ => 0,
-        }
-    }
 }
 
 fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
@@ -708,8 +701,6 @@ async fn main() -> Result<()> {
 
     let listen_port =
         args.listen_port.unwrap_or_else(|| args.command.default_listen_port());
-    let ereport_port =
-        args.listen_port.unwrap_or_else(|| args.command.default_ereport_port());
 
     // For faux-mgs, we'll serve all images present in the directory the user
     // requests, so don't cap the LRU cache size.
@@ -725,7 +716,7 @@ async fn main() -> Result<()> {
     .context("SharedSocket:bind() failed")?;
     let ereport_socket = {
         SharedSocket::bind(
-            ereport_port,
+            args.ereport_port,
             ereport::EreportHandler::default(),
             log.new(slog::o!("socket" => "ereport")),
         )
