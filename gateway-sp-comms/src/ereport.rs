@@ -269,7 +269,7 @@ where
                                 &mut self.metadata,
                                 packet,
                             )?;
-                            return Ok((restart_id, ereports));
+                            return Ok((hdr.restart_id, ereports));
                         }
                     }
                 }
