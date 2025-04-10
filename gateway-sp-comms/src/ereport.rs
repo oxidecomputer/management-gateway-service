@@ -13,6 +13,7 @@ use async_trait::async_trait;
 pub use gateway_messages::ereport::Ena;
 use gateway_messages::ereport::EreportRequest;
 use gateway_messages::ereport::EreportResponseHeader;
+use gateway_messages::ereport::RequestIdV0;
 use gateway_messages::ereport::RequestV0;
 use gateway_messages::ereport::ResponseHeaderV0;
 pub use gateway_messages::ereport::RestartId;
@@ -58,6 +59,12 @@ pub(crate) struct WorkerRequest {
 
 pub(crate) struct Worker<S> {
     req_rx: mpsc::Receiver<WorkerRequest>,
+    /// Each v0 ereport request has an 8-bit sequence number incremented on
+    /// every request from MGS and included by the SP in responses to that
+    /// request. This allows the gateway to determine if a packet received from
+    /// the SP is a response to the current request, or is in response to a
+    /// previous request that may have timed out or been retried.
+    request_id: RequestIdV0,
     retry_config: SpRetryConfig,
     socket: S,
     outbuf: [u8; <EreportRequest as hubpack::SerializedSize>::MAX_SIZE],
@@ -77,6 +84,7 @@ where
         let (tx, req_rx) = mpsc::channel(8);
         let this = Self {
             req_rx,
+            request_id: RequestIdV0(0),
             retry_config,
             socket,
             outbuf: [0u8;
@@ -184,6 +192,7 @@ where
     ) -> Result<(RestartId, Vec<Ereport>), EreportError> {
         let req = EreportRequest::V0(RequestV0::new(
             restart_id,
+            self.request_id,
             start_ena,
             limit,
             committed_ena,
@@ -201,39 +210,97 @@ where
                 );
             }
         };
-        let packet = &self.outbuf[..amt];
-        for attempt in 1..=self.retry_config.max_attempts_general {
-            slog::trace!(
-                self.log(),
-                "sending ereport request to SP";
-                "request" => ?req,
-                "attempt" => attempt,
-            );
-            self.socket.send(packet).await?;
-            if let Ok(Some(msg)) = tokio::time::timeout(
-                self.retry_config.per_attempt_timeout,
-                self.socket.recv(),
-            )
-            .await
-            {
-                return decode_packet(restart_id, &mut self.metadata, &msg)
-                    .map_err(Into::into);
-            }
-        }
 
-        Err(EreportError::Communication(
-            CommunicationError::ExhaustedNumAttempts(
-                self.retry_config.max_attempts_general,
-            ),
-        ))
+        // Actually sending the request is wrapped in an immediately awaited
+        // async block that functions as a sort of "try/catch" mechanism. This
+        // is to ensure we always increment the request ID for the next request,
+        // regardless of whether we succeeded or failed to receive a response.
+        let result = async {
+            let packet = &self.outbuf[..amt];
+            for attempt in 1..=self.retry_config.max_attempts_general {
+                slog::trace!(
+                    self.log(),
+                    "sending ereport request to SP";
+                    "request" => ?req,
+                    "request_id" => ?self.request_id,
+                    "attempt" => attempt,
+                );
+                self.socket.send(packet).await?;
+                'attempt: while let Ok(Some(msg)) = tokio::time::timeout(
+                    self.retry_config.per_attempt_timeout,
+                    self.socket.recv(),
+                )
+                .await
+                {
+                    // Decode the header and the body in separate steps, so that we
+                    // don't waste time decoding the bodies of packets that don't
+                    // match the current request ID.
+                    let (header, packet) = decode_header(&msg)?;
+                    match header {
+                        // If the request ID doesn't match the ID of the current
+                        // request, it was probably intended as a response to a
+                        // previous request that we may have attempted multiple
+                        // times. If that's the case, ignore it and wait for the
+                        // next packet.
+                        EreportResponseHeader::V0(ResponseHeaderV0 {
+                            request_id,
+                            ..
+                        }) if request_id != self.request_id => {
+                            slog::debug!(
+                                self.log(),
+                                "ignoring a response that doesn't match the \
+                                 current request ID";
+                                "request_id" => ?request_id,
+                                "current_request_id" => ?self.request_id,
+                            );
+                            continue 'attempt;
+                        }
+                        // Otherwise, it's a response to the current request.
+                        // Decode the body, potentially updating our current
+                        // metadata.
+                        EreportResponseHeader::V0(hdr) => {
+                            let ereports = decode_body_v0(
+                                restart_id,
+                                &hdr,
+                                &mut self.metadata,
+                                packet,
+                            )?;
+                            return Ok((restart_id, ereports));
+                        }
+                    }
+                }
+            }
+
+            Err(EreportError::Communication(
+                CommunicationError::ExhaustedNumAttempts(
+                    self.retry_config.max_attempts_general,
+                ),
+            ))
+        }
+        .await;
+
+        // Regardless of whether we received a successful response or not, make
+        // sure to increment the request ID. This ensures that if we later
+        // receive any packets that were intended as responses for *this*
+        // request, we'll ignore them.
+        self.request_id.increment();
+        result
     }
 }
 
-fn decode_packet(
-    current_restart_id: RestartId,
+fn decode_header(
+    packet: &[u8],
+) -> Result<(EreportResponseHeader, &[u8]), DecodeError> {
+    gateway_messages::deserialize::<EreportResponseHeader>(packet)
+        .map_err(DecodeError::Header)
+}
+
+fn decode_body_v0(
+    restart_id: RestartId,
+    hdr: &ResponseHeaderV0,
     metadata: &mut Option<MetadataMap>,
     packet: &[u8],
-) -> Result<(RestartId, Vec<Ereport>), DecodeError> {
+) -> Result<Vec<Ereport>, DecodeError> {
     // Deserialize a CBOR-encoded value from a byte slice, returning the
     // deserialized value and any remaining trailing data in the slice.
     fn deserialize_cbor<'data, T: Deserialize<'data>>(
@@ -245,11 +312,6 @@ fn decode_packet(
         Ok((value, rest))
     }
 
-    let (header, packet) =
-        gateway_messages::deserialize::<EreportResponseHeader>(packet)
-            .map_err(DecodeError::Header)?;
-
-    let EreportResponseHeader::V0(ResponseHeaderV0 { restart_id }) = header;
     // V0 ereport packets consist of:
     //
     // 1. A CBOR map (using the "indefinite-length" encoding) of strings to
@@ -278,12 +340,12 @@ fn decode_packet(
     convert_cbor_object_into(cbor_metadata, &mut new_metadata)
         .map_err(DecodeError::MetadataJson)?;
 
-    if !new_metadata.is_empty() || current_restart_id != restart_id {
+    if !new_metadata.is_empty() || restart_id != hdr.restart_id {
         *metadata = Some(new_metadata);
     }
 
     if packet.is_empty() {
-        return Ok((restart_id, Vec::new()));
+        return Ok(Vec::new());
     }
 
     // Okay, there's data left in the packet. This should be interpreted as
@@ -384,7 +446,7 @@ fn decode_packet(
         ena.0 += 1;
     }
 
-    Ok((restart_id, ereports))
+    Ok(ereports)
 }
 
 #[derive(Debug, Error, SlogInlineError)]
@@ -699,7 +761,7 @@ mod test {
     }
 
     fn dump_packet(packet: &[u8]) {
-        eprint!("encoded packet [{}B]:", packet.len());
+        eprint!("packet [{}B]:", packet.len());
         for (i, byte) in packet.iter().enumerate() {
             if i % 16 == 0 {
                 eprint!("\n  ");
@@ -709,13 +771,38 @@ mod test {
         eprintln!("");
     }
 
+    #[track_caller]
+    fn decode_packet(
+        restart_id: RestartId,
+        metadata: &mut Option<MetadataMap>,
+        packet: &[u8],
+    ) -> (RestartId, RequestIdV0, Vec<Ereport>) {
+        dump_packet(packet);
+        let (header, packet) = match decode_header(packet) {
+            Ok((EreportResponseHeader::V0(header), packet)) => {
+                (dbg!(header), packet)
+            }
+            Err(e) => panic!("header did not decode: {e:#?}"),
+        };
+        let ereports =
+            match decode_body_v0(restart_id, &header, metadata, packet) {
+                Ok(ereports) => ereports,
+                Err(e) => panic!("body did not decode: {e:#?}"),
+            };
+        (header.restart_id, header.request_id, ereports)
+    }
+
     #[test]
     fn decode_ereports() {
         let mut packet = [0u8; 1024];
         let restart_id = RestartId(0xfeedf00d);
+        let request_id = RequestIdV0(1);
         let start_ena = Ena(42);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+            restart_id,
+            request_id,
+        });
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
@@ -774,13 +861,11 @@ mod test {
         };
         let mut meta = Some(initial_meta.clone());
 
-        let (decoded_restart_id, ereports) =
-            match decode_packet(restart_id, &mut meta, packet) {
-                Ok((restart_id, rsp)) => (restart_id, rsp),
-                Err(e) => panic!("packet did not decode successfully: {e:#?}"),
-            };
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(restart_id, &mut meta, packet);
 
-        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
         assert_eq!(
             meta.as_ref(),
             Some(&initial_meta),
@@ -840,8 +925,12 @@ mod test {
     fn decode_ereports_and_meta() {
         let mut packet = [0u8; 1024];
         let restart_id = RestartId(0xfeedf00d);
+        let request_id = RequestIdV0(1);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+            restart_id,
+            request_id,
+        });
 
         let new_meta = json_map! {
             KEY_ARCHIVE: "defaceddead".to_string(),
@@ -897,7 +986,6 @@ mod test {
             len
         };
         let packet = &packet[..end];
-        dump_packet(packet);
 
         let initial_meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
@@ -905,13 +993,10 @@ mod test {
         };
         let mut meta = Some(initial_meta.clone());
 
-        let (decoded_restart_id, ereports) =
-            match decode_packet(RestartId(0xdeadfaced), &mut meta, packet) {
-                Ok((restart_id, rsp)) => (restart_id, rsp),
-                Err(e) => panic!("packet did not decode successfully: {e:#?}"),
-            };
-
-        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(RestartId(0xdeadfaced), &mut meta, packet);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
         assert_eq!(
             dbg!(meta.as_ref()),
             Some(&new_meta),
@@ -974,8 +1059,12 @@ mod test {
     fn decode_meta_only() {
         let mut packet = [0u8; 1024];
         let restart_id = RestartId(0xfeedf00d);
+        let request_id = RequestIdV0(1);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+            restart_id,
+            request_id,
+        });
         let meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
@@ -997,14 +1086,10 @@ mod test {
 
         let mut found_meta = None;
 
-        let (decoded_restart_id, ereports) =
-            match decode_packet(restart_id, &mut found_meta, packet) {
-                Ok((restart_id, rsp)) => (restart_id, rsp),
-                Err(e) => {
-                    panic!("packet did not decode successfully: {e:#?}")
-                }
-            };
-        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(restart_id, &mut found_meta, packet);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
         assert_eq!(dbg!(found_meta.as_ref()), Some(&meta),);
 
         assert_eq!(
@@ -1019,8 +1104,12 @@ mod test {
         let mut packet = [0u8; 1024];
         let restart_id = RestartId(0xfeedf00d);
         let start_ena = Ena(0);
+        let request_id = RequestIdV0(1);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 { restart_id });
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+            restart_id,
+            request_id,
+        });
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
                 .expect("header should serialize");
@@ -1046,15 +1135,11 @@ mod test {
         };
         let mut meta = Some(initial_meta.clone());
 
-        let (decoded_restart_id, ereports) =
-            match decode_packet(restart_id, &mut meta, packet) {
-                Ok((restart_id, rsp)) => (restart_id, rsp),
-                Err(e) => {
-                    panic!("packet did not decode successfully: {e:#?}")
-                }
-            };
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(restart_id, &mut meta, packet);
 
-        assert_eq!(dbg!(decoded_restart_id), restart_id);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
         assert_eq!(
             dbg!(meta.as_ref()),
             Some(&initial_meta),
