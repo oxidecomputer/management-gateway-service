@@ -223,11 +223,12 @@ where
         let result = async {
             let packet = &self.outbuf[..amt];
             for attempt in 1..=self.retry_config.max_attempts_general {
-                slog::debug!(
+                slog::trace!(
                     self.log(),
                     "sending ereport request to SP";
-                    "request" => ?req,
                     "request_id" => ?self.request_id,
+                    "restart_id" => ?restart_id,
+                    "request" => ?req,
                     "attempt" => attempt,
                 );
                 self.socket.send(packet).await?;
