@@ -1395,7 +1395,7 @@ impl SingleSp {
 
     pub async fn ereports(
         &self,
-        restart_id: ereport::RestartId,
+        restart_id: Uuid,
         start_ena: ereport::Ena,
         limit: impl Into<Option<std::num::NonZeroU8>>,
         committed_ena: Option<ereport::Ena>,
