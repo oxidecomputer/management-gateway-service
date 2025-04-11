@@ -30,6 +30,7 @@ use std::num::NonZeroU8;
 use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
+use uuid::Uuid;
 
 pub const SP_PORT: u16 = 57005; // 0xDEAD
 pub const MGS_PORT: u16 = 57007; // 0xDEAF
@@ -39,7 +40,7 @@ pub struct EreportHandler {}
 
 #[derive(Debug)]
 pub struct EreportTranche {
-    pub restart_id: RestartId,
+    pub restart_id: Uuid,
     pub ereports: Vec<Ereport>,
 }
 
@@ -50,7 +51,7 @@ pub struct Ereport {
 }
 
 pub(crate) struct WorkerRequest {
-    pub(crate) restart_id: RestartId,
+    pub(crate) restart_id: Uuid,
     pub(crate) start_ena: Ena,
     pub(crate) limit: NonZeroU8,
     pub(crate) committed_ena: Option<Ena>,
@@ -104,7 +105,7 @@ where
             // refresh the SP's metadata, try to do so now.
             if self.metadata.is_none() {
                 trace!(self.log(), "requesting initial SP metadata...");
-                match self.request_ereports(RestartId(0), Ena(0), 0, None).await
+                match self.request_ereports(Uuid::nil(), Ena(0), 0, None).await
                 {
                     Ok((restart_id, ereports)) => {
                         if !ereports.is_empty() {
@@ -189,13 +190,13 @@ where
 
     async fn request_ereports(
         &mut self,
-        restart_id: RestartId,
+        restart_id: Uuid,
         start_ena: Ena,
         limit: u8,
         committed_ena: Option<Ena>,
-    ) -> Result<(RestartId, Vec<Ereport>), EreportError> {
+    ) -> Result<(Uuid, Vec<Ereport>), EreportError> {
         let req = EreportRequest::V0(RequestV0::new(
-            restart_id,
+            RestartId(restart_id.as_u128()),
             self.request_id,
             start_ena,
             limit,
@@ -222,7 +223,7 @@ where
         let result = async {
             let packet = &self.outbuf[..amt];
             for attempt in 1..=self.retry_config.max_attempts_general {
-                slog::trace!(
+                slog::debug!(
                     self.log(),
                     "sending ereport request to SP";
                     "request" => ?req,
@@ -262,14 +263,14 @@ where
                         // Otherwise, it's a response to the current request.
                         // Decode the body, potentially updating our current
                         // metadata.
-                        EreportResponseHeader::V0(hdr) => {
-                            let ereports = decode_body_v0(
+                        EreportResponseHeader::V0(header) => {
+                            return decode_body_v0(
                                 restart_id,
-                                &hdr,
+                                &header,
                                 &mut self.metadata,
                                 packet,
-                            )?;
-                            return Ok((hdr.restart_id, ereports));
+                            )
+                            .map_err(EreportError::from);
                         }
                     }
                 }
@@ -300,11 +301,11 @@ fn decode_header(
 }
 
 fn decode_body_v0(
-    restart_id: RestartId,
-    hdr: &ResponseHeaderV0,
+    restart_id: Uuid,
+    header: &ResponseHeaderV0,
     metadata: &mut Option<MetadataMap>,
     packet: &[u8],
-) -> Result<Vec<Ereport>, DecodeError> {
+) -> Result<(Uuid, Vec<Ereport>), DecodeError> {
     // Deserialize a CBOR-encoded value from a byte slice, returning the
     // deserialized value and any remaining trailing data in the slice.
     fn deserialize_cbor<'data, T: Deserialize<'data>>(
@@ -316,6 +317,7 @@ fn decode_body_v0(
         Ok((value, rest))
     }
 
+    let received_restart_id = Uuid::from_u128(header.restart_id.0);
     // V0 ereport packets consist of:
     //
     // 1. A CBOR map (using the "indefinite-length" encoding) of strings to
@@ -344,12 +346,12 @@ fn decode_body_v0(
     convert_cbor_object_into(cbor_metadata, &mut new_metadata)
         .map_err(DecodeError::MetadataJson)?;
 
-    if !new_metadata.is_empty() || restart_id != hdr.restart_id {
+    if !new_metadata.is_empty() || received_restart_id != restart_id {
         *metadata = Some(new_metadata);
     }
 
     if packet.is_empty() {
-        return Ok(Vec::new());
+        return Ok((received_restart_id, Vec::new()));
     }
 
     // Okay, there's data left in the packet. This should be interpreted as
@@ -450,7 +452,7 @@ fn decode_body_v0(
         ena.0 += 1;
     }
 
-    Ok(ereports)
+    Ok((received_restart_id, ereports))
 }
 
 #[derive(Debug, Error, SlogInlineError)]
@@ -777,10 +779,10 @@ mod test {
 
     #[track_caller]
     fn decode_packet(
-        restart_id: RestartId,
+        restart_id: Uuid,
         metadata: &mut Option<MetadataMap>,
         packet: &[u8],
-    ) -> (RestartId, RequestIdV0, Vec<Ereport>) {
+    ) -> (Uuid, RequestIdV0, Vec<Ereport>) {
         dump_packet(packet);
         let (header, packet) = match decode_header(packet) {
             Ok((EreportResponseHeader::V0(header), packet)) => {
@@ -788,23 +790,23 @@ mod test {
             }
             Err(e) => panic!("header did not decode: {e:#?}"),
         };
-        let ereports =
+        let (restart_id, ereports) =
             match decode_body_v0(restart_id, &header, metadata, packet) {
                 Ok(ereports) => ereports,
                 Err(e) => panic!("body did not decode: {e:#?}"),
             };
-        (header.restart_id, header.request_id, ereports)
+        (restart_id, header.request_id, ereports)
     }
 
     #[test]
     fn decode_ereports() {
         let mut packet = [0u8; 1024];
-        let restart_id = RestartId(0xfeedf00d);
+        let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
         let start_ena = Ena(42);
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
-            restart_id,
+            restart_id: RestartId(restart_id.as_u128()),
             request_id,
         });
         let end = {
@@ -928,11 +930,11 @@ mod test {
     #[test]
     fn decode_ereports_and_meta() {
         let mut packet = [0u8; 1024];
-        let restart_id = RestartId(0xfeedf00d);
+        let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
-            restart_id,
+            restart_id: RestartId(restart_id.as_u128()),
             request_id,
         });
 
@@ -998,7 +1000,7 @@ mod test {
         let mut meta = Some(initial_meta.clone());
 
         let (decoded_restart_id, decoded_request_id, ereports) =
-            decode_packet(RestartId(0xdeadfaced), &mut meta, packet);
+            decode_packet(Uuid::new_v4(), &mut meta, packet);
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
         assert_eq!(
@@ -1062,11 +1064,11 @@ mod test {
     #[test]
     fn decode_meta_only() {
         let mut packet = [0u8; 1024];
-        let restart_id = RestartId(0xfeedf00d);
+        let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
-            restart_id,
+            restart_id: RestartId(restart_id.as_u128()),
             request_id,
         });
         let meta = json_map! {
@@ -1106,12 +1108,12 @@ mod test {
     #[test]
     fn decode_empty_packets() {
         let mut packet = [0u8; 1024];
-        let restart_id = RestartId(0xfeedf00d);
+        let restart_id = Uuid::new_v4();
         let start_ena = Ena(0);
         let request_id = RequestIdV0(1);
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
-            restart_id,
+            restart_id: RestartId(restart_id.as_u128()),
             request_id,
         });
         let end = {
