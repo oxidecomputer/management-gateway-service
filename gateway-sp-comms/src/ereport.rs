@@ -335,7 +335,10 @@ fn decode_body_v0(
     //      1. The name of the task that produced the ereport
     //      2. The task's generation number
     //      3. The system uptime in milliseconds
-    //      4. A CBOR object containing the rest of the ereport
+    //      4. A CBOR byte array containing the body of the ereport. The bytes
+    //         in this array should be decoded as a map of strings to CBOR
+    //         values, but they are encoded as an array within the outer
+    //         message to escape any potentially malformed ereport data.
     //
     // See RFD 545 4.4 for details:
     // https://rfd.shared.oxide.computer/rfd/0545#_readresponse
@@ -368,18 +371,36 @@ fn decode_body_v0(
     let mut task_names = Vec::new();
     let mut ena = start_ena;
     for (n, mut parts) in cbor_ereports.into_iter().enumerate() {
-        let ereport = parts.pop().ok_or(DecodeError::MalformedEreport {
-            n,
-            msg: "ereport list empty",
-        })?;
+        // Each ereport is a list of 4 CBOR values.
+        //
+        // The fourth value is the body of the ereport, as a byte array whose
+        // contents are a CBOR-encoded map.
+        let CborValue::Bytes(body) =
+            parts.pop().ok_or(DecodeError::MalformedEreport {
+                n,
+                msg: "ereport list empty",
+            })?
+        else {
+            return Err(DecodeError::MalformedEreport {
+                n,
+                msg: "expected ereport body to be a byte array",
+            });
+        };
+        // The third value is the SP's uptime in milliseconds.
         let uptime = parts.pop().ok_or(DecodeError::MalformedEreport {
             n,
             msg: "missing Hubris uptime list entry",
         })?;
+        // The second value is the generation number of the task that emitted
+        // the ereport.
         let task_gen = parts.pop().ok_or(DecodeError::MalformedEreport {
             n,
             msg: "missing task generation list entry",
         })?;
+        // Finally, the first value is the name of the task that emitted the
+        // ereport. This may be represented either as a string, or as the
+        // integer index of a previous ereport (in which case, the name is the
+        // same as the one in the previous ereport).
         let task_name = match parts.pop() {
             Some(CborValue::Text(name)) => {
                 task_names.push(name.clone());
@@ -400,18 +421,22 @@ fn decode_body_v0(
                 })
             }
         };
+        // That should really be everything.
+        //
+        // XXX(eliza): perhaps we ought to just log a warning here, rather than
+        // returning an error and throwing out the whole packet?
         if !parts.is_empty() {
             return Err(DecodeError::MalformedEreport {
                 n,
                 msg: "unexpected bonus stuff in ereports list",
             });
         }
-        let CborValue::Map(cbor_ereport) = ereport else {
-            return Err(DecodeError::MalformedEreport {
-                n,
-                msg: "expected ereport to be an object",
-            });
-        };
+
+        let cbor_ereport = serde_cbor::from_slice::<
+            BTreeMap<CborValue, CborValue>,
+        >(&body)
+        .map_err(|error| DecodeError::DeserializeEreportBody { n, error })?;
+
         let mut data = serde_json::Map::with_capacity(
             // Let's just do One Big Allocation with enough space for
             // the whole thing! We'll need:
@@ -473,6 +498,12 @@ pub enum DecodeError {
     },
     #[error("malformed ereport[{n}]: {msg}")]
     MalformedEreport { n: usize, msg: &'static str },
+    #[error("failed to decode ereport[{n}] body")]
+    DeserializeEreportBody {
+        n: usize,
+        #[source]
+        error: serde_cbor::Error,
+    },
     #[error("failed to deserialize ereport metadata refresh fragment")]
     MetadataDeserialize(#[source] serde_cbor::Error),
     #[error("failed to convert metadata refresh fragment to JSON")]
@@ -706,11 +737,20 @@ mod test {
             TaskName::Index(i) => CborValue::Integer(i as i128),
             TaskName::String(s) => CborValue::Text(s.to_string()),
         };
+        // The body itself is serialized as a CBOR byte array, to escape the
+        // payload from the reporting task (in case it e.g. contains CBOR break
+        // bytes in wrong locations).
+        let body_bytes = match serde_cbor::to_vec(&body) {
+            Ok(bytes) => bytes,
+            Err(e) => {
+                panic!("failed to serialize ereportbody: {e}\nbody: {body:#?}")
+            }
+        };
         vec![
             task_name,
             CborValue::from(task_gen),
             CborValue::from(uptime),
-            CborValue::from(body),
+            CborValue::from(body_bytes),
         ]
     }
 
