@@ -447,7 +447,7 @@ fn decode_body_v0(
         // Increment the ENA for the next ereport in the packet.
         next_ena.0 += 1;
         let task_name = match task_name {
-            TaskName::Index(i) => match task_names.get(i as usize).cloned() {
+            TaskName::Index(i) => match task_names.get(i).cloned() {
                 Some(name) => name,
                 None => {
                     ereports.push(malformed(
