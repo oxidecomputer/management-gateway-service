@@ -28,6 +28,7 @@ use slog::debug;
 use slog::error;
 use slog::trace;
 use slog::warn;
+use slog_error_chain::InlineErrorChain;
 use slog_error_chain::SlogInlineError;
 use std::collections::BTreeMap;
 use std::num::NonZeroU8;
@@ -45,7 +46,7 @@ pub struct EreportHandler {}
 #[derive(Debug)]
 pub struct EreportTranche {
     pub restart_id: Uuid,
-    pub ereports: Vec<Result<Ereport, MalformedEreport>>,
+    pub ereports: Vec<Ereport>,
 }
 
 /// An individual ereport.
@@ -53,16 +54,6 @@ pub struct EreportTranche {
 pub struct Ereport {
     pub ena: Ena,
     pub data: JsonObject,
-}
-
-/// An ereport which could not be decoded successfully.
-///
-/// Any data that was successfully decoded is included in the `data` field.
-#[derive(Debug)]
-pub struct MalformedEreport {
-    pub ena: Ena,
-    pub data: JsonObject,
-    pub error: EreportDecodeError,
 }
 
 pub(crate) struct WorkerRequest {
@@ -400,67 +391,9 @@ fn decode_body_v0(
     let meta_len = metadata.map(JsonObject::len).unwrap_or(0);
     let cbor_ereports = serde_cbor::from_slice::<Vec<EreportEntry>>(packet)
         .map_err(DecodeError::EreportsDeserialize)?;
-
     let mut ereports = Vec::with_capacity(cbor_ereports.len());
 
-    // If attempting to interpret an ereport entry fails, we emit a "malformed
-    // ereport" entry and continue processing the rest of the ereports.
-    // Malformed ereports are emitted in situations where the data controlled by
-    // the Hubris task that *generated* the ereport is incorrect (e.g. it is not
-    // valid CBOR, or the CBOR cannot be converted to JSON nicely). This way,
-    // well-formed ereports from other tasks are not discarded if one task has
-    // misbehaved. We assume that the data coming from `packrat` must be
-    // correct, and give up on the whole packet if this is not the case, as a
-    // bug in how the packrat task encodes ereports would effect all data in the
-    // packet.
-    let malformed = |task_name: TaskNameV0,
-                     task_gen: u8,
-                     uptime: u32,
-                     body: &[u8],
-                     ena: Ena,
-                     error: EreportDecodeError| {
-        slog::warn!(
-            log,
-            "received a malformed ereport";
-            "ena" => ?ena,
-            KEY_TASK_NAME => ?task_name,
-            KEY_TASK_GEN => task_gen,
-            KEY_UPTIME => uptime,
-            "error" => &error,
-        );
-        let mut data = JsonObject::with_capacity(
-            metadata.map(JsonObject::len).unwrap_or(0) + 4,
-        );
-        data.extend(
-            metadata
-                .into_iter()
-                .flat_map(JsonObject::iter)
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
-        data.insert(
-            KEY_TASK_NAME.to_string(),
-            match task_name {
-                TaskNameV0::Index(i) => i.into(),
-                TaskNameV0::Name(s) => s.into(),
-            },
-        );
-        data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
-        data.insert(KEY_UPTIME.to_string(), uptime.into());
-        data.insert(
-            "invalid_ereport_body".to_string(),
-            URL_SAFE_NO_PAD.encode(body).into(),
-        );
-        Err(MalformedEreport { data, error, ena })
-    };
-
-    let mut next_ena = start_ena;
-    'ereports: for &EreportEntry(task_name, task_gen, uptime_ms, body_bytes) in
-        &cbor_ereports
-    {
-        let ena = next_ena;
-        // Increment the ENA for the next ereport in the packet.
-        next_ena.0 += 1;
-
+    let decode_entry = |&EreportEntry(task_name, _, _, body_bytes)| -> Result<(String, JsonObject),EreportDecodeError> {
         let task_name = {
             // The task name may either be a string or the index of a previous
             // task name in the packet.
@@ -471,21 +404,9 @@ fn decode_body_v0(
             let mut current_name = task_name;
             loop {
                 match current_name {
-                    TaskNameV0::Index(i) => match cbor_ereports.get(i) {
-                        Some(&EreportEntry(name, _, _, _)) => {
-                            current_name = name
-                        }
-                        None => {
-                            ereports.push(malformed(
-                                TaskNameV0::Index(i),
-                                task_gen,
-                                uptime_ms,
-                                body_bytes,
-                                ena,
-                                EreportDecodeError::TaskNameIndex,
-                            ));
-                            continue 'ereports;
-                        }
+                    TaskNameV0::Index(i) => {
+                        let &EreportEntry(name, _, _, _) = cbor_ereports.get(i).ok_or(EreportDecodeError::TaskNameIndex(i))?;
+                        current_name = name;
                     },
                     TaskNameV0::Name(s) => {
                         break s.to_owned();
@@ -493,56 +414,106 @@ fn decode_body_v0(
                 }
             }
         };
-
         // Decode the body, which is a byte array containing a CBOR-encoded map.
-        let body = match serde_cbor::from_slice::<BTreeMap<CborValue, CborValue>>(
+        let cbor_body = serde_cbor::from_slice::<BTreeMap<CborValue, CborValue>>(
             &body_bytes,
-        ) {
-            Ok(body) => body,
-            Err(error) => {
-                ereports.push(malformed(
-                    TaskNameV0::Name(&task_name),
-                    task_gen,
-                    uptime_ms,
-                    body_bytes,
-                    ena,
-                    error.into(),
-                ));
-                continue;
-            }
-        };
+        )?;
 
         let mut data = serde_json::Map::with_capacity(
             // Let's just do One Big Allocation with enough space for
             // the whole thing! We'll need:
             // the number of fields in the ereport body
-            body.len()
+            cbor_body.len()
                 + meta_len // number of fields in metadata fragment
                 + 1  // task name
                 + 1  // task generation
                 + 1, // hubris uptime
         );
-        if let Err(error) = convert_cbor_object_into(body, &mut data) {
-            ereports.push(malformed(
-                TaskNameV0::Name(&task_name),
-                task_gen,
-                uptime_ms,
-                body_bytes,
-                ena,
-                error.into(),
-            ));
-        } else {
-            data.extend(
-                metadata
-                    .into_iter()
-                    .flat_map(JsonObject::iter)
-                    .map(|(k, v)| (k.clone(), v.clone())),
-            );
-            data.insert(KEY_TASK_NAME.to_string(), task_name.into());
-            data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
-            data.insert(KEY_UPTIME.to_string(), uptime_ms.into());
-            ereports.push(Ok(Ereport { ena, data }))
-        }
+        convert_cbor_object_into(cbor_body, &mut data)?;
+        Ok((task_name, data))
+    };
+
+    let mut ena = start_ena;
+    for ereport @ &EreportEntry(task_name, task_gen, uptime_ms, body_bytes) in
+        &cbor_ereports
+    {
+        let mut data = match decode_entry(ereport) {
+            Ok((task_name, mut data)) => {
+                slog::trace!(
+                    log,
+                    "decoded ereport";
+                    "ena" => ?ena,
+                    KEY_TASK_NAME => &task_name,
+                    KEY_TASK_GEN => task_gen,
+                    KEY_UPTIME => uptime_ms,
+                    "data" => ?data,
+                );
+                data.insert(KEY_TASK_NAME.to_string(), task_name.into());
+                data
+            }
+            Err(error) => {
+                // If attempting to interpret an ereport entry fails, we emit a
+                // "malformed ereport" entry and continue processing the rest of
+                // the ereports. Malformed ereports are emitted in situations
+                // where the data controlled by the Hubris task that *generated*
+                // the ereport is incorrect (e.g. it is not valid CBOR, or the
+                // CBOR cannot be converted to JSON nicely). This way,
+                // well-formed ereports from other tasks are not discarded if
+                // one task has misbehaved. We assume that the data coming from
+                // `packrat` must be correct, and give up on the whole packet if
+                // this is not the case, as a bug in how the packrat task
+                // encodes ereports would effect all data in the packet.
+                slog::warn!(
+                    log,
+                    "received a malformed ereport";
+                    "ena" => ?ena,
+                    KEY_TASK_NAME => ?task_name,
+                    KEY_TASK_GEN => task_gen,
+                    KEY_UPTIME => uptime_ms,
+                    "error" => &error,
+                );
+                let mut data = serde_json::Map::with_capacity(
+                    meta_len
+                        + 1 // error message
+                        + 1 // body bytes
+                        + 1 // task name
+                        + 1 // task generation
+                        + 1, // hubris uptime
+                );
+                data.insert(
+                    "invalid_ereport_error".to_string(),
+                    InlineErrorChain::new(&error).to_string().into(),
+                );
+                data.insert(
+                    "invalid_ereport_body_bytes".to_string(),
+                    URL_SAFE_NO_PAD.encode(&body_bytes).into(),
+                );
+                data.insert(
+                    KEY_TASK_NAME.to_string(),
+                    match task_name {
+                        TaskNameV0::Name(name) => name.to_owned().into(),
+                        TaskNameV0::Index(i) => i.into(),
+                    },
+                );
+                data
+            }
+        };
+
+        // Populate task generation, uptime, and metadata regardless of whether
+        // the ereport body was decoded successfully or not.
+        data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
+        data.insert(KEY_UPTIME.to_string(), uptime_ms.into());
+        data.extend(
+            metadata
+                .into_iter()
+                .flat_map(JsonObject::iter)
+                .map(|(k, v)| (k.clone(), v.clone())),
+        );
+
+        ereports.push(Ereport { ena, data });
+
+        // Increment the ENA for the next ereport in the packet.
+        ena.0 += 1;
     }
 
     Ok(EreportTranche { restart_id, ereports })
@@ -565,17 +536,11 @@ pub enum DecodeError {
 /// Errors that may occur while decoding an individual ereport.
 #[derive(Debug, Error, SlogInlineError)]
 pub enum EreportDecodeError {
-    #[error("failed to decode ereport body CBOR")]
+    #[error("invalid body CBOR")]
     Parse(#[from] serde_cbor::Error),
-    #[error("task name index out of range")]
-    TaskNameIndex,
-    #[error("failed to convert CBOR {what} to JSON")]
-    CborToJson {
-        what: &'static str,
-        #[source]
-        error: CborToJsonError,
-    },
-    #[error("failed to convert CBOR body to JSON")]
+    #[error("task name index {0} out of range")]
+    TaskNameIndex(usize),
+    #[error("body CBOR cannot be converted to JSON")]
     BodyToJson(#[from] CborToJsonError),
 }
 
@@ -887,7 +852,7 @@ mod test {
         restart_id: Uuid,
         metadata: &mut Option<JsonObject>,
         packet: &[u8],
-    ) -> (Uuid, RequestIdV0, Vec<Result<Ereport, MalformedEreport>>) {
+    ) -> (Uuid, RequestIdV0, Vec<Ereport>) {
         dump_packet(packet);
         let (header, packet) = match decode_header(packet) {
             Ok((EreportResponseHeader::V0(header), packet)) => {
@@ -904,20 +869,9 @@ mod test {
     }
 
     #[track_caller]
-    fn assert_ereport_matches(
-        ereport: &Result<Ereport, MalformedEreport>,
-        ena: Ena,
-        data: JsonObject,
-    ) {
-        match ereport {
-            Ok(ereport) => {
-                assert_eq!(dbg!(ereport.ena), ena);
-                assert_eq!(dbg!(&ereport.data), &data);
-            }
-            Err(e) => {
-                panic!("expected {ena:?} to have decoded successfully: {e:#?}")
-            }
-        }
+    fn assert_ereport_matches(ereport: &Ereport, ena: Ena, data: JsonObject) {
+        assert_eq!(dbg!(ereport.ena), ena);
+        assert_eq!(dbg!(&ereport.data), &data);
     }
 
     #[test]
@@ -1049,7 +1003,8 @@ mod test {
         );
     }
 
-    // Test decoding ereports whose task names are the index of a prior ereport in the packet.
+    // Test decoding ereports whose task names are the index of a prior ereport
+    // in the packet.
     #[test]
     fn decode_task_name_indices() {
         let log = logger("decode_task_name_indices");
@@ -1404,9 +1359,9 @@ mod test {
         );
     }
 
-    /// Tests that a packet containing a single ereport whose body is not
-    /// well-formed CBOR does not result in the rest of the packet being
-    /// rejected.
+    // Tests that a packet containing a single ereport whose body is not
+    // well-formed CBOR does not result in the rest of the packet being
+    // rejected.
     #[test]
     fn malformed_ereport_body_doesnt_ruin_packet() {
         let log = logger("malformed_ereport_body_doesnt_ruin_packet");
@@ -1503,18 +1458,19 @@ mod test {
             },
         );
 
-        let malformed = dbg!(&ereports[1]).as_ref().unwrap_err();
-        assert_eq!(malformed.ena, Ena(start_ena.0 + 1));
-        assert_eq!(
-            &malformed.data,
-            &json_map! {
+        assert_ereport_matches(
+            &ereports[1],
+            Ena(start_ena.0 + 1),
+            json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
                 KEY_TASK_NAME: "task_wrong_ereport_server",
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 570,
-                "invalid_ereport_body": URL_SAFE_NO_PAD.encode(&bad_body),
-            }
+                "invalid_ereport_body_bytes": URL_SAFE_NO_PAD.encode(&bad_body),
+                "invalid_ereport_error":
+                    "invalid body CBOR: EOF while parsing a value at offset 3",
+            },
         );
 
         assert_ereport_matches(
