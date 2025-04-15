@@ -382,12 +382,6 @@ fn decode_body_v0(
     //      1. The name of the task that produced the ereport,
     //         which is encoded either as a CBOR string, or as the integer
     //         index of a previous ereport in the packet.
-    #[derive(Copy, Clone, Debug, serde::Deserialize)]
-    #[serde(untagged)]
-    enum TaskName<'a> {
-        Index(usize),
-        Name(&'a str),
-    }
     //      2. The task's generation number
     //      3. The system uptime in milliseconds
     //      4. A CBOR byte array containing the body of the ereport. The bytes
@@ -396,7 +390,7 @@ fn decode_body_v0(
     //         message to escape any potentially malformed ereport data.
     #[derive(serde::Deserialize)]
     struct EreportEntry<'a>(
-        TaskName<'a>,
+        TaskNameV0<'a>,
         u8,
         u32,
         #[serde(with = "serde_bytes")] &'a [u8],
@@ -419,7 +413,7 @@ fn decode_body_v0(
     // correct, and give up on the whole packet if this is not the case, as a
     // bug in how the packrat task encodes ereports would effect all data in the
     // packet.
-    let malformed = |task_name: TaskName,
+    let malformed = |task_name: TaskNameV0,
                      task_gen: u8,
                      uptime: u32,
                      body: &[u8],
@@ -446,8 +440,8 @@ fn decode_body_v0(
         data.insert(
             KEY_TASK_NAME.to_string(),
             match task_name {
-                TaskName::Index(i) => i.into(),
-                TaskName::Name(s) => s.into(),
+                TaskNameV0::Index(i) => i.into(),
+                TaskNameV0::Name(s) => s.into(),
             },
         );
         data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
@@ -477,13 +471,13 @@ fn decode_body_v0(
             let mut current_name = task_name;
             loop {
                 match current_name {
-                    TaskName::Index(i) => match cbor_ereports.get(i) {
+                    TaskNameV0::Index(i) => match cbor_ereports.get(i) {
                         Some(&EreportEntry(name, _, _, _)) => {
                             current_name = name
                         }
                         None => {
                             ereports.push(malformed(
-                                TaskName::Index(i),
+                                TaskNameV0::Index(i),
                                 task_gen,
                                 uptime_ms,
                                 body_bytes,
@@ -493,7 +487,7 @@ fn decode_body_v0(
                             continue 'ereports;
                         }
                     },
-                    TaskName::Name(s) => {
+                    TaskNameV0::Name(s) => {
                         break s.to_owned();
                     }
                 }
@@ -507,7 +501,7 @@ fn decode_body_v0(
             Ok(body) => body,
             Err(error) => {
                 ereports.push(malformed(
-                    TaskName::Name(&task_name),
+                    TaskNameV0::Name(&task_name),
                     task_gen,
                     uptime_ms,
                     body_bytes,
@@ -530,7 +524,7 @@ fn decode_body_v0(
         );
         if let Err(error) = convert_cbor_object_into(body, &mut data) {
             ereports.push(malformed(
-                TaskName::Name(&task_name),
+                TaskNameV0::Name(&task_name),
                 task_gen,
                 uptime_ms,
                 body_bytes,
@@ -759,16 +753,18 @@ impl shared_socket::RecvHandler for EreportHandler {
     }
 }
 
+#[derive(Copy, Clone, Debug, serde::Deserialize)]
+#[serde(untagged)]
+enum TaskNameV0<'a> {
+    Index(usize),
+    Name(&'a str),
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
     use serde::Serializer;
     use std::io::Cursor;
-
-    enum TaskName<'a> {
-        Index(usize),
-        String(&'a str),
-    }
 
     macro_rules! cbor_map {
         ($($key:literal: $val:expr),* $(,)?) => {{
@@ -798,14 +794,14 @@ mod test {
     }
 
     fn mk_ereport_list(
-        task_name: TaskName<'_>,
+        task_name: TaskNameV0<'_>,
         task_gen: u32,
         uptime: u64,
         body: BTreeMap<CborValue, CborValue>,
     ) -> Vec<CborValue> {
         let task_name = match task_name {
-            TaskName::Index(i) => CborValue::Integer(i as i128),
-            TaskName::String(s) => CborValue::Text(s.to_string()),
+            TaskNameV0::Index(i) => CborValue::Integer(i as i128),
+            TaskNameV0::Name(s) => CborValue::Text(s.to_string()),
         };
         // The body itself is serialized as a CBOR byte array, to escape the
         // payload from the reporting task (in case it e.g. contains CBOR break
@@ -951,7 +947,7 @@ mod test {
                 &mut packet[len..],
                 &[
                     mk_ereport_list(
-                        TaskName::String(TASK_NAME_THINGY),
+                        TaskNameV0::Name(TASK_NAME_THINGY),
                         1,
                         569,
                         cbor_map! {
@@ -960,7 +956,7 @@ mod test {
                         },
                     ),
                     mk_ereport_list(
-                        TaskName::String(TASK_NAME_APOLLO_13),
+                        TaskNameV0::Name(TASK_NAME_APOLLO_13),
                         13,
                         572,
                         cbor_map! {
@@ -973,7 +969,7 @@ mod test {
                         },
                     ),
                     mk_ereport_list(
-                        TaskName::Index(0),
+                        TaskNameV0::Index(0),
                         1,
                         575,
                         cbor_map! {
@@ -1081,7 +1077,7 @@ mod test {
                 &mut packet[len..],
                 &[
                     mk_ereport_list(
-                        TaskName::String(TASK_NAME_THINGY),
+                        TaskNameV0::Name(TASK_NAME_THINGY),
                         1,
                         569,
                         cbor_map! {
@@ -1090,7 +1086,7 @@ mod test {
                         },
                     ),
                     mk_ereport_list(
-                        TaskName::Index(0),
+                        TaskNameV0::Index(0),
                         1,
                         572,
                         cbor_map! {
@@ -1098,7 +1094,7 @@ mod test {
                         },
                     ),
                     mk_ereport_list(
-                        TaskName::Index(1),
+                        TaskNameV0::Index(1),
                         1,
                         575,
                         cbor_map! {
@@ -1206,7 +1202,7 @@ mod test {
                 &mut packet[len..],
                 &[
                     mk_ereport_list(
-                        TaskName::String(TASK_NAME_THINGY),
+                        TaskNameV0::Name(TASK_NAME_THINGY),
                         1,
                         569,
                         cbor_map! {
@@ -1215,7 +1211,7 @@ mod test {
                         },
                     ),
                     mk_ereport_list(
-                        TaskName::String(TASK_NAME_APOLLO_13),
+                        TaskNameV0::Name(TASK_NAME_APOLLO_13),
                         13,
                         572,
                         cbor_map! {
@@ -1228,7 +1224,7 @@ mod test {
                         },
                     ),
                     mk_ereport_list(
-                        TaskName::Index(0),
+                        TaskNameV0::Index(0),
                         1,
                         575,
                         cbor_map! {
@@ -1439,7 +1435,7 @@ mod test {
                 &mut packet[len..],
                 &[
                     mk_ereport_list(
-                        TaskName::String(TASK_NAME_THINGY),
+                        TaskNameV0::Name(TASK_NAME_THINGY),
                         1,
                         569,
                         cbor_map! {
@@ -1456,7 +1452,7 @@ mod test {
                         CborValue::Bytes(bad_body.clone()),
                     ],
                     mk_ereport_list(
-                        TaskName::Index(0),
+                        TaskNameV0::Index(0),
                         1,
                         575,
                         cbor_map! {
