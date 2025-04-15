@@ -1057,6 +1057,128 @@ mod test {
         );
     }
 
+    // Test decoding ereports whose task names are the index of a prior ereport in the packet.
+    #[test]
+    fn decode_task_name_indices() {
+        let log = logger("decode_task_name_indices");
+        let mut packet = [0u8; 1024];
+        let restart_id = Uuid::new_v4();
+        let request_id = RequestIdV0(1);
+        let start_ena = Ena(42);
+
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: RestartId(restart_id.as_u128()),
+            request_id,
+        });
+        let end = {
+            let mut len = hubpack::serialize(&mut packet, &header)
+                .expect("header should serialize");
+
+            // Empty metadata map
+            len +=
+                serialize_metadata(&mut packet[len..], &JsonObject::default());
+
+            // Start ENA
+            len += hubpack::serialize(&mut packet[len..], &start_ena)
+                .expect("ENA should serialize");
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[
+                    mk_ereport_list(
+                        TaskName::String(TASK_NAME_THINGY),
+                        1,
+                        569,
+                        cbor_map! {
+                            "class": "flagrant system error".to_string(),
+                            "badness": 10000,
+                        },
+                    ),
+                    mk_ereport_list(
+                        TaskName::Index(0),
+                        1,
+                        572,
+                        cbor_map! {
+                            "class": "hello world".to_string(),
+                        },
+                    ),
+                    mk_ereport_list(
+                        TaskName::Index(1),
+                        1,
+                        575,
+                        cbor_map! {
+                           "class": "cool ereport".to_string(),
+                        },
+                    ),
+                ],
+            );
+            len
+        };
+        let packet = &packet[..end];
+
+        let initial_meta = json_map! {
+            KEY_ARCHIVE: "decadefaced".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+        };
+        let mut meta = Some(initial_meta.clone());
+
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(&log, restart_id, &mut meta, packet);
+
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
+        assert_eq!(
+            meta.as_ref(),
+            Some(&initial_meta),
+            "metadata should be unchanged"
+        );
+
+        assert_eq!(
+            ereports.len(),
+            3,
+            "expected 3 ereports, but got: {ereports:#?}"
+        );
+
+        assert_ereport_matches(
+            &ereports[0],
+            start_ena,
+            json_map! {
+                KEY_ARCHIVE: "decadefaced",
+                KEY_SERIAL: "BRM69000420",
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
+                KEY_UPTIME: 569,
+                "class": "flagrant system error",
+                "badness": 10000,
+            },
+        );
+
+        assert_ereport_matches(
+            &ereports[1],
+            Ena(start_ena.0 + 1),
+            json_map! {
+                KEY_ARCHIVE: "decadefaced",
+                KEY_SERIAL: "BRM69000420",
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
+                KEY_UPTIME: 572,
+                "class": "hello world",
+            },
+        );
+
+        assert_ereport_matches(
+            &ereports[2],
+            Ena(start_ena.0 + 2),
+            json_map! {
+                KEY_ARCHIVE: "decadefaced",
+                KEY_SERIAL: "BRM69000420",
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
+                KEY_UPTIME: 575,
+                "class": "cool ereport",
+            },
+        );
+    }
+
     #[test]
     fn decode_ereports_and_meta() {
         let log = logger("decode_ereports_and_meta");
