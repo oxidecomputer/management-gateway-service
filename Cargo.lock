@@ -970,6 +970,7 @@ dependencies = [
  "serde_json",
  "slog",
  "slog-error-chain",
+ "slog-term",
  "socket2 0.5.9",
  "string_cache",
  "thiserror",

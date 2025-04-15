@@ -40,3 +40,7 @@ gateway-messages = { workspace = true, features = ["std"] }
 # version so that `usdt` can be built on stable rust.
 [build-dependencies]
 version_check.workspace = true
+
+[dev-dependencies]
+# For logging in tests
+slog-term.workspace = true

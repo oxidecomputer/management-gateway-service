@@ -281,6 +281,7 @@ where
                         // metadata.
                         EreportResponseHeader::V0(header) => {
                             return decode_body_v0(
+                                self.socket.log(),
                                 restart_id,
                                 &header,
                                 &mut self.metadata,
@@ -317,6 +318,7 @@ fn decode_header(
 }
 
 fn decode_body_v0(
+    log: &slog::Logger,
     requested_restart_id: Uuid,
     header: &ResponseHeaderV0,
     metadata: &mut Option<JsonObject>,
@@ -354,6 +356,12 @@ fn decode_body_v0(
         .map_err(DecodeError::MetadataJson)?;
 
     if !new_metadata.is_empty() || restart_id != requested_restart_id {
+        slog::debug!(
+            log,
+            "updating ereport metadata";
+            "restart_id" => ?restart_id,
+            "metadata" => ?new_metadata,
+        );
         *metadata = Some(new_metadata);
     }
     if packet.is_empty() {
@@ -368,7 +376,7 @@ fn decode_body_v0(
     //      1. The name of the task that produced the ereport,
     //         which is encoded either as a CBOR string, or as the integer
     //         index of a previous ereport in the packet.
-    #[derive(serde::Deserialize)]
+    #[derive(Debug, serde::Deserialize)]
     #[serde(untagged)]
     enum TaskName {
         Index(usize),
@@ -406,20 +414,27 @@ fn decode_body_v0(
     // correct, and give up on the whole packet if this is not the case, as a
     // bug in how the packrat task encodes ereports would effect all data in the
     // packet.
-    fn malformed(
-        meta: Option<&JsonObject>,
-        task_name: TaskName,
-        task_gen: u8,
-        uptime: u32,
-        body: Vec<u8>,
-        ena: Ena,
-        error: impl Into<EreportDecodeError>,
-    ) -> Result<Ereport, MalformedEreport> {
+    let malformed = |task_name: TaskName,
+                     task_gen: u8,
+                     uptime: u32,
+                     body: Vec<u8>,
+                     ena: Ena,
+                     error: EreportDecodeError| {
+        slog::warn!(
+            log,
+            "received a malformed ereport";
+            "ena" => ?ena,
+            "hubris_task_name" => ?task_name,
+            "hubris_task_gen" => task_gen,
+            "hubris_uptime" => uptime,
+            "error" => &error,
+        );
         let mut data = JsonObject::with_capacity(
-            meta.map(JsonObject::len).unwrap_or(0) + 4,
+            metadata.map(JsonObject::len).unwrap_or(0) + 4,
         );
         data.extend(
-            meta.into_iter()
+            metadata
+                .into_iter()
                 .flat_map(JsonObject::iter)
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
@@ -436,8 +451,8 @@ fn decode_body_v0(
             "invalid_ereport_body".to_string(),
             URL_SAFE_NO_PAD.encode(body).into(),
         );
-        Err(MalformedEreport { data, error: error.into(), ena })
-    }
+        Err(MalformedEreport { data, error, ena })
+    };
 
     let mut next_ena = start_ena;
     for EreportEntry(task_name, task_gen, uptime_ms, body_bytes) in
@@ -451,7 +466,6 @@ fn decode_body_v0(
                 Some(name) => name,
                 None => {
                     ereports.push(malformed(
-                        metadata,
                         TaskName::Index(i),
                         task_gen,
                         uptime_ms,
@@ -474,13 +488,12 @@ fn decode_body_v0(
             Ok(body) => body,
             Err(error) => {
                 ereports.push(malformed(
-                    metadata,
                     TaskName::Name(task_name),
                     task_gen,
                     uptime_ms,
                     body_bytes,
                     ena,
-                    error,
+                    error.into(),
                 ));
                 continue;
             }
@@ -498,13 +511,12 @@ fn decode_body_v0(
         );
         if let Err(error) = convert_cbor_object_into(body, &mut data) {
             ereports.push(malformed(
-                metadata,
                 TaskName::Name(task_name),
                 task_gen,
                 uptime_ms,
                 body_bytes,
                 ena,
-                error,
+                error.into(),
             ));
         } else {
             data.extend(
@@ -758,6 +770,19 @@ mod test {
         }}
     }
 
+    fn logger(test_name: &'static str) -> slog::Logger {
+        use slog::Drain;
+        let decorator = slog_term::TermDecorator::new().build();
+        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
+        // Traditionally, it's Considered Harmful to use a `Mutex` to make a
+        // slog drain thread-safe in production code. However, all these tests
+        // are single-threaded, so the mutex will never be contended, and it
+        // feels a bit silly to instead use `slog-async` and spawn an entire
+        // second thread...
+        let drain = std::sync::Mutex::new(drain).fuse();
+        slog::Logger::root(drain, slog::o!("test" => test_name))
+    }
+
     fn mk_ereport_list(
         task_name: TaskName<'_>,
         task_gen: u32,
@@ -774,7 +799,7 @@ mod test {
         let body_bytes = match serde_cbor::to_vec(&body) {
             Ok(bytes) => bytes,
             Err(e) => {
-                panic!("failed to serialize ereportbody: {e}\nbody: {body:#?}")
+                panic!("failed to serialize ereport body: {e}\nbody: {body:#?}")
             }
         };
         vec![
@@ -851,6 +876,7 @@ mod test {
 
     #[track_caller]
     fn decode_packet(
+        log: &slog::Logger,
         restart_id: Uuid,
         metadata: &mut Option<JsonObject>,
         packet: &[u8],
@@ -863,7 +889,7 @@ mod test {
             Err(e) => panic!("header did not decode: {e:#?}"),
         };
         let EreportTranche { restart_id, ereports } =
-            match decode_body_v0(restart_id, &header, metadata, packet) {
+            match decode_body_v0(log, restart_id, &header, metadata, packet) {
                 Ok(ereports) => ereports,
                 Err(e) => panic!("body did not decode: {e:#?}"),
             };
@@ -889,6 +915,7 @@ mod test {
 
     #[test]
     fn decode_ereports() {
+        let log = logger("decode_ereports");
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
@@ -956,7 +983,7 @@ mod test {
         let mut meta = Some(initial_meta.clone());
 
         let (decoded_restart_id, decoded_request_id, ereports) =
-            decode_packet(restart_id, &mut meta, packet);
+            decode_packet(&log, restart_id, &mut meta, packet);
 
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
@@ -1017,6 +1044,7 @@ mod test {
 
     #[test]
     fn decode_ereports_and_meta() {
+        let log = logger("decode_ereports_and_meta");
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
@@ -1088,7 +1116,7 @@ mod test {
         let mut meta = Some(initial_meta.clone());
 
         let (decoded_restart_id, decoded_request_id, ereports) =
-            decode_packet(Uuid::new_v4(), &mut meta, packet);
+            decode_packet(&log, Uuid::new_v4(), &mut meta, packet);
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
         assert_eq!(
@@ -1151,6 +1179,7 @@ mod test {
 
     #[test]
     fn decode_meta_only() {
+        let log = logger("decode_meta_only");
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
@@ -1180,7 +1209,7 @@ mod test {
         let mut found_meta = None;
 
         let (decoded_restart_id, decoded_request_id, ereports) =
-            decode_packet(restart_id, &mut found_meta, packet);
+            decode_packet(&log, restart_id, &mut found_meta, packet);
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
         assert_eq!(dbg!(found_meta.as_ref()), Some(&meta),);
@@ -1194,6 +1223,7 @@ mod test {
 
     #[test]
     fn decode_empty_packets() {
+        let log = logger("decode_empty_packets");
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let start_ena = Ena(0);
@@ -1228,7 +1258,7 @@ mod test {
         let mut meta = Some(initial_meta.clone());
 
         let (decoded_restart_id, decoded_request_id, ereports) =
-            decode_packet(restart_id, &mut meta, packet);
+            decode_packet(&log, restart_id, &mut meta, packet);
 
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
