@@ -382,11 +382,11 @@ fn decode_body_v0(
     //      1. The name of the task that produced the ereport,
     //         which is encoded either as a CBOR string, or as the integer
     //         index of a previous ereport in the packet.
-    #[derive(Debug, serde::Deserialize)]
+    #[derive(Copy, Clone, Debug, serde::Deserialize)]
     #[serde(untagged)]
-    enum TaskName {
+    enum TaskName<'a> {
         Index(usize),
-        Name(String),
+        Name(&'a str),
     }
     //      2. The task's generation number
     //      3. The system uptime in milliseconds
@@ -395,11 +395,11 @@ fn decode_body_v0(
     //         values, but they are encoded as an array within the outer
     //         message to escape any potentially malformed ereport data.
     #[derive(serde::Deserialize)]
-    struct EreportEntry(
-        TaskName,
+    struct EreportEntry<'a>(
+        TaskName<'a>,
         u8,
         u32,
-        #[serde(with = "serde_bytes")] Vec<u8>,
+        #[serde(with = "serde_bytes")] &'a [u8],
     );
 
     let metadata = metadata.as_ref();
@@ -460,12 +460,8 @@ fn decode_body_v0(
     };
 
     let mut next_ena = start_ena;
-    'ereports: for &EreportEntry(
-        ref task_name,
-        task_gen,
-        uptime_ms,
-        ref body_bytes,
-    ) in &cbor_ereports
+    'ereports: for &EreportEntry(task_name, task_gen, uptime_ms, body_bytes) in
+        &cbor_ereports
     {
         let ena = next_ena;
         // Increment the ENA for the next ereport in the packet.
@@ -481,8 +477,8 @@ fn decode_body_v0(
             let mut current_name = task_name;
             loop {
                 match current_name {
-                    &TaskName::Index(i) => match cbor_ereports.get(i) {
-                        Some(EreportEntry(name, _, _, _)) => {
+                    TaskName::Index(i) => match cbor_ereports.get(i) {
+                        Some(&EreportEntry(name, _, _, _)) => {
                             current_name = name
                         }
                         None => {
@@ -497,8 +493,8 @@ fn decode_body_v0(
                             continue 'ereports;
                         }
                     },
-                    TaskName::Name(ref s) => {
-                        break s.clone();
+                    TaskName::Name(s) => {
+                        break s.to_owned();
                     }
                 }
             }
@@ -511,7 +507,7 @@ fn decode_body_v0(
             Ok(body) => body,
             Err(error) => {
                 ereports.push(malformed(
-                    TaskName::Name(task_name),
+                    TaskName::Name(&task_name),
                     task_gen,
                     uptime_ms,
                     body_bytes,
@@ -534,7 +530,7 @@ fn decode_body_v0(
         );
         if let Err(error) = convert_cbor_object_into(body, &mut data) {
             ereports.push(malformed(
-                TaskName::Name(task_name),
+                TaskName::Name(&task_name),
                 task_gen,
                 uptime_ms,
                 body_bytes,
