@@ -1274,4 +1274,132 @@ mod test {
             "expected 0 ereports, but got: {ereports:#?}"
         );
     }
+
+    /// Tests that a packet containing a single ereport whose body is not
+    /// well-formed CBOR does not result in the rest of the packet being
+    /// rejected.
+    #[test]
+    fn malformed_ereport_body_doesnt_ruin_packet() {
+        let log = logger("malformed_ereport_body_doesnt_ruin_packet");
+        let mut packet = [0u8; 1024];
+        let restart_id = Uuid::new_v4();
+        let request_id = RequestIdV0(1);
+        let start_ena = Ena(42);
+        let bad_body = vec![0xBA, 0xDB, 0xAD]; // ba db ad
+
+        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: RestartId(restart_id.as_u128()),
+            request_id,
+        });
+        let end = {
+            let mut len = hubpack::serialize(&mut packet, &header)
+                .expect("header should serialize");
+
+            // Empty metadata map
+            len +=
+                serialize_metadata(&mut packet[len..], &JsonObject::default());
+
+            // Start ENA
+            len += hubpack::serialize(&mut packet[len..], &start_ena)
+                .expect("ENA should serialize");
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[
+                    mk_ereport_list(
+                        TaskName::String(TASK_NAME_THINGY),
+                        1,
+                        569,
+                        cbor_map! {
+                            "class": "flagrant system error".to_string(),
+                            "badness": 10000,
+                        },
+                    ),
+                    // Rather than a CBOR map, the body bytes of this ereport is
+                    // just some gibberish.
+                    vec![
+                        "task_wrong_ereport_server".to_string().into(),
+                        1.into(),
+                        570.into(),
+                        CborValue::Bytes(bad_body.clone()),
+                    ],
+                    mk_ereport_list(
+                        TaskName::Index(0),
+                        1,
+                        575,
+                        cbor_map! {
+                           "class": "problem changed".to_string(),
+                           "bonus_stuff": cbor_map!{ "foo": 1, "bar": 2, },
+                        },
+                    ),
+                ],
+            );
+            len
+        };
+        let packet = &packet[..end];
+
+        let initial_meta = json_map! {
+            KEY_ARCHIVE: "decadefaced".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+        };
+        let mut meta = Some(initial_meta.clone());
+
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(&log, restart_id, &mut meta, packet);
+
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
+        assert_eq!(
+            meta.as_ref(),
+            Some(&initial_meta),
+            "metadata should be unchanged"
+        );
+
+        assert_eq!(
+            ereports.len(),
+            3,
+            "expected 3 ereports, but got: {ereports:#?}"
+        );
+
+        assert_ereport_matches(
+            &ereports[0],
+            start_ena,
+            json_map! {
+                KEY_ARCHIVE: "decadefaced",
+                KEY_SERIAL: "BRM69000420",
+                KEY_TASK: TASK_NAME_THINGY,
+                KEY_GEN: 1,
+                KEY_UPTIME: 569,
+                "class": "flagrant system error",
+                "badness": 10000,
+            },
+        );
+
+        let malformed = dbg!(&ereports[1]).as_ref().unwrap_err();
+        assert_eq!(malformed.ena, Ena(start_ena.0 + 1));
+        assert_eq!(
+            &malformed.data,
+            &json_map! {
+                KEY_ARCHIVE: "decadefaced",
+                KEY_SERIAL: "BRM69000420",
+                KEY_TASK: "task_wrong_ereport_server",
+                KEY_GEN: 1,
+                KEY_UPTIME: 570,
+                "invalid_ereport_body": URL_SAFE_NO_PAD.encode(&bad_body),
+            }
+        );
+
+        assert_ereport_matches(
+            &ereports[2],
+            Ena(start_ena.0 + 2),
+            json_map! {
+                KEY_ARCHIVE: "decadefaced",
+                KEY_SERIAL: "BRM69000420",
+                KEY_TASK: TASK_NAME_THINGY,
+                KEY_GEN: 1,
+                KEY_UPTIME: 575,
+                "class": "problem changed",
+                "bonus_stuff": { "foo": 1, "bar": 2, },
+            },
+        );
+    }
 }
