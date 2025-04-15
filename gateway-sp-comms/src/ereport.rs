@@ -229,7 +229,7 @@ where
         let result = async {
             let packet = &self.outbuf[..amt];
             for attempt in 1..=self.retry_config.max_attempts_general {
-                slog::trace!(
+                trace!(
                     self.log(),
                     "sending ereport request to SP";
                     "request_id" => ?self.request_id,
@@ -258,7 +258,7 @@ where
                             request_id,
                             ..
                         }) if request_id != self.request_id => {
-                            slog::debug!(
+                            debug!(
                                 self.log(),
                                 "ignoring a response that doesn't match the \
                                  current request ID";
@@ -352,7 +352,7 @@ fn decode_body_v0(
         .map_err(DecodeError::MetadataJson)?;
 
     if !new_metadata.is_empty() || restart_id != requested_restart_id {
-        slog::debug!(
+        debug!(
             log,
             "updating ereport metadata";
             "restart_id" => ?restart_id,
@@ -416,7 +416,7 @@ fn decode_body_v0(
         };
         // Decode the body, which is a byte array containing a CBOR-encoded map.
         let cbor_body = serde_cbor::from_slice::<BTreeMap<CborValue, CborValue>>(
-            &body_bytes,
+            body_bytes,
         )?;
 
         let mut data = serde_json::Map::with_capacity(
@@ -439,7 +439,7 @@ fn decode_body_v0(
     {
         let mut data = match decode_entry(ereport) {
             Ok((task_name, mut data)) => {
-                slog::trace!(
+                trace!(
                     log,
                     "decoded ereport";
                     "ena" => ?ena,
@@ -463,7 +463,7 @@ fn decode_body_v0(
                 // `packrat` must be correct, and give up on the whole packet if
                 // this is not the case, as a bug in how the packrat task
                 // encodes ereports would effect all data in the packet.
-                slog::warn!(
+                warn!(
                     log,
                     "received a malformed ereport";
                     "ena" => ?ena,
@@ -486,7 +486,7 @@ fn decode_body_v0(
                 );
                 data.insert(
                     "invalid_ereport_body_bytes".to_string(),
-                    URL_SAFE_NO_PAD.encode(&body_bytes).into(),
+                    URL_SAFE_NO_PAD.encode(body_bytes).into(),
                 );
                 data.insert(
                     KEY_TASK_NAME.to_string(),
