@@ -310,6 +310,11 @@ where
     }
 }
 
+// JSON key names for well-known fields in ereport packets.
+const KEY_TASK_NAME: &str = "hubris_task_name";
+const KEY_TASK_GEN: &str = "hubris_task_gen";
+const KEY_UPTIME: &str = "hubris_uptime_ms";
+
 fn decode_header(
     packet: &[u8],
 ) -> Result<(EreportResponseHeader, &[u8]), DecodeError> {
@@ -360,6 +365,7 @@ fn decode_body_v0(
             log,
             "updating ereport metadata";
             "restart_id" => ?restart_id,
+            "requested_restart_id" => ?requested_restart_id,
             "metadata" => ?new_metadata,
         );
         *metadata = Some(new_metadata);
@@ -402,7 +408,6 @@ fn decode_body_v0(
         .map_err(DecodeError::EreportsDeserialize)?;
 
     let mut ereports = Vec::with_capacity(cbor_ereports.len());
-    let mut task_names = Vec::new();
 
     // If attempting to interpret an ereport entry fails, we emit a "malformed
     // ereport" entry and continue processing the rest of the ereports.
@@ -417,16 +422,16 @@ fn decode_body_v0(
     let malformed = |task_name: TaskName,
                      task_gen: u8,
                      uptime: u32,
-                     body: Vec<u8>,
+                     body: &[u8],
                      ena: Ena,
                      error: EreportDecodeError| {
         slog::warn!(
             log,
             "received a malformed ereport";
             "ena" => ?ena,
-            "hubris_task_name" => ?task_name,
-            "hubris_task_gen" => task_gen,
-            "hubris_uptime" => uptime,
+            KEY_TASK_NAME => ?task_name,
+            KEY_TASK_GEN => task_gen,
+            KEY_UPTIME => uptime,
             "error" => &error,
         );
         let mut data = JsonObject::with_capacity(
@@ -439,14 +444,14 @@ fn decode_body_v0(
                 .map(|(k, v)| (k.clone(), v.clone())),
         );
         data.insert(
-            "hubris_task_name".to_string(),
+            KEY_TASK_NAME.to_string(),
             match task_name {
                 TaskName::Index(i) => i.into(),
                 TaskName::Name(s) => s.into(),
             },
         );
-        data.insert("hubris_task_gen".to_string(), task_gen.into());
-        data.insert("hubris_uptime".to_string(), uptime.into());
+        data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
+        data.insert(KEY_UPTIME.to_string(), uptime.into());
         data.insert(
             "invalid_ereport_body".to_string(),
             URL_SAFE_NO_PAD.encode(body).into(),
@@ -455,33 +460,51 @@ fn decode_body_v0(
     };
 
     let mut next_ena = start_ena;
-    for EreportEntry(task_name, task_gen, uptime_ms, body_bytes) in
-        cbor_ereports
+    'ereports: for &EreportEntry(
+        ref task_name,
+        task_gen,
+        uptime_ms,
+        ref body_bytes,
+    ) in &cbor_ereports
     {
         let ena = next_ena;
         // Increment the ENA for the next ereport in the packet.
         next_ena.0 += 1;
-        let task_name = match task_name {
-            TaskName::Index(i) => match task_names.get(i).cloned() {
-                Some(name) => name,
-                None => {
-                    ereports.push(malformed(
-                        TaskName::Index(i),
-                        task_gen,
-                        uptime_ms,
-                        body_bytes,
-                        ena,
-                        EreportDecodeError::TaskNameIndex,
-                    ));
-                    continue;
+
+        let task_name = {
+            // The task name may either be a string or the index of a previous
+            // task name in the packet.
+            //
+            // I doubt the SP will emit task name indices that point at an
+            // ereport whose task name is also an index, but it's not *that*
+            // much harder to handle this case and continue traversing...
+            let mut current_name = task_name;
+            loop {
+                match current_name {
+                    &TaskName::Index(i) => match cbor_ereports.get(i) {
+                        Some(EreportEntry(name, _, _, _)) => {
+                            current_name = name
+                        }
+                        None => {
+                            ereports.push(malformed(
+                                TaskName::Index(i),
+                                task_gen,
+                                uptime_ms,
+                                body_bytes,
+                                ena,
+                                EreportDecodeError::TaskNameIndex,
+                            ));
+                            continue 'ereports;
+                        }
+                    },
+                    TaskName::Name(ref s) => {
+                        break s.clone();
+                    }
                 }
-            },
-            TaskName::Name(s) => {
-                task_names.push(s.clone());
-                s
             }
         };
 
+        // Decode the body, which is a byte array containing a CBOR-encoded map.
         let body = match serde_cbor::from_slice::<BTreeMap<CborValue, CborValue>>(
             &body_bytes,
         ) {
@@ -525,9 +548,9 @@ fn decode_body_v0(
                     .flat_map(JsonObject::iter)
                     .map(|(k, v)| (k.clone(), v.clone())),
             );
-            data.insert("hubris_task_gen".to_string(), task_gen.into());
-            data.insert("hubris_task_name".to_string(), task_name.into());
-            data.insert("hubris_uptime_ms".to_string(), uptime_ms.into());
+            data.insert(KEY_TASK_NAME.to_string(), task_name.into());
+            data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
+            data.insert(KEY_UPTIME.to_string(), uptime_ms.into());
             ereports.push(Ok(Ereport { ena, data }))
         }
     }
@@ -772,14 +795,9 @@ mod test {
 
     fn logger(test_name: &'static str) -> slog::Logger {
         use slog::Drain;
-        let decorator = slog_term::TermDecorator::new().build();
-        let drain = slog_term::CompactFormat::new(decorator).build().fuse();
-        // Traditionally, it's Considered Harmful to use a `Mutex` to make a
-        // slog drain thread-safe in production code. However, all these tests
-        // are single-threaded, so the mutex will never be contended, and it
-        // feels a bit silly to instead use `slog-async` and spawn an entire
-        // second thread...
-        let drain = std::sync::Mutex::new(drain).fuse();
+        let decorator =
+            slog_term::PlainSyncDecorator::new(slog_term::TestStdoutWriter);
+        let drain = slog_term::FullFormat::new(decorator).build().fuse();
         slog::Logger::root(drain, slog::o!("test" => test_name))
     }
 
@@ -812,11 +830,8 @@ mod test {
 
     const TASK_NAME_THINGY: &str = "drv_thingy_server";
     const TASK_NAME_APOLLO_13: &str = "task_apollo_server";
-    const KEY_ARCHIVE: &str = "hubris_archive_id";
-    const KEY_TASK: &str = "hubris_task_name";
-    const KEY_GEN: &str = "hubris_task_gen";
-    const KEY_UPTIME: &str = "hubris_uptime_ms";
     const KEY_SERIAL: &str = "baseboard_serial";
+    const KEY_ARCHIVE: &str = "hubris_archive_id";
 
     fn serialize_ereport_list<'buf>(
         buf: &'buf mut [u8],
@@ -1005,8 +1020,8 @@ mod test {
             json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
-                KEY_TASK: TASK_NAME_THINGY,
-                KEY_GEN: 1,
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
                 "class": "flagrant system error",
                 "badness": 10000,
@@ -1019,8 +1034,8 @@ mod test {
             json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
-                KEY_TASK: TASK_NAME_APOLLO_13,
-                KEY_GEN: 13,
+                KEY_TASK_NAME: TASK_NAME_APOLLO_13,
+                KEY_TASK_GEN: 13,
                 KEY_UPTIME: 572,
                 "msg": "houston, we have a problem",
                 "crew": ["Lovell", "Swigert", "Hayes"],
@@ -1033,8 +1048,8 @@ mod test {
             json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
-                KEY_TASK: TASK_NAME_THINGY,
-                KEY_GEN: 1,
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
@@ -1138,8 +1153,8 @@ mod test {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
                 "sled_is_evil": true,
-                KEY_TASK: TASK_NAME_THINGY,
-                KEY_GEN: 1,
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
                 "class": "flagrant system error",
                 "badness": 10000,
@@ -1153,8 +1168,8 @@ mod test {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
                 "sled_is_evil": true,
-                KEY_TASK: TASK_NAME_APOLLO_13,
-                KEY_GEN: 13,
+                KEY_TASK_NAME: TASK_NAME_APOLLO_13,
+                KEY_TASK_GEN: 13,
                 KEY_UPTIME: 572,
                 "msg": "houston, we have a problem",
                 "crew": ["Lovell", "Swigert", "Hayes"],
@@ -1168,8 +1183,8 @@ mod test {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
                 "sled_is_evil": true,
-                KEY_TASK: TASK_NAME_THINGY,
-                KEY_GEN: 1,
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
@@ -1366,8 +1381,8 @@ mod test {
             json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
-                KEY_TASK: TASK_NAME_THINGY,
-                KEY_GEN: 1,
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
                 "class": "flagrant system error",
                 "badness": 10000,
@@ -1381,8 +1396,8 @@ mod test {
             &json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
-                KEY_TASK: "task_wrong_ereport_server",
-                KEY_GEN: 1,
+                KEY_TASK_NAME: "task_wrong_ereport_server",
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 570,
                 "invalid_ereport_body": URL_SAFE_NO_PAD.encode(&bad_body),
             }
@@ -1394,8 +1409,8 @@ mod test {
             json_map! {
                 KEY_ARCHIVE: "decadefaced",
                 KEY_SERIAL: "BRM69000420",
-                KEY_TASK: TASK_NAME_THINGY,
-                KEY_GEN: 1,
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
