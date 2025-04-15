@@ -305,6 +305,7 @@ where
 const KEY_TASK_NAME: &str = "hubris_task_name";
 const KEY_TASK_GEN: &str = "hubris_task_gen";
 const KEY_UPTIME: &str = "hubris_uptime_ms";
+const KEY_PROTO_VERSION: &str = "ereport_message_version";
 
 fn decode_header(
     packet: &[u8],
@@ -393,6 +394,14 @@ fn decode_body_v0(
         .map_err(DecodeError::EreportsDeserialize)?;
     let mut ereports = Vec::with_capacity(cbor_ereports.len());
 
+    // Number of extra fields added to every ereport's body by the gateway.
+    const EXTRA_FIELDS: usize = {
+        1   // task name
+        + 1 // task generation
+        + 1 // hubris uptime
+        + 1 // ereport protocol version
+    };
+
     let decode_entry = |&EreportEntry(task_name, _, _, body_bytes)| -> Result<(String, JsonObject),EreportDecodeError> {
         let task_name = {
             // The task name may either be a string or the index of a previous
@@ -422,12 +431,7 @@ fn decode_body_v0(
         let mut data = serde_json::Map::with_capacity(
             // Let's just do One Big Allocation with enough space for
             // the whole thing! We'll need:
-            // the number of fields in the ereport body
-            cbor_body.len()
-                + meta_len // number of fields in metadata fragment
-                + 1  // task name
-                + 1  // task generation
-                + 1, // hubris uptime
+            cbor_body.len() + meta_len + EXTRA_FIELDS,
         );
         convert_cbor_object_into(cbor_body, &mut data)?;
         Ok((task_name, data))
@@ -474,11 +478,9 @@ fn decode_body_v0(
                 );
                 let mut data = serde_json::Map::with_capacity(
                     meta_len
-                        + 1 // error message
-                        + 1 // body bytes
-                        + 1 // task name
-                        + 1 // task generation
-                        + 1, // hubris uptime
+                    + EXTRA_FIELDS
+                    + 1  // error message
+                    + 1, // body bytes
                 );
                 data.insert(
                     "invalid_ereport_error".to_string(),
@@ -499,10 +501,14 @@ fn decode_body_v0(
             }
         };
 
-        // Populate task generation, uptime, and metadata regardless of whether
-        // the ereport body was decoded successfully or not.
+        // Populate task generation, uptime, ereport message version, and
+        // metadata regardless of whether the ereport body was decoded
+        // successfully or not.
         data.insert(KEY_TASK_GEN.to_string(), task_gen.into());
         data.insert(KEY_UPTIME.to_string(), uptime_ms.into());
+        // If the ereport was decoded by this function, the protocol version is
+        // always 0 --- this is `decode_body_v0` :)
+        data.insert(KEY_PROTO_VERSION.to_string(), 0.into());
         data.extend(
             metadata
                 .into_iter()
@@ -535,7 +541,7 @@ pub enum DecodeError {
 
 /// Errors that may occur while decoding an individual ereport.
 #[derive(Debug, Error, SlogInlineError)]
-pub enum EreportDecodeError {
+enum EreportDecodeError {
     #[error("invalid body CBOR")]
     Parse(#[from] serde_cbor::Error),
     #[error("task name index {0} out of range")]
@@ -969,6 +975,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
+                KEY_PROTO_VERSION: 0,
                 "class": "flagrant system error",
                 "badness": 10000,
             },
@@ -983,6 +990,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_APOLLO_13,
                 KEY_TASK_GEN: 13,
                 KEY_UPTIME: 572,
+                KEY_PROTO_VERSION: 0,
                 "msg": "houston, we have a problem",
                 "crew": ["Lovell", "Swigert", "Hayes"],
             },
@@ -997,6 +1005,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
+                KEY_PROTO_VERSION: 0,
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
             },
@@ -1094,6 +1103,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
+                KEY_PROTO_VERSION: 0,
                 "class": "flagrant system error",
                 "badness": 10000,
             },
@@ -1108,6 +1118,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 572,
+                KEY_PROTO_VERSION: 0,
                 "class": "hello world",
             },
         );
@@ -1121,6 +1132,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
+                KEY_PROTO_VERSION: 0,
                 "class": "cool ereport",
             },
         );
@@ -1225,6 +1237,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
+                KEY_PROTO_VERSION: 0,
                 "class": "flagrant system error",
                 "badness": 10000,
             },
@@ -1240,6 +1253,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_APOLLO_13,
                 KEY_TASK_GEN: 13,
                 KEY_UPTIME: 572,
+                KEY_PROTO_VERSION: 0,
                 "msg": "houston, we have a problem",
                 "crew": ["Lovell", "Swigert", "Hayes"],
             },
@@ -1255,6 +1269,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
+                KEY_PROTO_VERSION: 0,
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
             },
@@ -1453,6 +1468,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 569,
+                KEY_PROTO_VERSION: 0,
                 "class": "flagrant system error",
                 "badness": 10000,
             },
@@ -1467,6 +1483,7 @@ mod test {
                 KEY_TASK_NAME: "task_wrong_ereport_server",
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 570,
+                KEY_PROTO_VERSION: 0,
                 "invalid_ereport_body_bytes": URL_SAFE_NO_PAD.encode(&bad_body),
                 "invalid_ereport_error":
                     "invalid body CBOR: EOF while parsing a value at offset 3",
@@ -1482,6 +1499,7 @@ mod test {
                 KEY_TASK_NAME: TASK_NAME_THINGY,
                 KEY_TASK_GEN: 1,
                 KEY_UPTIME: 575,
+                KEY_PROTO_VERSION: 0,
                 "class": "problem changed",
                 "bonus_stuff": { "foo": 1, "bar": 2, },
             },
