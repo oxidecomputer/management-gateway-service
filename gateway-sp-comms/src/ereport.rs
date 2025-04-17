@@ -338,13 +338,13 @@ fn decode_body_v0(
     //
     // V0 ereport packets consit of the following:
     //
-    // 1. A CBOR map (using the "indefinite-length" encoding) of strings to
-    //    CBOR values, containing metadata.
+    // - A CBOR map (using the "indefinite-length" encoding) of strings to
+    //   CBOR values, containing metadata.
     //
-    //    If the requested restart ID matches the current one, the metadata
-    //    map will generally be empty.
+    //   If the requested restart ID matches the current one, the metadata
+    //   map will generally be empty.
     //
-    //    The packet may end here if it contains no ereports.
+    //   The packet may end here if it contains no ereports.
     let (cbor_metadata, packet) =
         deserialize_cbor::<BTreeMap<CborValue, CborValue>>(packet)
             .map_err(DecodeError::MetadataDeserialize)?;
@@ -365,21 +365,17 @@ fn decode_body_v0(
     if packet.is_empty() {
         return Ok(EreportTranche { restart_id, ereports: Vec::new() });
     }
-    // 2. If the packet contains ereports, the ENA of the first ereport in the
-    //    packet.
-    let (start_ena, packet) = gateway_messages::deserialize::<Ena>(packet)
-        .map_err(DecodeError::Ena)?;
-    // 3. A CBOR list of ereports (using the "indefinite-length" encoding),
-    //    where each entry is a CBOR list of 4 elements:
-    //      1. The name of the task that produced the ereport,
-    //         which is encoded either as a CBOR string, or as the integer
-    //         index of a previous ereport in the packet.
-    //      2. The task's generation number
-    //      3. The system uptime in milliseconds
-    //      4. A CBOR byte array containing the body of the ereport. The bytes
-    //         in this array should be decoded as a map of strings to CBOR
-    //         values, but they are encoded as an array within the outer
-    //         message to escape any potentially malformed ereport data.
+    // - A CBOR list of ereports (using the "indefinite-length" encoding),
+    //   where each entry is a CBOR list of 4 elements:
+    //     1. The name of the task that produced the ereport,
+    //        which is encoded either as a CBOR string, or as the integer
+    //        index of a previous ereport in the packet.
+    //     2. The task's generation number
+    //     3. The system uptime in milliseconds
+    //     4. A CBOR byte array containing the body of the ereport. The bytes
+    //        in this array should be decoded as a map of strings to CBOR
+    //        values, but they are encoded as an array within the outer
+    //        message to escape any potentially malformed ereport data.
     #[derive(serde::Deserialize)]
     struct EreportEntry<'a>(
         TaskNameV0<'a>,
@@ -437,7 +433,7 @@ fn decode_body_v0(
         Ok((task_name, data))
     };
 
-    let mut ena = start_ena;
+    let mut ena = header.start_ena;
     for ereport @ &EreportEntry(task_name, task_gen, uptime_ms, body_bytes) in
         &cbor_ereports
     {
@@ -891,6 +887,7 @@ mod test {
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             request_id,
+            start_ena,
         });
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
@@ -900,9 +897,6 @@ mod test {
             len +=
                 serialize_metadata(&mut packet[len..], &JsonObject::default());
 
-            // Start ENA
-            len += hubpack::serialize(&mut packet[len..], &start_ena)
-                .expect("ENA should serialize");
             len += serialize_ereport_list(
                 &mut packet[len..],
                 &[
@@ -1025,6 +1019,7 @@ mod test {
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             request_id,
+            start_ena,
         });
         let end = {
             let mut len = hubpack::serialize(&mut packet, &header)
@@ -1033,10 +1028,6 @@ mod test {
             // Empty metadata map
             len +=
                 serialize_metadata(&mut packet[len..], &JsonObject::default());
-
-            // Start ENA
-            len += hubpack::serialize(&mut packet[len..], &start_ena)
-                .expect("ENA should serialize");
             len += serialize_ereport_list(
                 &mut packet[len..],
                 &[
@@ -1147,6 +1138,7 @@ mod test {
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
+            start_ena: Ena(0),
             request_id,
         });
 
@@ -1162,9 +1154,6 @@ mod test {
             // Metadata map
             len += serialize_metadata(&mut packet[len..], &new_meta);
 
-            // Start ENA
-            len += hubpack::serialize(&mut packet[len..], &Ena(0))
-                .expect("ENA should serialize");
             len += serialize_ereport_list(
                 &mut packet[len..],
                 &[
@@ -1286,6 +1275,7 @@ mod test {
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             request_id,
+            start_ena: Ena(0),
         });
         let meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
@@ -1330,6 +1320,7 @@ mod test {
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
+            start_ena,
             request_id,
         });
         let end = {
@@ -1339,10 +1330,6 @@ mod test {
             // Empty metadata map
             len +=
                 serialize_metadata(&mut packet[len..], &JsonObject::default());
-
-            // Start ENA
-            len += hubpack::serialize(&mut packet[len..], &start_ena)
-                .expect("ENA should serialize");
 
             // Empty ereport list.
             len += serialize_ereport_list(&mut packet[len..], &[]);
@@ -1388,6 +1375,7 @@ mod test {
 
         let header = EreportResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
+            start_ena,
             request_id,
         });
         let end = {
@@ -1398,9 +1386,6 @@ mod test {
             len +=
                 serialize_metadata(&mut packet[len..], &JsonObject::default());
 
-            // Start ENA
-            len += hubpack::serialize(&mut packet[len..], &start_ena)
-                .expect("ENA should serialize");
             len += serialize_ereport_list(
                 &mut packet[len..],
                 &[

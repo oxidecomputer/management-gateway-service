@@ -252,11 +252,11 @@ pub enum EreportResponseHeader {
 /// +                                   +
 /// |                                   |
 /// +                 +--------+--------+
-/// |                 |  0xBF  |   beginning of CBOR metadata map
+/// |                 |  start ENA      |
+/// +--------+--------+--------+--------+
+/// |    start ENA    |  0xBF  |
 /// +--------+--------+--------+--------+
 /// ... metadata k/v pairs ... |  0xFF  | metadata-only packets may end here
-/// +--------+--------+--------+--------+
-/// |        start ENA (64 bits)        |
 /// +--------+--------+--------+--------+
 /// |  0x9F  | ... ereports ...|  0xFF  |
 /// +--------+                 +--------+
@@ -272,6 +272,8 @@ pub struct ResponseHeaderV0 {
     /// The reporter restart ID of the SP's snitch task when this response was
     /// produced.
     pub restart_id: RestartId,
+    /// The ENA of the first ereport in the response packet.
+    pub start_ena: Ena,
 }
 
 #[cfg(test)]
@@ -320,6 +322,7 @@ mod tests {
             &EreportResponseHeader::V0(ResponseHeaderV0 {
                 restart_id: RestartId(1),
                 request_id: RequestIdV0(1),
+                start_ena: Ena(1),
             }),
         );
         assert_eq!(bytes[0], 0, "ResponseHeader v0 version byte should be 0");
