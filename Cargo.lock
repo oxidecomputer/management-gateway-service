@@ -762,7 +762,7 @@ dependencies = [
  "tokio-stream",
  "tokio-util",
  "uuid",
- "zerocopy 0.6.6",
+ "zerocopy 0.8.24",
 ]
 
 [[package]]
@@ -929,6 +929,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "gateway-ereport-messages"
+version = "0.1.0"
+dependencies = [
+ "bitflags 2.9.0",
+ "zerocopy 0.8.24",
+]
+
+[[package]]
 name = "gateway-messages"
 version = "0.1.0"
 dependencies = [
@@ -942,7 +950,7 @@ dependencies = [
  "static_assertions",
  "strum_macros",
  "uuid",
- "zerocopy 0.6.6",
+ "zerocopy 0.8.24",
 ]
 
 [[package]]
@@ -954,6 +962,7 @@ dependencies = [
  "base64 0.22.1",
  "futures",
  "fxhash",
+ "gateway-ereport-messages",
  "gateway-messages",
  "hex",
  "hubpack",
@@ -979,6 +988,7 @@ dependencies = [
  "usdt",
  "uuid",
  "version_check",
+ "zerocopy 0.8.24",
  "zip",
 ]
 
@@ -3691,6 +3701,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "zerocopy"
+version = "0.8.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2586fea28e186957ef732a5f8b3be2da217d65c5969d4b1e17f973ebbe876879"
+dependencies = [
+ "zerocopy-derive 0.8.24",
+]
+
+[[package]]
 name = "zerocopy-derive"
 version = "0.6.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3706,6 +3725,17 @@ name = "zerocopy-derive"
 version = "0.7.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9ce1b18ccd8e73a9321186f97e46f9f04b778851177567b1975109d26a08d2a6"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn 2.0.87",
+]
+
+[[package]]
+name = "zerocopy-derive"
+version = "0.8.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a996a8f63c5c4448cd959ac1bab0aaa3306ccfd060472f85943ee0750f0169be"
 dependencies = [
  "proc-macro2",
  "quote",

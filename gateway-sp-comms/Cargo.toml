@@ -32,9 +32,11 @@ tlvc.workspace = true
 tokio.workspace = true
 usdt.workspace = true
 uuid = { workspace = true, features = ["v4"] }
+zerocopy.workspace = true
 zip.workspace = true
 
 gateway-messages = { workspace = true, features = ["std"] }
+gateway-ereport-messages = { workspace = true, features = ["debug-impls"] }
 
 # This is required for the build.rs script to check for an appropriate compiler
 # version so that `usdt` can be built on stable rust.

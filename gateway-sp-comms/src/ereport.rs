@@ -14,13 +14,13 @@ use base64::{
     engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
     Engine,
 };
-pub use gateway_messages::ereport::Ena;
-use gateway_messages::ereport::EreportRequest;
-use gateway_messages::ereport::EreportResponseHeader;
-use gateway_messages::ereport::RequestIdV0;
-use gateway_messages::ereport::RequestV0;
-use gateway_messages::ereport::ResponseHeaderV0;
-pub use gateway_messages::ereport::RestartId;
+pub use gateway_ereport_messages::Ena;
+use gateway_ereport_messages::Request;
+use gateway_ereport_messages::RequestIdV0;
+use gateway_ereport_messages::RequestV0;
+use gateway_ereport_messages::ResponseHeader;
+use gateway_ereport_messages::ResponseHeaderV0;
+pub use gateway_ereport_messages::RestartId;
 use serde::Deserialize;
 use serde_cbor::Value as CborValue;
 use serde_json::Value as JsonValue;
@@ -36,6 +36,7 @@ use thiserror::Error;
 use tokio::sync::mpsc;
 use tokio::sync::oneshot;
 use uuid::Uuid;
+use zerocopy::{IntoBytes, TryFromBytes};
 
 pub const SP_PORT: u16 = 57005; // 0xDEAD
 pub const MGS_PORT: u16 = 57007; // 0xDEAF
@@ -74,7 +75,6 @@ pub(crate) struct Worker<S> {
     request_id: RequestIdV0,
     retry_config: SpRetryConfig,
     socket: S,
-    outbuf: [u8; <EreportRequest as hubpack::SerializedSize>::MAX_SIZE],
     /// The current map of metadata added to all received ereports.
     ///
     /// When MGS starts up, this is initially `None`, and we must ask the SP for
@@ -98,8 +98,6 @@ where
             request_id: RequestIdV0(0),
             retry_config,
             socket,
-            outbuf: [0u8;
-                <EreportRequest as hubpack::SerializedSize>::MAX_SIZE],
             metadata: None,
         };
         (this, tx)
@@ -201,33 +199,19 @@ where
         limit: u8,
         committed_ena: Option<Ena>,
     ) -> Result<EreportTranche, EreportError> {
-        let req = EreportRequest::V0(RequestV0::new(
+        let req = Request::V0(RequestV0::new(
             RestartId(restart_id.as_u128()),
             self.request_id,
             start_ena,
             limit,
             committed_ena,
         ));
-        let amt = match gateway_messages::serialize(&mut self.outbuf, &req) {
-            Ok(amt) => amt,
-            Err(error) => {
-                unreachable!(
-                    "hubpack serialization should only fail if the buffer \
-                    is not large enough, or if the type is not able to \
-                    be serialized by hubpack at all. therefore, \
-                    serializing an ereport request should never fail. \
-                    however, the following request could not be \
-                    serialized: {req:?}\nerror: {error}"
-                );
-            }
-        };
 
         // Actually sending the request is wrapped in an immediately awaited
         // async block that functions as a sort of "try/catch" mechanism. This
         // is to ensure we always increment the request ID for the next request,
         // regardless of whether we succeeded or failed to receive a response.
         let result = async {
-            let packet = &self.outbuf[..amt];
             for attempt in 1..=self.retry_config.max_attempts_general {
                 trace!(
                     self.log(),
@@ -237,7 +221,7 @@ where
                     "request" => ?req,
                     "attempt" => attempt,
                 );
-                self.socket.send(packet).await?;
+                self.socket.send(req.as_bytes()).await?;
                 'attempt: while let Ok(Some(msg)) = tokio::time::timeout(
                     self.retry_config.per_attempt_timeout,
                     self.socket.recv(),
@@ -254,7 +238,7 @@ where
                         // previous request that we may have attempted multiple
                         // times. If that's the case, ignore it and wait for the
                         // next packet.
-                        EreportResponseHeader::V0(ResponseHeaderV0 {
+                        ResponseHeader::V0(ResponseHeaderV0 {
                             request_id,
                             ..
                         }) if request_id != self.request_id => {
@@ -270,7 +254,7 @@ where
                         // Otherwise, it's a response to the current request.
                         // Decode the body, potentially updating our current
                         // metadata.
-                        EreportResponseHeader::V0(header) => {
+                        ResponseHeader::V0(header) => {
                             return decode_body_v0(
                                 self.socket.log(),
                                 restart_id,
@@ -309,9 +293,9 @@ const KEY_PROTO_VERSION: &str = "ereport_message_version";
 
 fn decode_header(
     packet: &[u8],
-) -> Result<(EreportResponseHeader, &[u8]), DecodeError> {
-    gateway_messages::deserialize::<EreportResponseHeader>(packet)
-        .map_err(DecodeError::Header)
+) -> Result<(ResponseHeader, &[u8]), DecodeError> {
+    ResponseHeader::try_read_from_prefix(packet)
+        .map_err(|e| DecodeError::Header(e.to_string()))
 }
 
 fn decode_body_v0(
@@ -523,10 +507,8 @@ fn decode_body_v0(
 
 #[derive(Debug, Error, SlogInlineError)]
 pub enum DecodeError {
-    #[error("failed to deserialize ereport response header")]
-    Header(#[source] hubpack::Error),
-    #[error("failed to deserialize ereport response ENA")]
-    Ena(#[source] hubpack::Error),
+    #[error("failed to deserialize ereport response header: {0}")]
+    Header(String),
     #[error("failed to deserialize ereports")]
     EreportsDeserialize(#[source] serde_cbor::Error),
     #[error("failed to deserialize ereport metadata refresh fragment")]
@@ -857,9 +839,7 @@ mod test {
     ) -> (Uuid, RequestIdV0, Vec<Ereport>) {
         dump_packet(packet);
         let (header, packet) = match decode_header(packet) {
-            Ok((EreportResponseHeader::V0(header), packet)) => {
-                (dbg!(header), packet)
-            }
+            Ok((ResponseHeader::V0(header), packet)) => (dbg!(header), packet),
             Err(e) => panic!("header did not decode: {e:#?}"),
         };
         let EreportTranche { restart_id, ereports } =
@@ -884,15 +864,16 @@ mod test {
         let request_id = RequestIdV0(1);
         let start_ena = Ena(42);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             request_id,
             start_ena,
         });
         let end = {
-            let mut len = hubpack::serialize(&mut packet, &header)
-                .expect("header should serialize");
-
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
             // Empty metadata map
             len +=
                 serialize_metadata(&mut packet[len..], &JsonObject::default());
@@ -1016,14 +997,16 @@ mod test {
         let request_id = RequestIdV0(1);
         let start_ena = Ena(42);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             request_id,
             start_ena,
         });
         let end = {
-            let mut len = hubpack::serialize(&mut packet, &header)
-                .expect("header should serialize");
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
 
             // Empty metadata map
             len +=
@@ -1136,7 +1119,7 @@ mod test {
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             start_ena: Ena(0),
             request_id,
@@ -1148,8 +1131,10 @@ mod test {
             "sled_is_evil": true,
         };
         let end = {
-            let mut len = hubpack::serialize(&mut packet, &header)
-                .expect("header should serialize");
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
 
             // Metadata map
             len += serialize_metadata(&mut packet[len..], &new_meta);
@@ -1272,7 +1257,7 @@ mod test {
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             request_id,
             start_ena: Ena(0),
@@ -1285,8 +1270,10 @@ mod test {
             "baz": { "hello": "joe", "system_working": true },
         };
         let end = {
-            let mut len = hubpack::serialize(&mut packet, &header)
-                .expect("header should serialize");
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
 
             len += serialize_metadata(&mut packet[len..], &meta);
             // That's the whole packet, folks!
@@ -1318,14 +1305,16 @@ mod test {
         let start_ena = Ena(0);
         let request_id = RequestIdV0(1);
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             start_ena,
             request_id,
         });
         let end = {
-            let mut len = hubpack::serialize(&mut packet, &header)
-                .expect("header should serialize");
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
 
             // Empty metadata map
             len +=
@@ -1373,14 +1362,16 @@ mod test {
         let start_ena = Ena(42);
         let bad_body = vec![0xBA, 0xDB, 0xAD]; // ba db ad
 
-        let header = EreportResponseHeader::V0(ResponseHeaderV0 {
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: RestartId(restart_id.as_u128()),
             start_ena,
             request_id,
         });
         let end = {
-            let mut len = hubpack::serialize(&mut packet, &header)
-                .expect("header should serialize");
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
 
             // Empty metadata map
             len +=

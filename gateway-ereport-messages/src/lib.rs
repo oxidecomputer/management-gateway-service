@@ -18,11 +18,11 @@
 //! [RFD 520] https://rfd.shared.oxide.computer/rfd/520
 //! [RFD 544] https://rfd.shared.oxide.computer/rfd/544
 //! [RFD 545] https://rfd.shared.oxide.computer/rfd/545
+#![cfg_attr(not(test), no_std)]
 
-use core::fmt;
-use hubpack::SerializedSize;
-use serde::Deserialize;
-use serde::Serialize;
+use zerocopy::{
+    FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
+};
 
 /// An error numeric identifier (ENA).
 ///
@@ -39,15 +39,17 @@ use serde::Serialize;
     Eq,
     Ord,
     PartialOrd,
-    Serialize,
-    Deserialize,
-    SerializedSize,
+    FromBytes,
+    Immutable,
+    IntoBytes,
+    KnownLayout,
 )]
 #[repr(transparent)]
 pub struct Ena(pub u64);
 
-impl fmt::Debug for Ena {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+#[cfg(any(feature = "debug-impls", test))]
+impl core::fmt::Debug for Ena {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Ena({:#x})", self.0)
     }
 }
@@ -59,9 +61,10 @@ impl fmt::Debug for Ena {
 ///
 /// [RFD 520 §4.2.2]: https://rfd.shared.oxide.computer/rfd/0520#reporter-crash-recovery
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Clone, Copy, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout,
 )]
 #[repr(transparent)]
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
 pub struct RestartId(pub u128);
 
 /// A versioned request for ereports aggregated by the SP's snitch task.
@@ -69,15 +72,18 @@ pub struct RestartId(pub u128);
 /// See [RFD 545 §4.4.3.1] for details.
 /// [RFD 545 §4.4.3.1]: https://rfd.shared.oxide.computer/rfd/0545#_requestcommit
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, KnownLayout, Immutable,
 )]
-pub enum EreportRequest {
-    // /!\ ORDER MATTERS /!\
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
+#[repr(u8)]
+// zerocopy-generated variant names fall afoul of this lint
+#[allow(non_camel_case_types)]
+pub enum Request {
     /// An ereport protocol version 0 request.
     ///
     /// The SP must respond to this request with a [`EreportResponseHeader::V0`]
     /// packet.
-    V0(RequestV0),
+    V0(RequestV0) = 0,
     // IMPORTANT: when adding new variants to this enum, please add them to the
     // `version_byte_values` test below!
 }
@@ -89,16 +95,17 @@ pub enum EreportRequest {
 #[derive(
     Clone,
     Copy,
-    Debug,
     PartialEq,
     Eq,
     Ord,
     PartialOrd,
-    Serialize,
-    Deserialize,
-    SerializedSize,
+    FromBytes,
+    Immutable,
+    IntoBytes,
+    KnownLayout,
 )]
 #[repr(transparent)]
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
 pub struct RequestIdV0(pub u8);
 
 impl RequestIdV0 {
@@ -135,8 +142,18 @@ impl RequestIdV0 {
 /// See [RFD 545 §4.4.3.1] for details.
 /// [RFD 545 §4.4.3.1]: https://rfd.shared.oxide.computer/rfd/0545#_requestcommit
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    FromBytes,
+    Immutable,
+    IntoBytes,
+    KnownLayout,
+    Unaligned,
 )]
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
+#[repr(packed)]
 pub struct RequestV0 {
     pub flags: RequestFlagsV0,
 
@@ -178,8 +195,9 @@ pub struct RequestV0 {
 
 /// Flags for [`EreportRequest`] packets.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Clone, Copy, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout,
 )]
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
 #[repr(transparent)]
 pub struct RequestFlagsV0(u8);
 
@@ -222,19 +240,22 @@ impl RequestV0 {
     }
 }
 
-/// A versioned header for the response to an [`EreportRequest`].
+/// A versioned header for the response to an ereport [`Request`].
 ///
 /// See [RFD 545 §4.4.3.1] for details.
 /// [RFD 545 §4.4.3.1]: https://rfd.shared.oxide.computer/rfd/0545#_requestcommit
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Clone, Copy, PartialEq, Eq, TryFromBytes, IntoBytes, KnownLayout, Immutable,
 )]
-pub enum EreportResponseHeader {
-    // /!\ ORDER MATTERS /!\
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
+#[repr(u8)]
+// zerocopy-generated variant names fall afoul of this lint
+#[allow(non_camel_case_types)]
+pub enum ResponseHeader {
     /// An ereport protocol version 0 response header.
     ///
     /// This is sent in response to a [`RequestV0`] message.
-    V0(ResponseHeaderV0),
+    V0(ResponseHeaderV0) = 0,
     // IMPORTANT: when adding new variants to this enum, please add them to the
     // `version_byte_values` test below!
 }
@@ -264,8 +285,18 @@ pub enum EreportResponseHeader {
 /// See [RFD 545 §4.4.4] for details.
 /// [RFD 545 §4.4.4]: https://rfd.shared.oxide.computer/rfd/0545#_readresponse
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    FromBytes,
+    Immutable,
+    IntoBytes,
+    KnownLayout,
+    Unaligned,
 )]
+#[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
+#[repr(packed)]
 pub struct ResponseHeaderV0 {
     /// The request ID of the request that this message is a response to.
     pub request_id: RequestIdV0,
@@ -279,16 +310,33 @@ pub struct ResponseHeaderV0 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::fmt::Debug;
 
-    fn serialize<'buf, M>(buf: &'buf mut [u8], msg: &M) -> &'buf [u8]
-    where
-        M: Serialize + fmt::Debug,
-    {
-        match crate::serialize(buf, msg) {
-            Ok(n) => &buf[..n],
-            Err(e) => {
-                panic!("message did not serialize: {e}\n  message: {msg:?}",)
+    struct PrettyBytes<'bytes>(&'bytes [u8]);
+    impl Debug for PrettyBytes<'_> {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            let mut bytes = self.0.iter();
+            if let Some(byte) = bytes.next() {
+                write!(f, "\n  {:02x}", byte)?;
+                let mut written = 1;
+                for byte in bytes {
+                    write!(f, " {:02x}", byte)?;
+                    written += 1;
+                    if written % 8 == 0 {
+                        f.write_str("\n ")?;
+                    }
+                }
+                writeln!(f)?;
             }
+            Ok(())
+        }
+    }
+
+    impl core::ops::Deref for PrettyBytes<'_> {
+        type Target = [u8];
+
+        fn deref(&self) -> &Self::Target {
+            self.0
         }
     }
 
@@ -303,31 +351,69 @@ mod tests {
     // versions are added to this test.
     #[test]
     fn version_byte_values() {
-        let mut buf = [0u8; EreportRequest::MAX_SIZE];
-        let bytes = serialize(
-            &mut buf,
-            &EreportRequest::V0(RequestV0::new(
-                RestartId(1),
-                RequestIdV0(1),
-                Ena(2),
-                3,
-                Some(Ena(4)),
-            )),
+        let reqv0 = Request::V0(RequestV0::new(
+            RestartId(1),
+            RequestIdV0(1),
+            Ena(2),
+            3,
+            Some(Ena(4)),
+        ));
+        assert_eq!(
+            reqv0.as_bytes()[0],
+            0,
+            "Request v0 version byte should be 0"
         );
-        assert_eq!(bytes[0], 0, "Request v0 version byte should be 0");
 
-        let mut buf = [0u8; EreportResponseHeader::MAX_SIZE];
-        let bytes = serialize(
-            &mut buf,
-            &EreportResponseHeader::V0(ResponseHeaderV0 {
-                restart_id: RestartId(1),
-                request_id: RequestIdV0(1),
-                start_ena: Ena(1),
-            }),
+        let rspv0 = ResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: RestartId(1),
+            request_id: RequestIdV0(1),
+            start_ena: Ena(1),
+        });
+        assert_eq!(
+            rspv0.as_bytes()[0],
+            0,
+            "ResponseHeader v0 version byte should be 0"
         );
-        assert_eq!(bytes[0], 0, "ResponseHeader v0 version byte should be 0");
 
         // IMPORTANT: when adding new variants to the versioned message enums,
         // please add tests for them here!
+    }
+
+    #[track_caller]
+    fn assert_roundtrips<M>(msg: M)
+    where
+        M: TryFromBytes + IntoBytes + Immutable + PartialEq + core::fmt::Debug,
+    {
+        let bytes = dbg!(&msg).as_bytes();
+        let msg2 = dbg!(M::try_read_from_bytes(&*dbg!(PrettyBytes(bytes))))
+            .expect("message should be valid");
+        assert_eq!(msg, msg2);
+    }
+
+    #[test]
+    fn request_v0_roundtrips() {
+        assert_roundtrips(Request::V0(RequestV0::new(
+            RestartId(0xdeadbeef),
+            RequestIdV0(2),
+            Ena(0xdecaff00d),
+            4,
+            None,
+        )));
+        assert_roundtrips(Request::V0(RequestV0::new(
+            RestartId(1),
+            RequestIdV0(2),
+            Ena(3),
+            4,
+            Some(Ena(5)),
+        )));
+    }
+
+    #[test]
+    fn response_v0_roundtrips() {
+        assert_roundtrips(ResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: RestartId(0xdeadbeef),
+            request_id: RequestIdV0(2),
+            start_ena: Ena(0xdecaff00d),
+        }));
     }
 }

@@ -10,8 +10,10 @@ use core::iter;
 use core::mem;
 use zerocopy::byteorder::LittleEndian;
 use zerocopy::byteorder::U32;
-use zerocopy::AsBytes;
 use zerocopy::FromBytes;
+use zerocopy::Immutable;
+use zerocopy::IntoBytes;
+use zerocopy::KnownLayout;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError<E> {
@@ -42,11 +44,31 @@ impl fmt::Display for DecodeError {
 #[cfg(feature = "std")]
 impl std::error::Error for DecodeError {}
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, AsBytes, FromBytes)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    IntoBytes,
+    FromBytes,
+    Immutable,
+    KnownLayout,
+)]
 #[repr(C)]
 pub struct Tag(pub [u8; 4]);
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, AsBytes, FromBytes)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    IntoBytes,
+    FromBytes,
+    Immutable,
+    KnownLayout,
+)]
 #[repr(C)]
 struct Header {
     tag: Tag,
@@ -103,9 +125,8 @@ where
 /// returns `(Tag, value, rest_of_buf)`.
 pub fn decode(buf: &[u8]) -> Result<(Tag, &[u8], &[u8]), DecodeError> {
     // Peel header off the front.
-    let header =
-        Header::read_from_prefix(buf).ok_or(DecodeError::BufferTooSmall)?;
-    let buf = &buf[mem::size_of::<Header>()..];
+    let (header, buf) = Header::read_from_prefix(buf)
+        .map_err(|_| DecodeError::BufferTooSmall)?;
 
     // Split remaining buffer at the end of our value.
     let length = header.length.get() as usize;

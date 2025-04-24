@@ -62,7 +62,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use tokio::net::UdpSocket;
 use uuid::Uuid;
-use zerocopy::AsBytes;
+use zerocopy::IntoBytes;
 
 mod picocom_map;
 mod usart;

@@ -4,7 +4,6 @@
 
 #![cfg_attr(all(not(test), not(feature = "std")), no_std)]
 
-pub mod ereport;
 mod mgs_to_sp;
 pub mod sp_impl;
 mod sp_to_mgs;
