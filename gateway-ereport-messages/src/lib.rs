@@ -21,7 +21,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use zerocopy::{
-    FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes, Unaligned,
+    byteorder::little_endian, FromBytes, Immutable, IntoBytes, KnownLayout,
+    TryFromBytes,
 };
 
 /// An error numeric identifier (ENA).
@@ -45,12 +46,38 @@ use zerocopy::{
     KnownLayout,
 )]
 #[repr(transparent)]
-pub struct Ena(pub u64);
+pub struct Ena(pub little_endian::U64);
 
 #[cfg(any(feature = "debug-impls", test))]
 impl core::fmt::Debug for Ena {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         write!(f, "Ena({:#x})", self.0)
+    }
+}
+
+impl Ena {
+    pub const ZERO: Self = Self(little_endian::U64::ZERO);
+
+    #[must_use]
+    pub const fn new(u: u64) -> Self {
+        Self(little_endian::U64::new(u))
+    }
+
+    #[must_use]
+    pub const fn into_u64(self) -> u64 {
+        self.0.get()
+    }
+}
+
+impl From<u64> for Ena {
+    fn from(u: u64) -> Self {
+        Self::new(u)
+    }
+}
+
+impl From<Ena> for u64 {
+    fn from(id: Ena) -> Self {
+        id.into_u64()
     }
 }
 
@@ -65,7 +92,33 @@ impl core::fmt::Debug for Ena {
 )]
 #[repr(transparent)]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
-pub struct RestartId(pub u128);
+pub struct RestartId(pub little_endian::U128);
+
+impl RestartId {
+    pub const ZERO: Self = Self(little_endian::U128::ZERO);
+
+    #[must_use]
+    pub const fn new(u: u128) -> Self {
+        Self(little_endian::U128::new(u))
+    }
+
+    #[must_use]
+    pub const fn into_u128(self) -> u128 {
+        self.0.get()
+    }
+}
+
+impl From<u128> for RestartId {
+    fn from(u: u128) -> Self {
+        Self::new(u)
+    }
+}
+
+impl From<RestartId> for u128 {
+    fn from(id: RestartId) -> Self {
+        id.into_u128()
+    }
+}
 
 /// A versioned request for ereports aggregated by the SP's snitch task.
 ///
@@ -142,18 +195,9 @@ impl RequestIdV0 {
 /// See [RFD 545 §4.4.3.1] for details.
 /// [RFD 545 §4.4.3.1]: https://rfd.shared.oxide.computer/rfd/0545#_requestcommit
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    FromBytes,
-    Immutable,
-    IntoBytes,
-    KnownLayout,
-    Unaligned,
+    Clone, Copy, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout,
 )]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
-#[repr(packed)]
 pub struct RequestV0 {
     pub flags: RequestFlagsV0,
 
@@ -221,7 +265,7 @@ impl RequestV0 {
     ) -> Self {
         let (committed_ena, flags) = match committed_ena {
             Some(ena) => (ena, RequestFlagsV0::COMMIT),
-            None => (Ena(0), RequestFlagsV0::empty()),
+            None => (Ena::ZERO, RequestFlagsV0::empty()),
         };
         Self { flags, limit, request_id, restart_id, start_ena, committed_ena }
     }
@@ -285,18 +329,9 @@ pub enum ResponseHeader {
 /// See [RFD 545 §4.4.4] for details.
 /// [RFD 545 §4.4.4]: https://rfd.shared.oxide.computer/rfd/0545#_readresponse
 #[derive(
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    FromBytes,
-    Immutable,
-    IntoBytes,
-    KnownLayout,
-    Unaligned,
+    Clone, Copy, PartialEq, Eq, FromBytes, Immutable, IntoBytes, KnownLayout,
 )]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
-#[repr(packed)]
 pub struct ResponseHeaderV0 {
     /// The request ID of the request that this message is a response to.
     pub request_id: RequestIdV0,
@@ -352,11 +387,11 @@ mod tests {
     #[test]
     fn version_byte_values() {
         let reqv0 = Request::V0(RequestV0::new(
-            RestartId(1),
+            RestartId::new(1),
             RequestIdV0(1),
-            Ena(2),
+            Ena::new(2),
             3,
-            Some(Ena(4)),
+            Some(Ena::new(4)),
         ));
         assert_eq!(
             reqv0.as_bytes()[0],
@@ -365,9 +400,9 @@ mod tests {
         );
 
         let rspv0 = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(1),
+            restart_id: RestartId::new(1),
             request_id: RequestIdV0(1),
-            start_ena: Ena(1),
+            start_ena: Ena::new(1),
         });
         assert_eq!(
             rspv0.as_bytes()[0],
@@ -393,27 +428,27 @@ mod tests {
     #[test]
     fn request_v0_roundtrips() {
         assert_roundtrips(Request::V0(RequestV0::new(
-            RestartId(0xdeadbeef),
+            RestartId::new(0xdeadbeef),
             RequestIdV0(2),
-            Ena(0xdecaff00d),
+            Ena::new(0xdecaff00d),
             4,
             None,
         )));
         assert_roundtrips(Request::V0(RequestV0::new(
-            RestartId(1),
+            RestartId::new(1),
             RequestIdV0(2),
-            Ena(3),
+            Ena::new(3),
             4,
-            Some(Ena(5)),
+            Some(Ena::new(5)),
         )));
     }
 
     #[test]
     fn response_v0_roundtrips() {
         assert_roundtrips(ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(0xdeadbeef),
+            restart_id: RestartId::new(0xdeadbeef),
             request_id: RequestIdV0(2),
-            start_ena: Ena(0xdecaff00d),
+            start_ena: Ena::new(0xdecaff00d),
         }));
     }
 }

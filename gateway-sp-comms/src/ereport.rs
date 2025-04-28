@@ -109,7 +109,9 @@ where
             // refresh the SP's metadata, try to do so now.
             if self.metadata.is_none() {
                 trace!(self.log(), "requesting initial SP metadata...");
-                match self.request_ereports(Uuid::nil(), Ena(0), 0, None).await
+                match self
+                    .request_ereports(Uuid::nil(), Ena::new(0), 0, None)
+                    .await
                 {
                     Ok(EreportTranche { restart_id, ereports }) => {
                         if !ereports.is_empty() {
@@ -200,7 +202,7 @@ where
         committed_ena: Option<Ena>,
     ) -> Result<EreportTranche, EreportError> {
         let req = Request::V0(RequestV0::new(
-            RestartId(restart_id.as_u128()),
+            RestartId::new(restart_id.as_u128()),
             self.request_id,
             start_ena,
             limit,
@@ -316,7 +318,7 @@ fn decode_body_v0(
         Ok((value, rest))
     }
 
-    let restart_id = Uuid::from_u128(header.restart_id.0);
+    let restart_id = Uuid::from_u128(header.restart_id.into());
     //  As described in RFD 545 4.4:
     //  https://rfd.shared.oxide.computer/rfd/0545#_readresponse
     //
@@ -862,10 +864,10 @@ mod test {
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
-        let start_ena = Ena(42);
+        let start_ena = Ena::new(42);
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(restart_id.as_u128()),
+            restart_id: RestartId::new(restart_id.as_u128()),
             request_id,
             start_ena,
         });
@@ -995,10 +997,10 @@ mod test {
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
-        let start_ena = Ena(42);
+        let start_ena = Ena::new(42);
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(restart_id.as_u128()),
+            restart_id: restart_id.as_u128().into(),
             request_id,
             start_ena,
         });
@@ -1120,8 +1122,8 @@ mod test {
         let request_id = RequestIdV0(1);
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(restart_id.as_u128()),
-            start_ena: Ena(0),
+            restart_id: restart_id.as_u128().into(),
+            start_ena: Ena::ZERO,
             request_id,
         });
 
@@ -1203,7 +1205,7 @@ mod test {
 
         assert_ereport_matches(
             &ereports[0],
-            Ena(0),
+            Ena::ZERO,
             json_map! {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
@@ -1219,7 +1221,7 @@ mod test {
 
         assert_ereport_matches(
             &ereports[1],
-            Ena(1),
+            Ena::new(1),
             json_map! {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
@@ -1235,7 +1237,7 @@ mod test {
 
         assert_ereport_matches(
             &ereports[2],
-            Ena(2),
+            Ena::new(2),
             json_map! {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
@@ -1258,9 +1260,9 @@ mod test {
         let request_id = RequestIdV0(1);
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(restart_id.as_u128()),
+            restart_id: restart_id.as_u128().into(),
             request_id,
-            start_ena: Ena(0),
+            start_ena: Ena::new(0),
         });
         let meta = json_map! {
             KEY_ARCHIVE: "decadefaced".to_string(),
@@ -1302,11 +1304,11 @@ mod test {
         let log = logger("decode_empty_packets");
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
-        let start_ena = Ena(0);
+        let start_ena = Ena::new(0);
         let request_id = RequestIdV0(1);
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(restart_id.as_u128()),
+            restart_id: restart_id.as_u128().into(),
             start_ena,
             request_id,
         });
@@ -1359,11 +1361,11 @@ mod test {
         let mut packet = [0u8; 1024];
         let restart_id = Uuid::new_v4();
         let request_id = RequestIdV0(1);
-        let start_ena = Ena(42);
+        let start_ena = Ena::new(42);
         let bad_body = vec![0xBA, 0xDB, 0xAD]; // ba db ad
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
-            restart_id: RestartId(restart_id.as_u128()),
+            restart_id: restart_id.as_u128().into(),
             start_ena,
             request_id,
         });
