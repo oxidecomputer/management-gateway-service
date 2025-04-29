@@ -21,8 +21,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use zerocopy::{
-    byteorder::little_endian, FromBytes, Immutable, IntoBytes, KnownLayout,
-    TryFromBytes,
+    byteorder::little_endian as le, FromBytes, Immutable, IntoBytes,
+    KnownLayout, TryFromBytes,
 };
 
 /// An error numeric identifier (ENA).
@@ -46,7 +46,7 @@ use zerocopy::{
     KnownLayout,
 )]
 #[repr(transparent)]
-pub struct Ena(pub little_endian::U64);
+pub struct Ena(pub le::U64);
 
 #[cfg(any(feature = "debug-impls", test))]
 impl core::fmt::Debug for Ena {
@@ -56,11 +56,11 @@ impl core::fmt::Debug for Ena {
 }
 
 impl Ena {
-    pub const ZERO: Self = Self(little_endian::U64::ZERO);
+    pub const ZERO: Self = Self(le::U64::ZERO);
 
     #[must_use]
     pub const fn new(u: u64) -> Self {
-        Self(little_endian::U64::new(u))
+        Self(le::U64::new(u))
     }
 
     #[must_use]
@@ -92,14 +92,14 @@ impl From<Ena> for u64 {
 )]
 #[repr(transparent)]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
-pub struct RestartId(pub little_endian::U128);
+pub struct RestartId(pub le::U128);
 
 impl RestartId {
-    pub const ZERO: Self = Self(little_endian::U128::ZERO);
+    pub const ZERO: Self = Self(le::U128::ZERO);
 
     #[must_use]
     pub const fn new(u: u128) -> Self {
-        Self(little_endian::U128::new(u))
+        Self(le::U128::new(u))
     }
 
     #[must_use]
