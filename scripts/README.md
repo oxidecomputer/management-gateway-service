@@ -58,7 +58,7 @@ Rhai calls the script's `main() -> i64 {}`.
   - rhai_fs::FilesystemPackage - file system access
   - [rhai_chrono::ChronoPackage](https://github.com/iganev/rhai-chrono) - standard time formats.
 
-### Modified Rhai behaviod
+### Modified Rhai behavior
   - The `debug("message")` function is routed to the faux-mgs slog logging.
     Prefixing a message with "crit|", "trace|", "error|", "warn|", "error|", or "debug|"
     will log at that corresponding level. Leaving off the prefix or using some other
@@ -113,15 +113,26 @@ cargo -q run --bin faux-mgs --features=rhaiscript -- \
   --per-attempt-timeout-millis=${PER_ATTEMPT_MS} \
   "$@"
 ```
+
+
 A `getops` utility function provides command line parsing within
 the script.
+
+### An update/rollback test
 
 For the upgrade-rollback script, a JSON configuration file supplies
 paths or other parameters needed to configure the script.
 
-then for instance:
+For convenience, it is assumed that there are two repos with there
+respective Grapefruit SP and RoT images built.
+
+#### Running update-rollback between the master branch and your new code:
+
 ```bash
-./FM rhai scripts/upgrade-rollback.rhai -- -c scripts/targets.json
+BASELINE=$HOME/Oxide/src/hubris/master
+UNDER_TEST=$HOME/Oxide/src/hubris/my-new-branch
+./FM rhai scripts/upgrade-rollback.rhai -- \
+    -c scripts/targets.json ${BASELINE} ${UNDER_TEST}
 ```
 
 See the scripts themselves for further information.

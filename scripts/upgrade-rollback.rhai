@@ -5,10 +5,12 @@ fn usage(prog, error) {
     if error != () {
         print(`Error: ${error}`);
     }
-    print(`Usage: faux-mgs ... rhai ${prog} [-v] [-h] [-c config.json]`);
+    print(`Usage: faux-mgs ... rhai ${prog} [-v] [-h] [-c config.json] [path0] [path1]`);
     print("  -c CONFIG.JSON # Path to configuration");
     print("  -v # be verbose");
     print("  -h # Help. Print this message");
+    print("path0 - optionally override configuration base_repo value");
+    print("path1 - optionally override configuration ut_repo value");
     print("");
 }
 
@@ -152,7 +154,7 @@ fn main() {
 
         debug(`info|${v.up_down} SP Hubris to ${v.label} image`);
         if !update_sp(v.sp_path) {
-            debug(`error|Failed to ${v.up_down} SP Hubris to ${v.label} image: ${r}`);
+            debug(`error|Failed to ${v.up_down} SP Hubris to ${v.label} image`);
             return 1;
         }
 
@@ -227,6 +229,22 @@ fn process_cli(argv) {
     if conf.verbose {
         print("");
         print(`config=${config}`);
+    }
+
+    // Optionally override baseline and under test repo from command line
+    let repo_path = parsed?.positional[0];
+    if repo_path != () {
+      print("override config base_repo:");
+      print(`  was: ${config?.base_repo}`);
+      config.base_repo = repo_path;
+      print(`  now: ${config?.base_repo}`);
+    }
+    let repo_path = parsed?.positional[1];
+    if repo_path != () {
+      print("override config ut_repo:");
+      print(`  was: ${config?.ut_repo}`);
+      config.ut_repo = repo_path;
+      print(`  now: ${config?.ut_repo}`);
     }
 
     // Expand the paths to archives so that the config file
