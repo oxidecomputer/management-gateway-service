@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use clap::CommandFactory;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -215,15 +216,26 @@ enum Command {
     ComponentActiveSlot {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
-        #[clap(short, long, value_name = "SLOT", help = "set the active slot")]
+        #[clap(
+            short,
+            long,
+            value_name = "SLOT",
+            requires = "switch_duration",
+            help = "set the active slot"
+        )]
         set: Option<u16>,
         #[clap(
             short,
             long,
             requires = "set",
+            group = "switch_duration",
             help = "persist the active slot to non-volatile memory"
         )]
         persist: bool,
+        /// Only valid with component "rot":
+        /// Prefer the specified slot on the next soft reset.
+        #[clap(short, long, requires = "set", group = "switch_duration")]
+        transient: bool,
     },
 
     /// Get or set startup options on an SP.
@@ -1135,8 +1147,15 @@ async fn run_command(
                 ]))
             }
         }
-        Command::ComponentActiveSlot { component, set, persist } => {
-            if let Some(slot) = set {
+        Command::ComponentActiveSlot { component, set, persist, transient } => {
+            if transient && component != SpComponent::ROT {
+                let cmd = Args::command();
+                clap::Error::raw( clap::error::ErrorKind::ArgumentConflict,
+                    format!(
+                        "The --transient (-t) flag is only allowed for the 'rot' component, not for {}\n", component
+                        )
+                    ).with_cmd(&cmd).exit();
+            } else if let Some(slot) = set {
                 sp.set_component_active_slot(component, slot, persist).await?;
                 if json {
                     Ok(Output::Json(json!({ "ack": "set", "slot": slot })))
