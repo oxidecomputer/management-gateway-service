@@ -1,7 +1,7 @@
 {
   "repo-home": "${HOME}/Oxide/src",
   "base_repo": "${repo-home}/hubris/master",
-  "ut_repo": "${repo-home}/hubris/epoch",
+  "ut_repo": "${repo-home}/hubris/${UT_WORKTREE}",
 
   "keyset": "bart",
   "keyset-dvt-dock": "${repo-home}/dvt-dock/${keyset}",
