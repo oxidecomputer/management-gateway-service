@@ -34,7 +34,7 @@ fn main() {
     // Generally, there should no updates in progress
     // and we can proceed with installation of the
     // baseline images if needed.
-    // .
+    //
     // If a previous test was aborted, some recovery may
     // be necessary.
     //
