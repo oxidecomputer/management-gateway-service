@@ -243,7 +243,7 @@ where
                         ResponseHeader::V0(ResponseHeaderV0 {
                             request_id,
                             ..
-                        }) if request_id != self.request_id => {
+                        }) if *request_id != self.request_id => {
                             debug!(
                                 self.log(),
                                 "ignoring a response that doesn't match the \
@@ -260,7 +260,7 @@ where
                             return decode_body_v0(
                                 self.socket.log(),
                                 restart_id,
-                                &header,
+                                header,
                                 &mut self.metadata,
                                 packet,
                             )
@@ -295,8 +295,8 @@ const KEY_PROTO_VERSION: &str = "ereport_message_version";
 
 fn decode_header(
     packet: &[u8],
-) -> Result<(ResponseHeader, &[u8]), DecodeError> {
-    ResponseHeader::try_read_from_prefix(packet)
+) -> Result<(&ResponseHeader, &[u8]), DecodeError> {
+    ResponseHeader::try_ref_from_prefix(packet)
         .map_err(|e| DecodeError::Header(e.to_string()))
 }
 
