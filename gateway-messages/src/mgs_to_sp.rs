@@ -343,7 +343,9 @@ pub enum UnlockChallenge {
     PartialEq,
     Eq,
     Debug,
-    zerocopy::AsBytes,
+    zerocopy::IntoBytes,
+    zerocopy::KnownLayout,
+    zerocopy::Immutable,
 )]
 #[repr(C)]
 pub struct EcdsaSha2Nistp256Challenge {
