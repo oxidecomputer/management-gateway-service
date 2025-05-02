@@ -8,7 +8,6 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
-use clap::CommandFactory;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -1149,12 +1148,7 @@ async fn run_command(
         }
         Command::ComponentActiveSlot { component, set, persist, transient } => {
             if transient && component != SpComponent::ROT {
-                let cmd = Args::command();
-                clap::Error::raw( clap::error::ErrorKind::ArgumentConflict,
-                    format!(
-                        "The --transient (-t) flag is only allowed for the 'rot' component, not for {}\n", component
-                        )
-                    ).with_cmd(&cmd).exit();
+                bail!("The --transient (-t) flag is only allowed for the 'rot' component, not for {component}");
             } else if let Some(slot) = set {
                 sp.set_component_active_slot(component, slot, persist).await?;
                 if json {
@@ -1324,7 +1318,7 @@ async fn run_command(
                     ..
                 } => {
                     let id = Uuid::from(id);
-                    format!("update {id} aux flash scan complete (found_match={found_match}")
+                    format!("update {id} aux flash scan complete (found_match={found_match})")
                 }
                 UpdateStatus::InProgress(sub_status) => {
                     let id = Uuid::from(sub_status.id);
