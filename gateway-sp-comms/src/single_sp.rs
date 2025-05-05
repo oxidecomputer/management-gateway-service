@@ -6,7 +6,9 @@
 
 //! Interface for communicating with a single SP.
 
+use crate::ereport;
 use crate::error::CommunicationError;
+use crate::error::EreportError;
 use crate::error::UpdateError;
 use crate::shared_socket::SingleSpHandle;
 use crate::shared_socket::SingleSpHandleError;
@@ -282,8 +284,10 @@ details in `dump.json`."
 pub struct SingleSp {
     interface: String,
     cmds_tx: mpsc::Sender<InnerCommand>,
+    ereport_req_tx: mpsc::Sender<ereport::WorkerRequest>,
     sp_addr_rx: watch::Receiver<Option<(SocketAddrV6, SpPort)>>,
     inner_task: JoinHandle<()>,
+    ereport_task: JoinHandle<()>,
     log: Logger,
     reset_watchdog_timeout_ms: u32,
 }
@@ -291,6 +295,7 @@ pub struct SingleSp {
 impl Drop for SingleSp {
     fn drop(&mut self) {
         self.inner_task.abort();
+        self.ereport_task.abort();
     }
 }
 
@@ -312,17 +317,26 @@ impl SingleSp {
     ///    `config.listen_addr` is invalid), the returned `SingleSp` will return
     ///    a "UDP bind failed" error from all methods forever.
     pub async fn new(
-        shared_socket: &SharedSocket,
+        shared_socket: &SharedSocket<crate::shared_socket::SingleSpMessage>,
+        ereport_socket: &SharedSocket<Vec<u8>>,
         config: SwitchPortConfig,
         retry_config: SpRetryConfig,
     ) -> Self {
         let handle = shared_socket
             .single_sp_handler(&config.interface, config.discovery_addr)
             .await;
-
+        let ereport_handle = ereport_socket
+            .single_sp_handler(&config.interface, config.ereport_addr)
+            .await;
         let log = handle.log().clone();
 
-        Self::new_impl(handle, config.interface, retry_config, log)
+        Self::new_impl(
+            handle,
+            ereport_handle,
+            config.interface,
+            retry_config,
+            log,
+        )
     }
 
     /// Create a new `SingleSp` instance specifically for testing (i.e.,
@@ -335,14 +349,22 @@ impl SingleSp {
     pub fn new_direct_socket_for_testing(
         socket: UdpSocket,
         discovery_addr: SocketAddrV6,
+        ereport_socket: UdpSocket,
+        ereport_addr: SocketAddrV6,
         retry_config: SpRetryConfig,
         log: Logger,
     ) -> Self {
         let wrapper =
             InnerSocketWrapper { socket, discovery_addr, log: log.clone() };
+        let ereport_wrapper = InnerSocketWrapper {
+            socket: ereport_socket,
+            discovery_addr: ereport_addr,
+            log: log.clone(),
+        };
 
         Self::new_impl(
             wrapper,
+            ereport_wrapper,
             "(direct socket handle)".to_string(),
             retry_config,
             log,
@@ -352,12 +374,17 @@ impl SingleSp {
     // Shared implementation of `new` and `new_direct_socket_for_testing` that
     // doesn't care whether we're using a `SharedSocket` or a
     // `InnerSocketWrapper` (the latter for tests).
-    fn new_impl<T: InnerSocket + Send + 'static>(
+    fn new_impl<T, E>(
         socket: T,
+        ereport_socket: E,
         interface: String,
         retry_config: SpRetryConfig,
         log: Logger,
-    ) -> Self {
+    ) -> Self
+    where
+        T: InnerSocket<SingleSpMessage> + Send + 'static,
+        E: InnerSocket<Vec<u8>> + Send + 'static,
+    {
         // SPs don't support pipelining, so any command we send to
         // `Inner` that involves contacting an SP will effectively block
         // until it completes. We use a more-or-less arbitrary chanel
@@ -374,15 +401,20 @@ impl SingleSp {
         let reset_watchdog_timeout_ms =
             retry_config.reset_watchdog_timeout_ms();
 
+        let (ereport_work, ereport_req_tx) =
+            ereport::Worker::new(retry_config, ereport_socket);
         let inner = Inner::new(socket, sp_addr_tx, retry_config, cmds_rx);
 
         let inner_task = tokio::spawn(inner.run());
+        let ereport_task = tokio::spawn(ereport_work.run());
 
         Self {
             interface,
             cmds_tx,
             sp_addr_rx,
+            ereport_req_tx,
             inner_task,
+            ereport_task,
             log,
             reset_watchdog_timeout_ms,
         }
@@ -1360,6 +1392,27 @@ impl SingleSp {
             memory: map,
         })
     }
+
+    pub async fn ereports(
+        &self,
+        restart_id: Uuid,
+        start_ena: ereport::Ena,
+        limit: impl Into<Option<std::num::NonZeroU8>>,
+        committed_ena: Option<ereport::Ena>,
+    ) -> Result<ereport::EreportTranche, EreportError> {
+        let (rsp_tx, rsp_rx) = oneshot::channel();
+        self.ereport_req_tx
+            .send(ereport::WorkerRequest {
+                restart_id,
+                start_ena,
+                limit: limit.into().unwrap_or(std::num::NonZeroU8::MAX),
+                committed_ena,
+                rsp_tx,
+            })
+            .await
+            .expect("ereport worker should not have unexpectedly died");
+        rsp_rx.await.expect("ereport requests are never cancelled")
+    }
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)
@@ -1889,15 +1942,15 @@ enum InnerCommand {
 }
 
 #[async_trait]
-trait InnerSocket {
+pub(crate) trait InnerSocket<Message> {
     fn log(&self) -> &Logger;
     fn discovery_addr(&self) -> SocketAddrV6;
     async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError>;
-    async fn recv(&mut self) -> Option<SingleSpMessage>;
+    async fn recv(&mut self) -> Option<Message>;
 }
 
 #[async_trait]
-impl InnerSocket for SingleSpHandle {
+impl<T: Send> InnerSocket<T> for SingleSpHandle<T> {
     fn log(&self) -> &Logger {
         SingleSpHandle::log(self)
     }
@@ -1910,7 +1963,7 @@ impl InnerSocket for SingleSpHandle {
         SingleSpHandle::send(self, data).await
     }
 
-    async fn recv(&mut self) -> Option<SingleSpMessage> {
+    async fn recv(&mut self) -> Option<T> {
         SingleSpHandle::recv(self).await
     }
 }
@@ -1922,7 +1975,7 @@ struct InnerSocketWrapper {
 }
 
 #[async_trait]
-impl InnerSocket for InnerSocketWrapper {
+impl InnerSocket<SingleSpMessage> for InnerSocketWrapper {
     fn log(&self) -> &Logger {
         &self.log
     }
@@ -2010,6 +2063,50 @@ impl InnerSocket for InnerSocketWrapper {
     }
 }
 
+#[async_trait]
+impl InnerSocket<Vec<u8>> for InnerSocketWrapper {
+    fn log(&self) -> &Logger {
+        &self.log
+    }
+
+    fn discovery_addr(&self) -> SocketAddrV6 {
+        self.discovery_addr
+    }
+
+    async fn send(&mut self, data: &[u8]) -> Result<(), SingleSpHandleError> {
+        self.socket
+            .send_to(data, self.discovery_addr)
+            .await
+            .map(|n| assert_eq!(n, data.len()))
+            .map_err(|err| SingleSpHandleError::SendTo {
+                addr: self.discovery_addr,
+                interface: "(direct socket handle)".to_string(),
+                err,
+            })
+    }
+
+    // This function is only used if we were created with
+    // `new_direct_socket_for_testing()`, so we're a little lazy with error
+    // handling. The real `SingleSpHandle` handles errors internally but may
+    // return `None` at runtime shutdown; this `recv()` is more infallible
+    // (always returning `Some(..)`)
+    async fn recv(&mut self) -> Option<Vec<u8>> {
+        let mut buf = [0; gateway_messages::MAX_SERIALIZED_SIZE];
+        loop {
+            let (peer, buf) = match self.socket.recv_from(&mut buf).await {
+                Ok((n, SocketAddr::V6(peer))) => (peer, &buf[..n]),
+                Ok((_, SocketAddr::V4(_))) => unreachable!(),
+                Err(err) => {
+                    error!(self.log, "failed to recv"; "err" => %err);
+                    continue;
+                }
+            };
+            trace!(self.log, "received {} bytes", buf.len(); "peer" => %peer);
+            return Some(buf.to_vec());
+        }
+    }
+}
+
 struct Inner<T> {
     socket_handle: T,
     sp_addr_tx: watch::Sender<Option<(SocketAddrV6, SpPort)>>,
@@ -2021,7 +2118,7 @@ struct Inner<T> {
     most_recent_host_phase2_request: Option<HostPhase2Request>,
 }
 
-impl<T: InnerSocket> Inner<T> {
+impl<T: InnerSocket<SingleSpMessage>> Inner<T> {
     // This is a private function; squishing the number of arguments down seems
     // like more trouble than it's worth.
     #[allow(clippy::too_many_arguments)]
@@ -2606,21 +2703,21 @@ mod tests {
     // A fake `InnerSocket` whose `recv()` method is connected to a tokio
     // channel.
     #[derive(Debug)]
-    struct ChannelInnerSocket {
+    struct ChannelInnerSocket<T = SingleSpMessage> {
         log: Logger,
         packets_sent: Vec<Vec<u8>>,
-        recv: mpsc::UnboundedReceiver<SingleSpMessage>,
+        recv: mpsc::UnboundedReceiver<T>,
     }
 
-    impl ChannelInnerSocket {
-        fn new(log: Logger) -> (Self, mpsc::UnboundedSender<SingleSpMessage>) {
+    impl<T> ChannelInnerSocket<T> {
+        fn new(log: Logger) -> (Self, mpsc::UnboundedSender<T>) {
             let (recv_tx, recv) = mpsc::unbounded_channel();
             (Self { log, packets_sent: Vec::new(), recv }, recv_tx)
         }
     }
 
     #[async_trait]
-    impl InnerSocket for ChannelInnerSocket {
+    impl<T: Send> InnerSocket<T> for ChannelInnerSocket<T> {
         fn log(&self) -> &Logger {
             &self.log
         }
@@ -2637,7 +2734,7 @@ mod tests {
             Ok(())
         }
 
-        async fn recv(&mut self) -> Option<SingleSpMessage> {
+        async fn recv(&mut self) -> Option<T> {
             let m = self.recv.recv().await;
             if m.is_none() {
                 warn!(self.log, "recv() failed; hopefully we are exiting");

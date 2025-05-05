@@ -30,6 +30,8 @@ use gateway_messages::UnlockResponse;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
 use gateway_messages::ROT_PAGE_SIZE;
+use gateway_sp_comms::ereport;
+use gateway_sp_comms::shared_socket;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
@@ -90,6 +92,13 @@ struct Args {
     /// server commands]
     #[clap(long)]
     listen_port: Option<u16>,
+
+    /// Ereport port to bind to locally
+    // Note that, unlike `listen_port`, this always defaults to 0, because we
+    // don't need to act as a server with a known port for the ereport
+    // protocol.
+    #[clap(long, default_value_t = 0)]
+    ereport_port: u16,
 
     /// Address to use to discover the SP. May be a specific SP's address to
     /// bypass multicast discovery.
@@ -711,11 +720,20 @@ async fn main() -> Result<()> {
 
     let shared_socket = SharedSocket::bind(
         listen_port,
-        Arc::clone(&host_phase2_provider),
-        log.clone(),
+        shared_socket::ControlPlaneAgentHandler::new(&host_phase2_provider),
+        log.new(slog::o!("socket" => "control-plane-agent")),
     )
     .await
     .context("SharedSocket:bind() failed")?;
+    let ereport_socket = {
+        SharedSocket::bind(
+            args.ereport_port,
+            ereport::EreportHandler::default(),
+            log.new(slog::o!("socket" => "ereport")),
+        )
+        .await
+        .context("SharedSocket::bind() for ereport socket failed")?
+    };
 
     let mut sps = Vec::new();
 
@@ -730,21 +748,39 @@ async fn main() -> Result<()> {
         let socket = UdpSocket::bind(bind_addr)
             .await
             .with_context(|| format!("failed to bind to {bind_addr}"))?;
+        let ereport_bind_addr: SocketAddrV6 =
+            SocketAddrV6::new(Ipv6Addr::UNSPECIFIED, 0, 0, 0);
+        let ereport_socket =
+            UdpSocket::bind(ereport_bind_addr).await.with_context(|| {
+                format!("failed to bind to {ereport_bind_addr}")
+            })?;
         sps.push(SingleSp::new_direct_socket_for_testing(
             socket,
             sp_sim_addr,
+            ereport_socket,
+            SocketAddrV6::new(
+                *sp_sim_addr.ip(),
+                gateway_sp_comms::ereport::SP_PORT,
+                0,
+                0,
+            ),
             retry_config,
             log.clone(),
         ));
     } else {
         let interfaces = build_requested_interfaces(args.interface)?;
+
+        let mut ereport_addr = args.discovery_addr;
+        ereport_addr.set_port(gateway_sp_comms::ereport::SP_PORT);
         for interface in interfaces {
             info!(log, "creating SP handle on interface {interface}");
             sps.push(
                 SingleSp::new(
                     &shared_socket,
+                    &ereport_socket,
                     SwitchPortConfig {
                         discovery_addr: args.discovery_addr,
+                        ereport_addr,
                         interface,
                     },
                     retry_config,

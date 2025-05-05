@@ -117,3 +117,19 @@ pub enum UpdateError {
     #[error("an image was not found")]
     ImageNotFound,
 }
+
+#[derive(Debug, thiserror::Error, SlogInlineError)]
+pub enum EreportError {
+    #[error(transparent)]
+    Communication(#[from] CommunicationError),
+    #[error("unexpected response message for metadata request")]
+    ThisIsntMetadata,
+    #[error(transparent)]
+    DecodePacket(#[from] crate::ereport::DecodeError),
+}
+
+impl From<SingleSpHandleError> for EreportError {
+    fn from(err: SingleSpHandleError) -> Self {
+        Self::Communication(err.into())
+    }
+}
