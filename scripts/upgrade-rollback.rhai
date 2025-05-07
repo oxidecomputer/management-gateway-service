@@ -1,3 +1,8 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+// Copyright 2025 Oxide Computer Company
+
 import `${script_dir}/util` as util;
 
 /// Print command line usage
@@ -5,8 +10,12 @@ fn usage(prog, error) {
     if error != () {
         print(`Error: ${error}`);
     }
-    print(`Usage: faux-mgs ... rhai ${prog} [-v] [-h] [-c config.json] [path0] [path1]`);
+    print(
+        `Usage: faux-mgs ... rhai ${prog} [-v] [-h] [-c config.json] ` +
+        `[path0] [path1]`
+    );
     print("  -c CONFIG.JSON # Path to configuration");
+    print("  -t # Use transient boot preference to vet RoT Hubris");
     print("  -v # be verbose");
     print("  -h # Help. Print this message");
     print("path0 - optionally override configuration base_repo value");
@@ -15,124 +24,185 @@ fn usage(prog, error) {
 }
 
 fn main() {
-    // Display start time
     let start_ts = timestamp();
     let start_time = datetime_local();
     debug(`info|Starting at ${start_time}`);
 
     let conf = process_cli(argv);
     switch type_of(conf) {
-        "i64" => return conf,
-        "map" => (),
-        _ => return 1,
+        "i64" => {
+            return conf; // Exit code from process_cli
+        }
+        "map" => {
+            () // Configuration map successfully parsed
+        }
+        _ => {
+            print("ERROR: process_cli returned unexpected type.");
+            return 1;
+        }
     }
-    // Collect GITC and signature verification info.
+
     let images = get_image_info(conf);
+    if type_of(images) == "i64" {
+        // Assuming get_image_info returns exit code on error
+        print("ERROR: Failed to get image info.");
+        return images;
+    }
 
     print("\n## Determine initial FW state and update if needed");
-
-    // Generally, there should no updates in progress
-    // and we can proceed with installation of the
-    // baseline images if needed.
-    //
-    // If a previous test was aborted, some recovery may
-    // be necessary.
-    //
-    // A corner case that may require a hard-reset is described in:
-    // https://github.com/oxidecomputer/hubris/issues/1022
-
     let problems = 0;
     for attempt in 1..=2 {
         problems = 0;
         for component in ["rot", "sp"] {
-            let r = check_update_in_progress(component);
-            if r?.Err != () {
-                print(`Error check_update_in_progress=${r}`);
+            let r_check = util::check_update_in_progress(component);
+            if r_check?.Err != () {
+                print(
+                    `Error from util::check_update_in_progress for ` +
+                    `${component}: ${r_check}`
+                );
                 return 1;
             }
-            debug(`check_update_in_progress(${component})=${r}`);
-            if r != () {
+            // If not null, an update was in progress or completed
+            if r_check != () {
                 problems += 1;
-                let id = r?.id;
-                debug(`r=${r}`);
-                debug(`id=${id}`);
-                debug(`Failed: component ${component}: ${r}`);
-                print(`The SP probably needs to be reset before continuing`);
-                print(`Trying to abort the update with id=${id}`);
-                let r = faux_mgs(["update-abort", component, `${id}`]);
-                debug(`info|update-abort = ${r}`);
+                let id = r_check?.id;
+                debug(
+                    `info|Component ${component} had existing update status: ` +
+                    `${r_check}. Attempting abort with id=${id}.`
+                );
+                print(
+                    `The SP component '${component}' may need reset after ` +
+                    `abort. Trying to abort update id=${id}`
+                );
+
+                let r_abort = util::abort_update(component, `${id}`);
+                // The existing debug log is still useful
+                debug(
+                    `info|update-abort result for ${component} id ${id}: ` +
+                    `${r_abort}`
+                 );
+                // Optional: Check r_abort for r_abort?.ack == "aborted" if needed
+                // if r_abort?.ack != "aborted" {
+                //     print(`WARN|Failed to confirm abort for ${component} id ${id}. Result: ${r_abort}`);
+                // }
             }
-        }
+        } // end component loop
+
         if problems == 0 {
-            break;
+            debug("info|No pending updates found or they were abortable.");
+            break; // Exit attempt loop
         }
-        let r = reset_sp_and_rot();
-        if r?["error"] != () {
-            print(`Cannot reset rot and sp: ${r.error}`);
-            print(`Check that RoT has no pending update and STLINK is off`);
-            print("Also see https://github.com/oxidecomputer/hubris/issues/1022");
+
+        debug(
+            `warn|Attempt ${attempt}: Problems found with component updates. ` +
+            `Resetting SP and RoT.`
+        );
+        // Assuming reset_sp_and_rot is a local helper
+        let r_reset_all = reset_sp_and_rot();
+        if r_reset_all?["error"] != () {
+            print(`ERROR: Cannot reset RoT and SP: ${r_reset_all.error}`);
+            print(
+                `Check that RoT has no pending update and STLINK is off. ` +
+                `See Hubris issue #1022.`
+            );
             return 1;
         }
-    }
+    } // end attempt loop
+
     if problems > 0 {
-        print(`Devices are stuck in update and need to be hard-reset before continuing`);
+        print(
+            `ERROR: Devices still stuck in update after reset attempts. ` +
+            `Needs hard-reset.`
+        );
         return 1;
     }
 
-    // Check initial vs desired state based on GITC values.
-    //
-    // Note that during development, GITC+"dirty" won't
-    // distinguish between your various iterations.
-    // It would be better to use FWID values all around.
-    // TODO: When hubtools has fwidgen integrated and when SP can report
-    // the FWID of its active and inactive flash banks, and old images
-    // without those features do not need to be supported, transition to
-    // FWID-based assessment. Note: The RoT can report SP Active bank FWID
-    // over IPCC.
-    let result = image_check("base", images);
-    let err = result?["error"];
-    if err != () {
-        print(`image_check error: ${err}`);
+    debug("info|Checking initial image versions against baseline.");
+    // "base" refers to v.branch value for image_check
+    let result_initial_check = image_check("base", images);
+    let err_initial_check = result_initial_check?.error;
+    if err_initial_check != () {
+        print(
+            `ERROR: Initial image_check for baseline failed: ` +
+            `${err_initial_check}`
+        );
         return 1;
     }
-    let flash_sp = result?.ok?.sp;
-    let flash_rot = result?.ok?.rot;
+    let flash_sp_for_base = result_initial_check?.ok?.sp;
+    let flash_rot_for_base = result_initial_check?.ok?.rot;
 
     print("");
     print(`Elapsed time: ${start_ts.elapsed}`);
     print(`Now=${datetime_local()}`);
     print("");
 
-    // Update SP with baseline image if needed.
-    if flash_sp && !update_sp(conf.base.sp) {
-        return 1;
-    }
-
-    // Update RoT with baseline image
-    debug(`info|Flash baseline rot hubris`);
-    if flash_rot && !update_rot_hubris(conf.base.rot_a, conf.base.rot_b) {
-        return 1
-    }
-
-    // Both SP and RoT should have baseline images installed.
-
-    // Verify that SP and RoT are running correct images.
-    // Check updated vs desired state based on GITC values.
-    if flash_sp || flash_rot {
-        let result = image_check("base", images);
-        if result?.error != () || result.ok.sp || result.ok.rot {
-            // Not able to check images or one or both base images not installed.
-            debug(`warn|image_check error or failed BASE image updates: ${result}`);
+    // N.B.: Try to always flash the RoT before the SP so that the RoT can be
+    // ready to measure the SP when the SP resets.
+    if flash_rot_for_base {
+        debug(
+            "info|Initial state: RoT needs update to baseline. " +
+            "Using persistent update."
+        );
+        // For initial RoT update to baseline, use_transient is false.
+        // The target_label for this initial setup is "baseline_setup".
+        if !update_rot_hubris(
+            conf.base.rot_a, conf.base.rot_b, false, "baseline_setup"
+        ) {
+            debug("error|Failed to update RoT to baseline image. Exiting.");
             return 1;
         }
+    } else {
+        debug(
+            "info|Initial state: RoT is already on a baseline " +
+            "(or equivalent) image."
+        );
     }
 
-    // Upgrade to under-test then rollback to baseline images.
+    if flash_sp_for_base {
+        debug("info|Initial state: SP needs update to baseline.");
+        // Assuming update_sp is a local helper function
+        if !update_sp(conf.base.sp) {
+            debug("error|Failed to update SP to baseline image. Exiting.");
+            return 1;
+        }
+    } else {
+        debug(
+            "info|Initial state: SP is already on a baseline " +
+            "(or equivalent) image."
+        );
+    }
+
+    // Verify baseline images are installed if updates were performed
+    if flash_sp_for_base || flash_rot_for_base {
+        debug(
+            "info|Re-checking images after potentially updating to baseline."
+        );
+        let result_post_base_update = image_check("base", images);
+        if result_post_base_update?.error != () ||
+           result_post_base_update.ok?.sp ||
+           result_post_base_update.ok?.rot
+        {
+            // If any check failed OR SP/RoT still need flashing -> Error
+            debug(
+                `warn|Post-baseline update image_check error or images still ` +
+                `not correct: ${result_post_base_update}`
+            );
+            return 1;
+        }
+        debug("info|Successfully installed/verified baseline images on SP and RoT.");
+    } else {
+         debug(
+             "info|SP and RoT were already on baseline images. " +
+             "No initial updates performed."
+         );
+    }
+
+    // Main upgrade/rollback loop
     for v in [
         #{
             "up_down": "upgrade",
-            "label": "under-test",
-            "branch": "ut",
+            "label": "under-test",   // Descriptive label
+            "branch": "ut",          // Key for image paths in conf
             "sp_path": conf.ut.sp,
             "rot_a_path": conf.ut.rot_a,
             "rot_b_path": conf.ut.rot_b,
@@ -146,43 +216,83 @@ fn main() {
             "rot_b_path": conf.base.rot_b,
         }
     ] {
-        debug(`info|${v.up_down} Rot Hubris to ${v.label} image`);
-        if !update_rot_hubris(v.rot_a_path, v.rot_b_path) {
-            debug(`error|Failed to ${v.up_down} RoT Hubris to ${v.label} image: ${r}`);
-            return 1
+        print(
+            `\n## Starting ${v.up_down} to ${v.label} ` +
+            `(${v.branch} branch versions)`
+        );
+        let use_transient_for_this_op = false;
+        // Determine if transient mechanism should be attempted for RoT
+        if conf.use_transient_boot_preference {
+            // Check if the *currently active* RoT supports transient commands
+            if rot_supports_transient_boot_preference() { // Assumes local helper
+                debug(
+                    `info|Current RoT supports transient commands. ` +
+                    `Attempting transient update to ${v.label}.`
+                 );
+                use_transient_for_this_op = true;
+            } else {
+                debug(
+                    `warn|Current RoT does NOT support transient commands. ` +
+                    `Using persistent update to ${v.label}.`
+                );
+                // use_transient_for_this_op remains false
+            }
+        } else {
+            debug(
+                `info|Transient preference not enabled via -t option. ` +
+                `Using persistent update to ${v.label}.`
+            );
+            // use_transient_for_this_op remains false
         }
 
-        debug(`info|${v.up_down} SP Hubris to ${v.label} image`);
+        // Update RoT first
+        debug(
+            `info|Updating RoT Hubris to ${v.label} image ` +
+            `(use_transient=${use_transient_for_this_op}).`
+        );
+        if !update_rot_hubris(
+            v.rot_a_path, v.rot_b_path, use_transient_for_this_op, v.label
+        ) {
+            debug(
+                `error|Failed to ${v.up_down} RoT Hubris to ${v.label} image.`
+            );
+            return 1; // Exit script on failure
+        }
+
+        // Then update SP
+        debug(`info|Updating SP Hubris to ${v.label} image.`);
         if !update_sp(v.sp_path) {
-            debug(`error|Failed to ${v.up_down} SP Hubris to ${v.label} image`);
-            return 1;
+            debug(
+                `error|Failed to ${v.up_down} SP Hubris to ${v.label} image.`
+            );
+            return 1; // Exit script on failure
         }
 
-        let result = image_check(v.branch, images);
-        if result?.error != () || result.ok.sp || result.ok.rot {
-            // Not able to check images or one or both ${branch} images not installed.
-            debug(`error|image_check error or failed ${label} image updates: ${result}`);
+        // Verify images after SP and RoT updates for this cycle
+        let result_loop_check = image_check(v.branch, images); // Use v.branch
+        if result_loop_check?.error != () ||
+           result_loop_check.ok?.sp ||
+           result_loop_check.ok?.rot
+        {
+            // If check fails or SP/RoT still need flashing -> Error
+            debug(
+                `error|image_check error or failed ${v.label} image updates: ` +
+                `${result_loop_check}`
+            );
             return 1;
         }
-        debug(`info|### SUCCESS: ${v.up_down} to SP and RoT ${v.label} images`);
-    }
+        debug(
+            `info|### SUCCESS: ${v.up_down} to SP and RoT ${v.label} images ` +
+            `completed successfully.`
+        );
+    } // end upgrade/rollback loop
 
     print("");
     print(`Elapsed time so far: ${start_ts.elapsed}`);
     print(`Now=${datetime_local()}`);
     print("Done");
-    // All is well. Exit with code 0
-    0
+    return 0; // All is well, exit with code 0
 }
-
-// TODO: Parameterize update orders for upgrade and rollback with defaults
-// that match what omicron or wicket would do.
-// e.g. in config.json: "upgrade-order": ["sp", "rot", "stage0"],
-//                      "rollback-order": ["sp", "rot", "stage0"];
-//
-// TODO: Take a TUF repo as a set of baseline or under-test images.
-// Alternatively, write a script that will extract from a TUF repo(s)
-// and write a configuration file for this script.
 
 /// Parse the Rhai script command line options including the required
 /// JSON configuration file.
@@ -190,10 +300,12 @@ fn main() {
 fn process_cli(argv) {
     // Process command line options
     let prog = argv[0];
-    let options = "hc:b:u:"; // Options with arguments are followed by ':'
-    let parsed = util::getopts(argv, "hc:v");
+    // Options with arguments followed by ':'
+    let options = "hc:b:u:tv"; // Added t, v here as per usage string
+    // Use util::getopts
+    let parsed = util::getopts(argv, options);
     if parsed?["error"] != () {
-        usage(prog, parsed?["error"]);
+        usage(prog, parsed.error); // Pass error message
         return 1;
     }
 
@@ -207,215 +319,300 @@ fn process_cli(argv) {
 
     conf["verbose"] = false;
     if parsed.result?["v"] == true {
-        conf.verbose=true;
+        conf.verbose = true;
     }
 
-    let conf_path = parsed["result"]?["c"];
+    conf["use_transient_boot_preference"] = false;
+    if parsed.result?["t"] == true {
+        conf["use_transient_boot_preference"] = true;
+    }
+
+    let conf_path = parsed.result?["c"];
     if conf_path == () {
-        usage(prog, "Missing option: -c config.json");
+        usage(prog, "Missing required option: -c config.json");
         return 1;
     }
-    let conf_path = path(conf_path);
+    // TODO: Consider validating conf_path format if needed before path() call
+    let conf_path = path(conf_path); // Assumes path() function exists
     if !conf_path.is_file {
-        usage(prog, `${conf_path} is not a regular file`);
-        return 1
+        usage(prog, `Config file not found or not a file: ${conf_path}`);
+        return 1;
     }
-    conf["conf_path"] = conf_path;
+
+    conf["conf_path"] = conf_path; // Store validated path
 
     // Process the JSON format configuration file into a map.
-    let conf_file = open_file(conf_path);
-    let conf_json = conf_file.read_string();
+    let conf_json = ""; // Initialize
+    let read_ok = true;
+    try {
+        // Attempt to open and read the file within the try block
+        let conf_file = open_file(conf_path);
+        conf_json = conf_file.read_string();
+        debug(`info|Successfully read config file: ${conf_path}`);
+    } catch (err) {
+        // Handle file open or read errors caught here
+        print(`ERROR: Cannot open or read config file ${conf_path}: ${err}`);
+        read_ok = false;
+    }
+
+    // Exit if file could not be opened or read
+    if !read_ok {
+        return 1;
+    }
+
+    // Now, parse the JSON content (conf_json)
+    // Assuming json_to_map handles errors and returns map with 'error' key
     let config = json_to_map(conf_json);
+    if config?.error != () {
+         print(`ERROR: Failed to parse JSON from config file: ${conf_path}`);
+         print(`       ${config.error}`);
+         return 1;
+    }
+
     if conf.verbose {
         print("");
-        print(`config=${config}`);
+        // Note: 'config' is the map parsed from JSON, 'conf' is the final map being built
+        print(`Parsed JSON config from ${conf_path}: ${config}`);
     }
 
-    // Optionally override baseline and under test repo from command line
-    let repo_path = parsed?.positional[0];
-    if repo_path != () {
-      print("override config base_repo:");
-      print(`  was: ${config?.base_repo}`);
-      config.base_repo = repo_path;
-      print(`  now: ${config?.base_repo}`);
+    // Optionally override baseline and under test repo paths from CLI
+    let base_repo_override = parsed?.positional[0];
+    if base_repo_override != () {
+        print("Overriding config 'base_repo' from command line:");
+        print(`  was: ${config?.base_repo}`);
+        config.base_repo = base_repo_override;
+        print(`  now: ${config.base_repo}`);
     }
-    let repo_path = parsed?.positional[1];
-    if repo_path != () {
-      print("override config ut_repo:");
-      print(`  was: ${config?.ut_repo}`);
-      config.ut_repo = repo_path;
-      print(`  now: ${config?.ut_repo}`);
+    let ut_repo_override = parsed?.positional[1];
+    if ut_repo_override != () {
+        print("Overriding config 'ut_repo' from command line:");
+        print(`  was: ${config?.ut_repo}`);
+        config.ut_repo = ut_repo_override;
+        print(`  now: ${config.ut_repo}`);
     }
 
-    // Expand the paths to archives so that the config file
-    // can use vars from the environment and the configuration file itself.
-    conf["sp_bord"] = util::env_expand(config.bord.sp, config);
-    conf["rot_bord"] = util::env_expand(config.bord.rot, config);
+    // --- Expand paths using variables from config and environment ---
+    // Ensure base 'repo-home' or similar is defined if used in paths below
+    if config?["repo-home"] == () && (
+            config?.base_repo?.contains("${repo-home}") ||
+            config?.ut_repo?.contains("${repo-home}") )
+    {
+         debug("warn|'repo-home' used in paths but not defined in config.");
+    }
+
+    // Pass the parsed 'config' map itself as the override map for env_expand
+    conf["sp_bord"] = util::env_expand(config?.bord?.sp, config);
+    conf["rot_bord"] = util::env_expand(config?.bord?.rot, config);
 
     for branch in ["base", "ut"] {
-        conf[branch] = #{};
+        conf[branch] = #{}; // Ensure branch map exists
         for image in ["sp", "rot_a", "rot_b", "stage0"] {
-            let zip_path =  util::env_expand(config.images[branch][image], config);
+            let image_path_template = config?.images?[branch]?[image];
+            if image_path_template == () {
+                 debug(`warn|No config path found for image ${branch}.${image}`);
+                 conf[branch][image] = ();
+                 continue;
+            }
+            let zip_path = util::env_expand(image_path_template, config);
             if zip_path == () {
-                print(`No configuration for image ${branch}.${image}`);
+                debug(
+                    `error|Failed expanding path for ${branch}.${image}: ` +
+                    `'${image_path_template}'`
+                 );
+                conf[branch][image] = (); // Set to null on expansion failure
             } else {
                 conf[branch][image] = zip_path;
-                debug(`info|conf.${branch}.${image}=${zip_path}`);
+                debug(`info|Expanded path ${branch}.${image} = ${zip_path}`);
             }
+        } // end image loop
+    } // end branch loop
+
+    // Handle IPCC config expansion
+    let faux_ipcc_path_template = config?.ipcc?.faux_ipcc;
+    if faux_ipcc_path_template != () {
+        conf.ipcc = #{
+            "use_ipcc": true,
+            "faux_ipcc": util::env_expand(faux_ipcc_path_template, config),
+            "port": util::env_expand(config?.ipcc?.port, config), // Expand optional port
         };
+    } else {
+        conf.ipcc = #{ "use_ipcc": false };
     }
 
-    // If ipcc has been specified, then include that as well
-    let faux_ipcc_path = config?.ipcc?.faux_ipcc;
-    let x = 1;
-    let a = if x == 2 {
-      3
-    } else {
-      4
-    };
-    print(x);
-    conf.ipcc = if faux_ipcc_path != () {
-        #{
-          "use_ipcc": true,
-          "faux_ipcc": util::env_expand(config.ipcc.faux_ipcc, config),
-          "port": util::env_expand(config.ipcc?.port, config),
-        }
-    } else {
-        #{
-          "use_ipcc": false,
-        }
-    };
-
+    // Final display of fully resolved conf map if verbose
     if conf.verbose {
-        print("");
-        print(`Parsed conf=${conf}`);
+        print("\nFully resolved configuration map:");
+        print(conf); // Print the final map passed to main logic
     }
 
-    conf
+    return conf; // Return the fully processed configuration map
 }
 
 // Check and organize the images mentioned in the configuration
 fn get_image_info(conf) {
     let images = #{};
 
-    // Get the current CFPA and CMPA in order to verify the RoT test images.
+    // Get the current CFPA and CMPA to verify the RoT test images.
     images["cmpa"] = util::get_cmpa();
     images["cfpa"] = util::get_cfpa();
-    images["keyset"] = util::get_rot_keyset(images["cfpa"]);
+    if images.cmpa == () || images.cfpa == () {
+        print("ERROR: Failed to read CMPA or CFPA from device.");
+        return 1; // Indicate error
+    }
+    images["keyset"] = util::get_rot_keyset(images.cfpa);
+    debug(`info|Detected RoT keyset: ${images.keyset}`);
 
     let gitc = #{};
-    let error = false;
+    let error_found = false; // Use flag instead of returning string
+    let failed_verify_list = []; // Accumulate paths
+
     for branch in ["base", "ut"] {
         images[branch] = #{};
         for image in ["sp", "rot_a", "rot_b", "stage0"] {
             let zip_path = conf[branch][image];
+            if zip_path == () {
+                 // Path was missing or failed expansion in process_cli
+                 print(`Warn: Skipping image check for ${branch}.${image} due to missing path.`);
+                 continue;
+            }
             images[branch][image] = #{"path": zip_path};
-            let current_ar = new_archive(zip_path);
+
+            // Use 'try..catch' if 'new_archive' can throw errors
+            let current_ar = ();
+            let archive_ok = true;
+            try {
+                current_ar = new_archive(zip_path); // Assumes this func exists
+            } catch(err) {
+                print(`ERROR: Failed creating archive object for ${zip_path}: ${err}`);
+                error_found = true;
+                archive_ok = false;
+            }
+            if !archive_ok { continue; } // Skip rest if archive failed
+
             if type_of(current_ar) != "Archive" {
-                print(`Invalid archive path ${zip_path}`);
-                error = true;
+                print(`ERROR: Invalid archive object for path ${zip_path}`);
+                error_found = true;
                 continue;
             }
-            // images[branch][image]["ar"] = current_ar;
-            images[branch][image]["caboose"] = #{};
-            let caboose = current_ar?["caboose"];
-            for key in ["BORD", "GITC", "NAME", "SIGN", "VERS"] {
-                images[branch][image]["caboose"][key] = caboose[key];
-            }
-            if image == "sp" {
-                // TODO: Do some sanity checks to make sure BORD and NAME
-                // are appropriate for the attached SP.
-                images[branch][image]["verified"] = true;
+
+            // Extract caboose info using the custom object's indexer
+            images[branch][image]["caboose"] = #{}; // Initialize caboose map
+            let caboose_obj = current_ar?["caboose"]; // Get CabooseInspector object
+
+            if caboose_obj == () || type_of(caboose_obj) == "()" {
+                // Check if the object itself is null/unit
+                print(`WARN: Could not get caboose object from ${zip_path}`);
+                // Mark as potentially problematic if caboose is essential
+                // error_found = true; // Depending on requirements
+            } else if type_of(caboose_obj) == "map" && caboose_obj?.error != () {
+                 // Handle potential error map returned *instead* of caboose object
+                 print(`WARN: Error getting caboose object from ${zip_path}: ${caboose_obj.error}`);
+                 // error_found = true;
             } else {
-                // All others are RoT images and need signature verification.
-                // stage0, rot_a, and rot_b images are verified against the
-                // current RoT device's configured keys in its CMPA.
-                let verified = current_ar.verify_rot_image(images.cmpa, images.cfpa);
-                images[branch][image]["verified"] = verified;
-                if !verified {
-                    if images?["failed_to_verify"] == () {
-                        images["failed_to_verify"] = [];
+                // Attempt to access keys via the object's indexer
+                let caboose_read_ok = true;
+                for key in ["BORD", "GITC", "NAME", "SIGN", "VERS"] {
+                    let val = ();
+                    // Use try..catch in case indexer fails for a specific key
+                    try {
+                        val = caboose_obj[key];
+                    } catch (err) {
+                         debug(`warn|Failed reading caboose key '${key}' from ${zip_path}: ${err}`);
+                         caboose_read_ok = false;
                     }
-                    // The caller may want to test with bad images or not.
-                    images["failed_to_verify"] += images[branch][image]["path"];
+
+                    if val != () { // Store if value is not null
+                         images[branch][image]["caboose"][key] = val;
+                    } else {
+                         // Optional: log if a specific expected key is missing
+                         // debug(`info|Caboose key '${key}' is null in ${zip_path}`);
+                    }
+                }
+                // Check if essential keys like GITC were actually found after trying
+                if images[branch][image]["caboose"]?.GITC == () {
+                     print(
+                        `WARN: Could not read essential GITC from caboose in ${zip_path}. `+
+                        `Read successful: ${caboose_read_ok}`
+                     );
+                     // If GITC is essential for later checks, mark as error
+                     // error_found = true;
                 }
             }
-            // Reverse map GITC to the set of images built at that commit.
-            let image_gitc = images[branch][image]["caboose"]?["GITC"];
+
+            // Verify RoT images
+            if image != "sp" {
+                let verified = true; // Default ok
+                let verify_error = ();
+                // Use try..catch for verification function
+                try {
+                    verified = current_ar.verify_rot_image(
+                        images.cmpa, images.cfpa
+                    );
+                } catch (err) {
+                    verified = false;
+                    verify_error = err;
+                }
+
+                images[branch][image]["verified"] = verified;
+                if !verified {
+                    failed_verify_list += images[branch][image]["path"];
+                    print(
+                       `WARN: Image signature verification FAILED for: ` +
+                       `${images[branch][image]["path"]}. ` +
+                       `Error: ${verify_error}`
+                    );
+                     // Decide if this is a fatal error - maybe allow testing?
+                     // error_found = true;
+                } else {
+                     debug(
+                        `info|Image signature verified OK for: `+
+                        `${images[branch][image]["path"]}`
+                     );
+                }
+            } else {
+                // SP image doesn't use the same RoT keys for verification here
+                images[branch][image]["verified"] = true; // Assume OK for now
+                // TODO: Add SP-specific BORD/NAME checks if needed
+            }
+
+            // Reverse map GITC to image labels
+            let image_gitc = images[branch][image]?.caboose?["GITC"];
             if image_gitc != () {
                 if gitc?[image_gitc] == () {
                     gitc[image_gitc] = [];
                 }
-
-                // TODO: There should be a warning if the base and ut image
-                // have the same GITC. This is true for some stage0 images
-                // that differ only in packaging but not in the image
-                // themselves. Otherwise it represents a release engineering
-                // failure or a case where the test is not configured properly.
-
+                // TODO: Warn if base and ut images (esp sp/rot) have same GITC.
                 gitc[image_gitc] += [ `${branch}_${image}` ];
             }
-        }
-    }
-    debug(`gitc=${gitc}`);
+        } // end image loop
+    } // end branch loop
+
+    debug(`info|Image GITC reverse map: ${gitc}`);
     images["by_gitc"] = gitc;
+    images["failed_to_verify"] = failed_verify_list; // Store list
+
+    // Report images that failed verification, if any
+    if images.failed_to_verify.len() > 0 {
+         print("WARN: The following RoT images FAILED signature verification:");
+         for path in images.failed_to_verify {
+             print(`  - ${path}`);
+         }
+         // Decide if this constitutes a fatal error for the script
+         // error_found = true; // Uncomment if failure should stop script
+    }
+
     // Display the accumulated information to document this run.
     if conf.verbose {
         print("");
-        print(`## images=${images}`);
+        print(`## images info map=${images}`);
     }
-    if error {
-        return 1;
-    }
-    images
-}
 
-// Check for update in progress.
-// This will normally return () indicating no update in progress.
-// The result is a re-write of the `update-status` return value:
-//
-// #{"Ok":"None"} => ()
-// #{"Ok":{"Complete":[94,4,54,248,142,146,79,45,187,3,82,219,240,213,7,53]}]
-//  => #{"state": "Complete", "id": "5e0436f88e924f2dbb0352dbf0d50735"}
-// #{"Ok":{"InProgress":{"bytes_received":53790,
-//   "id":[51,22,226,160,87,133,65,112,134,62,131,83,143,203,4,155],
-//   "total_size":201896}}}
-//   => #{"state": "InProgress",
-//      "bytes_received": 53790,
-//      "id": "3316e2a057854170863e83538fcb049b",
-//      "total_size":201896
-//      }
-// #{"Err": "some error message"} => #{"Err": "some error message"}
-fn check_update_in_progress(component) {
-    let r = faux_mgs(["update-status", component]);
-    debug(`update_status(${component})=${r}`);
-    if r?.Err != () {
-        debug(`error|failed update-status: ${r}`);
-        return r;
+    // Return 1 if critical errors occurred, otherwise the map
+    if error_found {
+        return 1;
+    } else {
+        return images;
     }
-    if r?.Ok == "None" {
-        debug("update-status ok");
-        return ();
-    }
-    // Status was retrieved
-    if r?.InProgress != () {
-        debug(`update-status: ${r}`);
-        return #{
-            "state": "InProgress",
-            "id":  util::to_hexstring(r.InProgress.id),
-            "bytes_received": r.InProgress.bytes_received,
-            "total_size": r.InProgress.total_size
-        };
-    }
-    if r?.Complete != () {
-        debug(`update-status: ${r}`);
-        return #{
-            "state": "Complete",
-            "id":  util::to_hexstring(r.Complete),
-        };
-    }
-    debug(`error|update-status: ${r}`);
-    return #{"Err": `unknown update-status: ${r}`};
 }
 
 /// Update SP with specified image
@@ -423,101 +620,337 @@ fn update_sp(sp_zip) {
     print("");
     print(`### update_sp: ${sp_zip}`);
 
-    let r = faux_mgs(["update", "sp", "0", sp_zip]);
-    debug(`update result = ${r}`);
-    if r?.ack == "updated" {
-        print("flash_sp updated");
-    } else {
-        debug("error|#### FAILED flash_sp update");
-        print("FAIL\n");
+    // Step 1: Update the SP image
+    //
+    // TODO: Replace with util::update_sp_image(sp_zip)
+    if !util::update_sp_image(sp_zip) {
         return false;
     }
 
-    let r = check_update_in_progress("sp");
-    if r?.Ok != () {
-        print(`ERROR: Update sp did not complete: r=${r}`);
-        print("FAIL\n");
-        return false;
-    }
+    // Step 2: Check status immediately after update (optional)
+    let r_status1 = util::check_update_in_progress("sp");
+    debug(`info|update_sp: SP status after update command: ${r_status1}`);
+    // No action needed based on this status, proceed to reset.
 
-    /*
-    let r = faux_mgs(["component-active-slot", "--persist", "-s", "0", "sp"]);
-    debug(`persist result = ${r}`);
-    if r?["ack"] == () || r.ack != "set" || r.slot != 0 {
-        debug("error|Failed to persist");
-        print("FAIL\n");
-        return false;
+    // Step 3: Reset the SP
+    debug("info|update_sp: Resetting SP to boot new image.");
+    if !util::reset_sp() {
+      return false;
     }
-    */
+    debug("info|update_sp: Waiting for SP to reset...");
 
-    // Reset the SP to boot into the new image.
-    let r = faux_mgs(["reset"]);
-    debug(`faux-mgs reset => ${r}`);
-    if r?.ack != "reset" {
-        debug(`warn|unexpected sp reset response: ${r}`);
-        print("FAIL\n");
-        return false;
-    }
-    sleep(10);
+    // TODO: Use some active check with timeout instead of arbitrary sleep
+    // duration..
+    sleep(10); // Wait for SP to come back online
 
-    let r = check_update_in_progress("sp");
-    if r?.Ok != () {
-        print(`ERROR: Update sp did not complete: r=${r}`);
-        print("");
-        return false;
+    // Step 4: Check status after reset (expecting no update in progress)
+    let r_status2 = util::check_update_in_progress("sp");
+    debug(`info|update_sp: SP status after reset: ${r_status2}`);
+    if r_status2?.Err != () {
+         debug(
+             `error|update_sp: Failed to get SP Update status after reset. ` +
+             `Error: ${r_status2}`
+         );
+         return false;
     }
+    // Check if update is fully cleared (status is '()' from util function)
+    if r_status2 != () {
+         debug(
+             `error|update_sp: SP Update status still shows progress ` +
+             `after reset: Status: ${r_status2}`
+         );
+         return false;
+    }
+    debug("info|update_sp: SP status check after reset passed.");
+
     print(`### SUCCESS update_sp: ${sp_zip}`);
     print("");
     return true;
 }
 
-fn update_rot_hubris(path_a, path_b) {
-    print("");
-    print(`### update_rot_hubris: ${path_a} ${path_b}`);
-    let r = get_rot_active();
-    if r?.error != () {
-        print(`get_rot_active failed: ${rot_active}`);
-        print("");
-        return #{"error": `${rot_active["error"]}`};
-    }
-    let rot_active = r.ok;
 
-    // Assume that A is active
-    let rot_update_slot = 1;
-    let rot_update_image = path_b;
-    if rot_active == 1 {
-        // Nope, B is active. Need to update A.
-        rot_update_slot = 0;
-        rot_update_image = path_a;
-    }
-    debug(`selected: rot_update_slot=${rot_update_slot} rot_update_image=${rot_update_image}`);
-    let r = faux_mgs(["update", "rot", `${rot_update_slot}`, rot_update_image]);
-    debug(`update result = ${r}`);
-    if r?.ack == "updated" {
-        print("SUCCESS");
-    } else {
-        print(`update failed: ${r}`);
-        print("");
-        return false;
-    }
-    let r = faux_mgs(["component-active-slot", "-p", "-s", `${rot_update_slot}`, "rot"]);
-    debug(`persist result = ${r}`);
-    if r?.ack == () || r.ack != "set" || r.slot != rot_update_slot {
-        debug(`error|Failed to persist rot: r=${r}`);
-        print("");
-        return false;
-    }
-    let r = faux_mgs(["reset-component", "rot"]);
-    if r?.ack != "reset" {
-        debug(`error|reset failed: ${r}`);
-        print("");
-        return false;
-    }
-    sleep(5);
-    print(`### SUCCESS update_rot_hubris: updated slot ${rot_update_slot} with ${rot_update_image}`);
-    print("");
-    true
+// --- Local Helper functions for update_rot_hubris ---
+
+fn _rot_log_initial_params(
+    initial_slot, target_slot, image_path, target_label, use_transient_flag
+) {
+    debug(
+        `info|--- RoT Update Operation Start `+
+        `(in upgrade-rollback.rhai) ---`
+    );
+    debug(`info|Target Label: ${target_label}, Use Transient: ${use_transient_flag}`);
+    debug(`info|Initial Active RoT Slot (before this op): ${initial_slot}`);
+    debug(`info|Target RoT Update Slot for this op: ${target_slot}`);
+    debug(`info|Target RoT Image for this op: ${image_path}`);
 }
+
+fn _rot_log_rbi_details(
+    rbi, context_description, initial_slot_before_op,
+    target_update_slot_for_op, use_transient_flag_for_op
+) {
+    debug(
+        `info|RoT Boot Info (${context_description}, ` +
+        `from upgrade-rollback.rhai):`
+    );
+    debug(`    Initial Active Slot (before op): ${initial_slot_before_op}`);
+    debug(`    Target Update Slot (for op): ${target_update_slot_for_op}`);
+    debug(`    Use Transient Flag (for op): ${use_transient_flag_for_op}`);
+    debug(`    Current Active Slot (from RBI): ${rbi.active}`);
+    debug(`    Persistent Pref (from RBI): ${rbi.persistent_boot_preference}`);
+    debug(`    Transient Pref (from RBI): ${rbi.transient_boot_preference}`);
+    debug(`    Pending Persistent Pref (from RBI): ${rbi.pending_persistent_boot_preference}`);
+}
+
+fn _rot_validate_initial_transient_boot_state(
+    rbi, initial_slot_before_op, target_update_slot, target_label
+) {
+    let active_after_first_reset = rbi.active;
+    let p_pref_from_newly_active = rbi.persistent_boot_preference;
+    let t_pref_from_newly_active = rbi.transient_boot_preference;
+    let pp_pref_from_newly_active = rbi.pending_persistent_boot_preference;
+    let is_ok = true;
+    let failure_details = "";
+
+    if active_after_first_reset != target_update_slot {
+        is_ok = false;
+        failure_details +=
+            ` Active slot (${active_after_first_reset}) ` +
+            `is not target (${target_update_slot}).`;
+    }
+    if t_pref_from_newly_active != () {
+        is_ok = false;
+        failure_details +=
+            ` t_pref (${t_pref_from_newly_active}) not null.`;
+    }
+    if pp_pref_from_newly_active != () {
+        is_ok = false;
+        failure_details +=
+            ` pp_pref (${pp_pref_from_newly_active}) not null.`;
+    }
+    if p_pref_from_newly_active != initial_slot_before_op {
+        if target_label == "baseline" {
+            debug(
+                `info|Target '${target_label}': p_pref (${p_pref_from_newly_active}) ` +
+                `differs from original active (${initial_slot_before_op}). ` +
+                `Acceptable for baseline.`
+            );
+        } else {
+            is_ok = false;
+            failure_details +=
+                ` p_pref (${p_pref_from_newly_active}) not original active ` +
+                `(${initial_slot_before_op}).`;
+        }
+    }
+    if !is_ok {
+        debug(
+            `error|Initial transient boot state validation failed for ` +
+            `'${target_label}'.${failure_details} RBI=${rbi}`
+        );
+    }
+    return is_ok;
+}
+
+fn _rot_ensure_persistence_after_transient_boot(
+    rbi_after_first_boot, target_update_slot, target_label
+) {
+    // Calls util::set_rot_boot_preference
+    let active_after_first_reset = rbi_after_first_boot.active;
+    let p_pref_from_newly_active = rbi_after_first_boot.persistent_boot_preference;
+    let set_persistent_needed = true;
+
+    if target_label == "baseline" {
+        if p_pref_from_newly_active == active_after_first_reset {
+            debug(
+                `info|Target '${target_label}': p_pref already matches ` +
+                `active. No explicit set_persistent needed.`
+             );
+            set_persistent_needed = false;
+        } else {
+            debug(
+                `info|Target '${target_label}': p_pref differs from active. ` +
+                `Will align by setting persistent.`
+            );
+        }
+    }
+
+    if set_persistent_needed {
+        let reason = if target_label == "baseline" {
+            "Align for baseline."
+        } else {
+            "Standard transient-to-persistent."
+        };
+        debug(
+            `info|Setting persistent pref for slot ${target_update_slot} ` +
+            `('${target_label}'). Reason: ${reason}`
+        );
+        // Call the function moved to util.rhai
+        if !util::set_rot_boot_preference(
+            target_update_slot, false, target_label // false -> use '-p'
+        ) {
+            debug(
+                `error|util::set_rot_boot_preference failed for ` +
+                `'${target_label}', slot ${target_update_slot}.`
+            );
+            return false;
+        }
+        debug(
+            `info|Successfully called util::set_rot_boot_preference `+
+            `for slot ${target_update_slot} ('${target_label}').`
+        );
+    }
+    return true;
+}
+
+fn _rot_validate_final_persistent_boot_state(
+    final_rbi, target_update_slot, target_label
+) {
+    let final_active_slot = final_rbi.active;
+    let final_p_pref = final_rbi.persistent_boot_preference;
+
+    debug(
+        `info|RoT boot info after final reset (target '${target_label}'): ` +
+        `active=${final_active_slot}, p_pref=${final_p_pref}`
+    );
+
+    if final_active_slot != target_update_slot {
+        debug(
+            `error|Target '${target_label}' NOT on persistently set slot. `+
+            `Expected ${target_update_slot}, got ${final_active_slot}. ` +
+            `RBI=${final_rbi}`
+         );
+        return false;
+    }
+    if final_p_pref != target_update_slot {
+         debug(
+             `warn|Target '${target_label}': final p_pref is ${final_p_pref}, ` +
+             `not ${target_update_slot}. May be acceptable for baseline.`
+         );
+    }
+    debug(
+        `info|Successfully booted '${target_label}' on persistently `+
+        `set slot ${final_active_slot}.`
+    );
+    return true;
+}
+
+fn _rot_validate_direct_persistent_boot_state(
+    rbi, target_update_slot, target_label
+) {
+    if rbi.active != target_update_slot {
+        debug(
+            `error|Unexpected active slot ${rbi.active} `+
+            `(expected ${target_update_slot}) after non-transient update ` +
+            `of '${target_label}'. RBI=${rbi}`
+        );
+        return false;
+    }
+    return true;
+}
+// --- End of Local Helper functions ---
+
+// Refactored main update_rot_hubris function
+fn update_rot_hubris(path_a, path_b, use_transient, target_label) {
+    print(""); // Keep some top-level progress indicators
+    print(
+        `### update_rot_hubris (target: ${target_label}, ` +
+        `use_transient: ${use_transient})`
+    );
+    print(`    Image A: ${path_a}`);
+    print(`    Image B: ${path_b}`);
+
+    let r_get_active = get_rot_active();
+    if r_get_active?.error != () {
+        print(`ERROR: get_rot_active failed: ${r_get_active.error}`);
+        return false;
+    }
+    let initial_slot_before_op = r_get_active.ok;
+    let target_update_slot_for_op = if initial_slot_before_op == 0 { 1 } else { 0 };
+    let target_update_image_for_op =
+        if target_update_slot_for_op == 0 { path_a } else { path_b };
+
+    _rot_log_initial_params(
+        initial_slot_before_op, target_update_slot_for_op,
+        target_update_image_for_op, target_label, use_transient
+    );
+
+    // Call util function for image update
+    if (!util::update_rot_image_file(
+        target_update_slot_for_op, target_update_image_for_op, target_label
+    )) {
+        return false;
+    }
+
+    // Call util function to set boot preference
+    if (!util::set_rot_boot_preference(
+        target_update_slot_for_op, use_transient, target_label
+    )) {
+        return false;
+    }
+
+    // Call util function to reset RoT and get RBI
+    let rbi_after_first_reset = util::reset_rot_and_get_rbi(
+        "after initial preference set", target_label
+    );
+    // Check if util function returned an error map
+    if rbi_after_first_reset?.error != () {
+        return false; // Error already logged by util function
+    }
+    _rot_log_rbi_details(
+        rbi_after_first_reset, "after first reset", initial_slot_before_op,
+        target_update_slot_for_op, use_transient
+    );
+
+    if use_transient {
+        // --- Transient Boot Flow ---
+        // Validate state after first transient boot
+        if (!_rot_validate_initial_transient_boot_state(
+            rbi_after_first_reset, initial_slot_before_op,
+            target_update_slot_for_op, target_label
+        )) {
+            return false;
+        }
+        // Ensure the slot is made persistent
+        if (!_rot_ensure_persistence_after_transient_boot(
+            rbi_after_first_reset, target_update_slot_for_op, target_label
+        )) {
+            return false;
+        }
+
+        // Final reset to apply persistence and final validation
+        let final_rbi = util::reset_rot_and_get_rbi(
+            "after setting persistence", target_label
+        );
+        if final_rbi?.error != () {
+            return false;
+        }
+        _rot_log_rbi_details(
+            final_rbi, "after final reset (persistence check)",
+            initial_slot_before_op, target_update_slot_for_op, use_transient
+        );
+
+        if (!_rot_validate_final_persistent_boot_state(
+            final_rbi, target_update_slot_for_op, target_label
+        )) {
+            return false;
+        }
+    } else {
+        // --- Direct Persistent Boot Flow ---
+        if (!_rot_validate_direct_persistent_boot_state(
+            rbi_after_first_reset, target_update_slot_for_op, target_label
+        )) {
+            return false;
+        }
+    }
+
+    print(
+        `### SUCCESS update_rot_hubris (target: ${target_label}): ` +
+        `successfully updated and booted slot ${target_update_slot_for_op} ` +
+        `with ${target_update_image_for_op}`
+    );
+    print("");
+    return true;
+}
+
 
 fn get_caboose(component, slot) {
     let caboose = #{};
@@ -527,109 +960,225 @@ fn get_caboose(component, slot) {
             caboose[key] = value;
         }
     }
-    caboose
+    return caboose;
 }
 
 fn reset_sp_and_rot() {
     // The disable watchdog should not be required for the SP.
     // The STLINK needs to be powered down.
-    // e.g. not:
-    //   faux_mgs(["reset-component", "sp", "--disable-watchdog"]);
+    debug("info|reset_sp_and_rot: Beginning reset sequence for RoT and SP.");
     for params in [["rot", 3], ["sp", 5]] {
-        print(`### Reset ${params[0]}`);
-        let r = faux_mgs(["reset-component", params[0]]);
-        if r?.error != () {
-            return #{"error": `${r}`};
+        let component_to_reset = params[0];
+        let sleep_duration = params[1];
+
+        print(`### Reset ${component_to_reset}`);
+
+        if !util::reset_component(component_to_reset) {
+            // util::reset_component will have logged the specific error
+            return #{
+                "error": `Failed to reset component '${component_to_reset}'.`
+            };
         }
-        sleep(params[1]);
+
+        debug(
+            `info|reset_sp_and_rot: Successfully reset component ` +
+            `'${component_to_reset}'. Sleeping for ${sleep_duration}s.`
+        );
+        sleep(sleep_duration);
     }
-    #{"ok": ()}
+    debug("info|reset_sp_and_rot: RoT and SP reset sequence complete.");
+    return #{"ok": ()};
 }
 
 fn get_rot_active() {
+    // fetch RoT boot info using util function
+    let rbi = util::rot_boot_info();
+    // Check if util function returned error map
+    if rbi?.error != () {
+        return #{"error": `Cannot get RBI: ${rbi.error}`};
+    }
+    // Ensure 'active' key exists and is not null
+    let active_slot = rbi?.active;
+    if active_slot == () {
+         return #{"error": `Cannot determine active RoT slot from RBI: ${rbi}`};
+    }
+    return #{"ok": active_slot};
+}
+
+fn rot_supports_transient_boot_preference() {
+    debug(`info|Checking if current RoT supports transient boot preference command...`);
+    // First, determine the currently active RoT slot
+    let r_boot_info = get_active_and_next_rot_boot_preference(); // Assumes this local helper is suitable
+    if r_boot_info?.error != () {
+        debug(
+            `error|rot_supports_transient_boot_preference: Cannot determine current RoT ` +
+            `active slot to test transient support. Error: ${r_boot_info.error}`
+        );
+        return false;
+    }
+
+    let active_slot = r_boot_info.ok.active;
+    // The 'next' slot isn't strictly needed for this test, only 'active'
+    debug(
+        `info|rot_supports_transient_boot_preference: Current active RoT slot is ${active_slot}. ` +
+        `Attempting to set transient preference on this slot as a test.`
+    );
+
+    // Call the existing util function to attempt to set the transient preference.
+    // The 'target_label' can be specific to indicate this is a test call.
+    // 'true' for use_transient_flag to set the '--transient' option.
+    if util::set_rot_boot_preference(active_slot, true, "transient_support_test") {
+        debug(
+            `info|rot_supports_transient_boot_preference: ` +
+            `Successfully executed command to set transient boot preference. ` +
+            `Assuming feature is supported.`
+        );
+        // Note: This command, if successful, *will* set the transient preference.
+        // The original script did not appear to revert this test-set if successful.
+        // If this function should be purely a check without side effects,
+        // a subsequent call to clear/revert the preference would be needed.
+        // For now, this matches the implied behavior of the original script.
+        return true;
+    } else {
+        debug(
+            `warn|rot_supports_transient_boot_preference: ` +
+            `Command to set transient boot preference failed for slot ${active_slot}. ` +
+            `Assuming feature is not supported.`
+        );
+        return false;
+    }
+}
+
+// ... (rest of upgrade-rollback.rhai) ...
+
+// Determine the next active bank preference based on RBI.
+fn get_active_and_next_rot_boot_preference() {
     // fetch RoT boot info
     let rbi = util::rot_boot_info();
-    if rbi == () {
-        return #{"error": "Cannot determine active RoT flash bank"};
+    if rbi?.error != () {
+        return #{"error": `Cannot get RBI: ${rbi.error}`};
     }
-    #{"ok": rbi?["active"]}
+    if rbi?.active == () {
+        return #{"error": `Invalid RBI structure from util::rot_boot_info: ${rbi}`};
+    }
+
+    let active = rbi.active;
+    let next_preferred = active; // Start assuming current active is preferred
+
+    // Check pending persistent preference first
+    let pend_persist = rbi.pending_persistent_boot_preference;
+    if pend_persist != () {
+        next_preferred = pend_persist;
+        debug(`info|Next boot determined by pending persistent pref: ${next_preferred}`);
+    } else {
+        // If no pending persistent, check transient preference
+        let transient_select = rbi.transient_boot_preference;
+        if transient_select != () {
+             next_preferred = transient_select;
+             debug(`info|Next boot determined by transient pref: ${next_preferred}`);
+        } else {
+            // If no transient, check persistent preference
+            let persistent_pref = rbi.persistent_boot_preference;
+            if persistent_pref != () {
+                next_preferred = persistent_pref;
+                debug(`info|Next boot determined by persistent pref: ${next_preferred}`);
+            } else {
+                debug(
+                    `info|No explicit preference set in RBI. ` +
+                    `Next boot likely current active: ${active}`
+                );
+            }
+        }
+    }
+    return #{"ok": #{"active": active, "next": next_preferred}};
 }
+
 
 // Check if SP and RoT images match desired branches.
-// if no issues getting info, returns
-//   ${"ok": #{"sp": bool, "rot": bool}}
-// on error, returns one or both of "sp" and "rot" error messages:
-//   ${"error": #{"sp": message, "rot": message}}
 fn image_check(branch, images) {
-    let ok = #{};
+    let ok = #{ "sp": false, "rot": false }; // Initialize
     let error = #{};
-    // debug(`image_check: images.by_gitc=${images.by_gitc}`);
 
-    let need_flash = sp_needs_flashing(`${branch}_sp`, images.by_gitc);
-    if need_flash?.error != () {
-        print(`Error: ${need_flash}`);
-        error["sp"] = `${need_flash}`;
+    let sp_needs_flash_result = sp_needs_flashing(
+        `${branch}_sp`, images.by_gitc
+    );
+    if sp_needs_flash_result?.error != () {
+        print(`Error checking SP image: ${sp_needs_flash_result.error}`);
+        error["sp"] = `${sp_needs_flash_result.error}`;
     } else {
-        ok["sp"] = need_flash.ok;
+        ok["sp"] = sp_needs_flash_result.ok;
     }
 
-    let need_flash = rot_needs_flashing(`${branch}`, images.by_gitc);
-    if need_flash?.error != () {
-        debug(`error|${need_flash}`);
-        error["rot"] = `${flash_rot}`;
+    let rot_needs_flash_result = rot_needs_flashing(
+        `${branch}`, images.by_gitc
+    );
+    if rot_needs_flash_result?.error != () {
+        debug(`error checking RoT image: ${rot_needs_flash_result.error}`);
+        error["rot"] = `${rot_needs_flash_result.error}`;
     } else {
-        ok["rot"] = need_flash.ok;
+        ok["rot"] = rot_needs_flash_result.ok;
     }
-    if ok.len() == 2 {
-        #{"ok": ok}
+
+    if error.len() > 0 {
+        // Return error map if any component check failed
+        return #{"error": error};
     } else {
-        #{"error": error}
+        // Return map indicating which components need flashing
+        return #{"ok": ok};
     }
 }
 
-fn sp_needs_flashing(name, gitc) {
+fn sp_needs_flashing(target_image_label, gitc_map) {
     let sp_gitc = util::caboose_value("sp", "active", "GITC");
+    if sp_gitc == () {
+         return #{"error": "Could not read active SP GITC via caboose."};
+    }
     print(`### SP is running GITC=${sp_gitc}`);
-    debug(`gitc=${gitc}`);
-    debug(`gitc?[${sp_gitc}]=${gitc?[sp_gitc]}`);
-    let known_gitc = gitc?[sp_gitc];
-    debug(`known_gitc=${known_gitc}`);
-    if known_gitc == () {
-        print("    the SP is not running a BASE or UNDER-TEST image.");
-        #{"ok": true}
-    } else  if name in known_gitc {
-        print(`    ${name} IS in ${known_gitc}`);
-        #{"ok": false}
+
+    let known_images_for_this_gitc = gitc_map?[sp_gitc];
+    debug(`info|Known images for SP GITC ${sp_gitc}: ${known_images_for_this_gitc}`);
+
+    if known_images_for_this_gitc == () {
+        print("    SP GITC is not from known BASE or UNDER-TEST images.");
+        return #{"ok": true}; // Needs flashing
+    } else if target_image_label in known_images_for_this_gitc {
+        print(`    ${target_image_label} IS in ${known_images_for_this_gitc}`);
+        return #{"ok": false}; // Does not need flashing
     } else {
-        print(`    ${name} IS NOT in ${known_gitc}`);
-        #{"ok": true}
+        print(`    ${target_image_label} IS NOT in ${known_images_for_this_gitc}`);
+        return #{"ok": true}; // Needs flashing
     }
 }
 
-fn rot_needs_flashing(branch, gitc) {
-    let rot_active = get_rot_active();
-    if rot_active?.error != () {
-        return #{"error": `get_rot_active: ${rot_active}`};
+fn rot_needs_flashing(target_branch_prefix, gitc_map) {
+    let rot_active_result = get_rot_active();
+    if rot_active_result?.error != () {
+        return #{"error": `Cannot get active RoT slot: ${rot_active_result.error}`};
     }
-    let rot_active = rot_active.ok;
+    let rot_active_slot = rot_active_result.ok;
 
-    let branch_rot_name = `${branch}_rot_a`;
-    if rot_active == 1 {
-        branch_rot_name = `${branch}_rot_b`;
+    let target_image_label = `${target_branch_prefix}_rot_a`;
+    if rot_active_slot == 1 {
+        target_image_label = `${target_branch_prefix}_rot_b`;
     }
 
-    let rot_gitc = util::caboose_value("rot", `${rot_active}`, "GITC");
-    print(`RoT is running GITC=${rot_gitc}`);
-    debug(`gitc[${rot_gitc}]=${gitc?[rot_gitc]}`);
-    let known_gitc = gitc?[rot_gitc];
-    if known_gitc == () {
-        debug("info|the RoT is not running a BASE or UNDER-TEST image.");
-        #{"ok": true}
-    } else if branch_rot_name in known_gitc {
-        debug(`info|${branch_rot_name} IS in ${known_gitc}`);
-        #{"ok": false}
+    let rot_gitc = util::caboose_value("rot", `${rot_active_slot}`, "GITC");
+     if rot_gitc == () {
+         return #{"error": `Could not read RoT GITC for slot ${rot_active_slot}.`};
+    }
+    print(`RoT is running GITC=${rot_gitc} on active slot ${rot_active_slot}`);
+
+    let known_images_for_this_gitc = gitc_map?[rot_gitc];
+    debug(`info|Known images for RoT GITC ${rot_gitc}: ${known_images_for_this_gitc}`);
+
+    if known_images_for_this_gitc == () {
+        debug("info|RoT GITC is not from known BASE or UNDER-TEST images.");
+        return #{"ok": true}; // Needs flashing
+    } else if target_image_label in known_images_for_this_gitc {
+        debug(`info|${target_image_label} IS in ${known_images_for_this_gitc}`);
+        return #{"ok": false}; // Does not need flashing
     } else {
-        debug(`info|${branch_rot_name} IS NOT in ${known_gitc}`);
-        #{"ok": true}
+        debug(`info|${target_image_label} IS NOT in ${known_images_for_this_gitc}`);
+        return #{"ok": true}; // Needs flashing
     }
 }
