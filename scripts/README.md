@@ -1,138 +1,176 @@
 # Scripting in faux-mgs
 
 The `faux-mgs` utility is useful for testing the APIs and protocols used
-between the control plane and service processor.
+between the control plane and service processor (SP) on Oxide hardware.
 
-The choices for testing over multiple messages with behavior conditional
-on results against real hardware becomes more challenging.
+Testing complex scenarios involving multiple commands, conditional logic based
+on hardware state, and interactions across resets can be challenging when
+using individual `faux-mgs` commands manually or via simple shell scripts.
 
-`Faux-mgs` itself can be extended to include any new command or
-test. But for one-off scripting, personal development bench tests, or
-other contexts, such as tying a CI test to a certain set of hardware,
-the mix of scripts and faux-mgs commands can quickly become unwieldy.
+While `faux-mgs` itself can be extended with new commands in Rust, this
+directory provides an alternative approach using the embedded **Rhai**
+scripting language to automate test sequences and workflows.
 
-`Faux-mgs` supports a `--json pretty` output format for all commands. So,
-using any scripting language, including bash, becomes much easier with
-the language's JSON libraries or use of the `jq` program.
+## Benefits of Rhai Scripting
 
-Here, another option is provided; the embedded Rhai scripting language
-is used to extend `faux-mgs`.
+* **Stateful Interaction:** Scripts maintain the connection (discovery, etc.)
+    to the SP across multiple command invocations within the same `faux-mgs`
+    process, leading to faster execution compared to separate calls.
+* **Structured Data:** Command output (using the required `--json=pretty`
+    internal format) is automatically available to scripts as native Rhai maps
+    or other types, simplifying data extraction and conditional logic.
+* **Portability:** Test logic is contained within Rhai scripts, which are
+    as portable as the `faux-mgs` binary itself.
+* **Multi-Target Execution:** Scripts can leverage `faux-mgs`'s ability to
+    run against multiple SPs simultaneously by providing multiple `--target`
+    arguments to `faux-mgs`.
+* **Extensibility:** Provides access to file system, environment variables,
+    and time functions within the script.
 
-The JSON output from `Faux-mgs` means that all commands already produce
-an easy to parse output format. That format is easily translated to a Rhai
-`map`.
+## Rhai Integration Details
 
-The `clap` parser used by `faux-mgs` isn't limited to parsing the `argv`
-from the OS command line interface. It can also be called internal to
-`faux-mgs` on an arbitrary string array.
+* **Entry Point:** Rhai scripts must define a `main()` function that returns
+    an integer (`fn main() -> i64`), typically `0` for success and non-zero
+    for failure.
+* **Available Globals:** The following globals are available within the
+    script's scope:
+    * `argv`: An array of string arguments passed to the script after `--`
+        on the `faux-mgs` command line (e.g., `["script_name", "arg1", ...]`)
+    * `interface`: The value of the `faux-mgs --interface` argument (string).
+    * `reset_watchdog_timeout_ms`: The configured watchdog timeout (integer).
+    * `rbi_default`: The highest known RoT Boot Info version (integer string).
+    * `script_dir`: The canonical path to the directory containing the
+        main script file (string).
+* **Extra Rhai Packages:** The following packages are enabled:
+    * `rhai_env::EnvironmentPackage`: Access user environment variables (`env`, `envs`).
+    * `rhai_fs::FilesystemPackage`: Access the file system (`open_file`, `path`, etc.).
+    * `rhai_chrono::ChronoPackage`: Standard time/date functions (`timestamp`, `datetime_local`, `sleep`).
+* **Logging:** The standard Rhai `debug()` function is routed to the `faux-mgs`
+    logging system (`slog`). Prefixing the message with `"level|"` (e.g.,
+    `"warn|Message"`, `"info|Message"`, `"error|Message"`, `"trace|Message"`)
+    logs at the corresponding level. Unprefixed messages default to `info`.
+* **Custom Functions/Types (Built-in):** Core functions provided by the
+    `faux-mgs` Rust integration:
+    * `faux_mgs(["arg0", .., "argN"]) -> map`: Runs any `faux-mgs` command
+        internally (using `--json=pretty`) and returns the result as a Rhai map.
+        *Do not call this directly in test scripts; use wrappers from `util.rhai`.*
+    * `new_archive(path) -> ArchiveInspector`: Loads a Hubris archive (.zip).
+    * `ArchiveInspector[<zip_path>]`: Access files within the archive (returns
+        string/blob based on extension). Use `.caboose` property to get a
+        `CabooseInspector`.
+    * `ArchiveInspector.verify_rot_image(cmpa_blob, cfpa_blob) -> bool`:
+        Verifies RoT image signature against provided CMPA/CFPA blobs.
+    * `CabooseInspector[<TAG>]`: Access caboose tags (e.g., `GITC`, `VERS`).
+    * `json_to_map(string) -> map`: Converts a JSON string to a Rhai map.
+    * `system(["cmd", .., "argN"]) -> map`: Runs an external OS command
+        (no shell expansion) and returns `#{ exit_code: i64, stdout: str, stderr: str }`.
+        *Use with caution.*
 
-This standardized command I/O means that the interpreter integration
-does not have to be aware of any particular `faux-mgs` command. The
-exception being itself in order to prevent recursive calls.
+## Utility Script (`scripts/util.rhai`)
 
-Nice attributes:
-  - Faster, because the "connection" (discovery, etc.) to the SP is
-    reused between commands and multiple commands are run from the same
-    faux-mgs process.
-  - Command output is made available to scripts in a Rhai native format
-  - the script is as portable as `faux-mgs`
-  - The feature of faux-mgs of being able to run the same command
-    against multiple SPs means that a script can also be run that way.
+Common helper functions, constants, and wrappers around direct `faux_mgs` calls
+are placed in `scripts/util.rhai`. Scripts should import this using:
 
-## Rhai Integration
+```rhai
+import `${script_dir}/util` as util;
+```
 
-Rhai calls the script's `main() -> i64 {}`.
+### Key utilities provided:
 
-### Globals available to the script are the:
+-   **Constants:** `ROT_FLASH_PAGE_SIZE`.
+-   **Formatting:** `to_hexstring`, `cstring_to_string`, `array_to_mac`.
+-   **Data Handling:** `env_expand`, `array_to_blob`, `ab_to_01`.
+-   **Hardware Info:** `get_cmpa`, `get_cfpa`, `get_rot_keyset`, `state`,
+    `caboose_value`, `get_device_cabooses`.
+-   **`faux_mgs` Wrappers:**
+    -   `rot_boot_info()`: Gets formatted RoT Boot Info.
+    -   `check_update_in_progress(component)`: Checks SP/RoT update status.
+    -   `update_rot_image_file(slot, path, label)`: Updates RoT image.
+    -   `set_rot_boot_preference(slot, use_transient, label)`: Sets RoT pref.
+    -   `reset_rot_and_get_rbi(desc, label)`: Resets RoT and gets RBI.
+    -   `update_sp_image(path)`: Updates SP image.
+    -   `reset_sp()`: Resets SP.
+    -   *(More wrappers can be added for other commands like `update-abort`,*
+        *`reset-component`, etc.)*
+-   **Argument Parsing:** `getopts(argv, options_string)`: Parses script arguments.
 
-  - `argv` array of string arguments that trail the `clap`/OS CLI `rhai` command.
-  - `interface` the value of the `faux-mgs` `--interface` argument.
-  - `reset_watchdog_timeout_ms`
-  - `rbi_default` is RotBootInfo::HIGHEST_KNOWN_VERSION
-  - `script_dir` is the canonical path to the directory of the main
-     script file.
+## Example Script (`scripts/upgrade-rollback.rhai`)
 
-### Extra Rhai Packages used include:
+This script automates testing firmware upgrades and subsequent rollbacks between
+two specified sets of firmware builds (a "baseline" and an "under-test" version).
 
-  - rhai_env::EnvironmentPackage - user environment variables
-  - rhai_fs::FilesystemPackage - file system access
-  - [rhai_chrono::ChronoPackage](https://github.com/iganev/rhai-chrono) - standard time formats.
+### Configuration:
 
-### Modified Rhai behavior
-  - The `debug("message")` function is routed to the faux-mgs slog logging.
-    Prefixing a message with "crit|", "trace|", "error|", "warn|", "error|", or "debug|"
-    will log at that corresponding level. Leaving off the prefix or using some other
-    prefix will log at the debug level.
+-   Uses `scripts/targets.json` to define paths to firmware repositories,
+    specific image zip files, board names, and potentially other settings like
+    IPCC or power control commands.
+-   Supports `${VAR}` expansion in paths within `targets.json`, referencing
+    environment variables or other keys within the JSON file itself via
+    `util::env_expand`.
 
-### Custom functions:
+### Key Command-Line Options:
 
-  - faux_mgs(["arg0", .., "argN"]) -> #{} // Run any faux-mgs command -> map
-  - RawHubrisArchive
-      - new_archive(path) -> ArchiveInspector // RawHubrisArchive inspection
-      - indexer (get via var["index"]) for ArchiveInspector
-          - zip path name to blob or string as appropriate according to
-            internal rules (e.g. .bin, elf/*, etc are blobs)
-  - verify_rot_image(image_blob, cmpa, cfpa) -> bool // verify RoT image signature
-  - json_to_map(string) -> #{} // convert any JSON to a Rhai map
-  - system(["argv0", .., "argvN"]) -> #{"exit_code": i64, "stdout": str, "stderr": str}
-      - run any command. Note: no shell expansion, this is std::process::Command
+-   `-c <path>`: **Required.** Path to the JSON configuration file
+    (e.g., `scripts/targets.json`).
+-   `-t`: Enable testing using the RoT "transient boot preference" feature.
+    The script attempts to use this mechanism if the active RoT supports it
+    and handles differences in behavior when targeting older "baseline" RoTs
+    that may not fully support the feature.
+-   `-v`: Verbose output (enables more `debug("info|...")` messages).
+-   `-h`: Show help message.
+-   `[path0]`: Optional positional argument to override the `base_repo` path
+    from the config file.
+-   `[path1]`: Optional positional argument to override the `ut_repo` path
+    from the config file.
 
-### Script utility functions
+### Example Invocation:
 
-See `scripts/util.rhai` for additional utility functions.
-
-## Running a script
-
-In this example, we use bash wrapper "FM" to save typing.
-`faux-mgs` command against a particular SP (Grapefruit).
+Assumes `faux-mgs` is built with `rhaiscript` feature enabled.
 
 ```bash
-#!/usr/bin/bash
-if [[ "${1:-}" == "--too-quick" ]]
-then
-  shift
-  # too fast for update to succeed. Used to trigger update watchdog.
-  MAXATTEMPTS=5
-  MAXATTEMPTS_RESET=1
-  PER_ATTEMPT_MS=2000
-else
-  # Normal values
-  MAXATTEMPTS=5
-  MAXATTEMPTS_RESET=30
-  # PER_ATTEMPT_MS=2000
-  # 2165 is on the edge
-  PER_ATTEMPT_MS=2200
-fi
+# Set environment variable used in targets.json for the 'under-test' repo
+export UT_WORKTREE=my-feature-branch
 
-cargo -q run --bin faux-mgs --features=rhaiscript -- \
-  --log-level=crit \
+# Run faux-mgs, targeting the script, providing config and transient flag,
+# and overriding repo paths via positional arguments after '--'
+# Ensure the shell expands UT_WORKTREE in the path argument
+cargo run --bin faux-mgs --features=rhaiscript -- \
   --interface=enp5s0 \
-  --json=pretty \
-  --max-attempts=${MAXATTEMPTS} \
-  --max-attempts-reset=${MAXATTEMPTS_RESET} \
-  --per-attempt-timeout-millis=${PER_ATTEMPT_MS} \
-  "$@"
+  --log-level=info \
+  rhai scripts/upgrade-rollback.rhai \
+  -c scripts/targets.json -t -- \
+  $HOME/Oxide/src/hubris/master \
+  $HOME/Oxide/src/hubris/${UT_WORKTREE}
+
+# Check exit code
+echo $?
 ```
 
+## Running Scripts Generally
 
-A `getops` utility function provides command line parsing within
-the script.
-
-### An update/rollback test
-
-For the upgrade-rollback script, a JSON configuration file supplies
-paths or other parameters needed to configure the script.
-
-For convenience, it is assumed that there are two repos with there
-respective Grapefruit SP and RoT images built.
-
-#### Running update-rollback between the master branch and your new code:
+Use the `rhai` subcommand of `faux_mgs`:
 
 ```bash
-BASELINE=$HOME/Oxide/src/hubris/master
-UNDER_TEST=$HOME/Oxide/src/hubris/my-new-branch
-./FM rhai scripts/upgrade-rollback.rhai -- \
-    -c scripts/targets.json ${BASELINE} ${UNDER_TEST}
+faux-mgs [faux-mgs options] rhai <script_path.rhai> [script options] -- [script arguments]
 ```
 
-See the scripts themselves for further information.
+-   **`faux-mgs options`**: Standard options like `--interface`, `--target`,
+    `--log-level`. Note that `--json=pretty` is used *internally* for commands
+    called via the `faux_mgs()` function within Rhai, but you might set
+    `--log-level` for the overall execution.
+-   **`script_path.rhai`**: Path to the main Rhai script.
+-   **`script options`**: Currently none defined globally, but scripts might parse
+    their own using `util::getopts`.
+-   **`--`**: Separates `faux_mgs` options from arguments intended for the script.
+-   **`script arguments`**: Arguments passed to the script's `argv` global array.
+
+## Contributing / TODO
+
+These scripts are evolving. Key areas for improvement include:
+
+-   Refactoring remaining direct `faux_mgs` calls into `util.rhai`.
+-   Improving error handling consistency in `util.rhai`.
+-   Adding more tests and validation (config schema, script unit tests).
+-   Implementing power control features via `system()`.
+-   General code cleanup and documentation enhancements.
+    (See `scripts/TODO.md` for more details).
