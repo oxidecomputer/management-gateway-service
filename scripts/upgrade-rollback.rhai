@@ -615,59 +615,90 @@ fn get_image_info(conf) {
     }
 }
 
-/// Update SP with specified image
+/// Updates SP with specified image, resets, and polls for readiness
+/// and clean update status.
+/// Uses util::update_sp_image, util::reset_sp, and util::check_update_in_progress.
 fn update_sp(sp_zip) {
     print("");
     print(`### update_sp: ${sp_zip}`);
 
-    // Step 1: Update the SP image
-    //
-    // TODO: Replace with util::update_sp_image(sp_zip)
-    if !util::update_sp_image(sp_zip) {
+    // Step 1: Call util function to update the SP image
+    if (!util::update_sp_image(sp_zip)) {
+        // Error already printed by util function
         return false;
     }
+    debug(`info|update_sp: SP update command acknowledged by SP.`);
 
-    // Step 2: Check status immediately after update (optional)
+    // Step 2: Check status immediately after update (optional, for logging)
+    // This status might still show "Complete" or even "InProgress" if the
+    // SP hasn't fully processed the end of the update yet.
     let r_status1 = util::check_update_in_progress("sp");
-    debug(`info|update_sp: SP status after update command: ${r_status1}`);
+    debug(`info|update_sp: SP status immediately after update command: ${r_status1}`);
     // No action needed based on this status, proceed to reset.
 
-    // Step 3: Reset the SP
+    // Step 3: Call util function to reset the SP
     debug("info|update_sp: Resetting SP to boot new image.");
-    if !util::reset_sp() {
-      return false;
+    if (!util::reset_sp()) {
+        // Error already printed by util function
+        return false;
     }
-    debug("info|update_sp: Waiting for SP to reset...");
+    debug("info|update_sp: SP reset acknowledged. Starting polling for readiness.");
 
-    // TODO: Use some active check with timeout instead of arbitrary sleep
-    // duration..
-    sleep(10); // Wait for SP to come back online
+    // Step 4: Poll for SP readiness and clean update status
+    let max_poll_attempts = 15; // e.g., 15 attempts
+    let poll_interval_secs = 1;  // e.g., 1 seconds
+    let sp_ready_and_clean = false;
 
-    // Step 4: Check status after reset (expecting no update in progress)
-    let r_status2 = util::check_update_in_progress("sp");
-    debug(`info|update_sp: SP status after reset: ${r_status2}`);
-    if r_status2?.Err != () {
-         debug(
-             `error|update_sp: Failed to get SP Update status after reset. ` +
-             `Error: ${r_status2}`
-         );
-         return false;
+    for attempt in 1..=max_poll_attempts {
+        debug(
+            `info|update_sp: Polling SP readiness, attempt ${attempt}` +
+            `/${max_poll_attempts}...`
+        );
+        let sp_status = util::check_update_in_progress("sp");
+
+        if sp_status == () {
+            // This is the desired state: SP is responsive and no update pending.
+            debug("info|update_sp: SP is ready and no update in progress.");
+            sp_ready_and_clean = true;
+            break; // Exit polling loop
+        } else if sp_status?.Err != () {
+            // An error occurred trying to get status (e.g., SP not responsive yet)
+            debug(
+                `warn|update_sp: Readiness check attempt ${attempt}: ` +
+                `Error getting SP status: ${sp_status}. Retrying after sleep.`
+            );
+        } else {
+            // SP is responsive, but an update is still marked as InProgress or Complete.
+            // This is unexpected after a reset intended to clear it.
+            debug(
+                `warn|update_sp: Readiness check attempt ${attempt}: ` +
+                `SP reported unexpected update status: ${sp_status}. ` +
+                `Expected clean state (none). Retrying after sleep.`
+            );
+        }
+
+        // Wait before next attempt, unless it's the last one
+        if attempt < max_poll_attempts {
+            sleep(poll_interval_secs);
+        }
     }
-    // Check if update is fully cleared (status is '()' from util function)
-    if r_status2 != () {
-         debug(
-             `error|update_sp: SP Update status still shows progress ` +
-             `after reset: Status: ${r_status2}`
-         );
-         return false;
-    }
-    debug("info|update_sp: SP status check after reset passed.");
 
+    if (!sp_ready_and_clean) {
+        debug(
+            `error|update_sp: SP did not become ready with a clean update state ` +
+            `after reset and ${max_poll_attempts} attempts.`
+        );
+        print(
+            `FAIL - SP did not successfully reset and clear update status.\n`
+        );
+        return false; // SP failed to come up cleanly
+    }
+
+    debug("info|update_sp: SP readiness and clean status confirmed.");
     print(`### SUCCESS update_sp: ${sp_zip}`);
     print("");
     return true;
 }
-
 
 // --- Local Helper functions for update_rot_hubris ---
 
@@ -965,7 +996,7 @@ fn get_caboose(component, slot) {
 
 fn reset_sp_and_rot() {
     // The disable watchdog should not be required for the SP.
-    // The STLINK needs to be powered down.
+    // The STLINK needs to be powered down for some reset scenarios.
     debug("info|reset_sp_and_rot: Beginning reset sequence for RoT and SP.");
     for params in [["rot", 3], ["sp", 5]] {
         let component_to_reset = params[0];
@@ -974,9 +1005,9 @@ fn reset_sp_and_rot() {
         print(`### Reset ${component_to_reset}`);
 
         if !util::reset_component(component_to_reset) {
-            // util::reset_component will have logged the specific error
+            // util::reset_component logs its own specific errors
             return #{
-                "error": `Failed to reset component '${component_to_reset}'.`
+                "error": `Failed to reset component '${component_to_reset}' via util function.`
             };
         }
 
