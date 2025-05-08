@@ -21,16 +21,21 @@ fn show_env() {
 
 /// Converts an array or blob of byte-like values into a hexadecimal string.
 /// Each byte is represented by two hexadecimal characters.
+/// Throws an error if any element cannot be converted to hex or if .to_hex()
+/// does not produce a string.
 ///
 /// Args:
 ///   a (array | blob): The input array or blob. Elements are expected to
-///                     have a `.to_hex()` method (typically integers).
+///                     have a `.to_hex()` method.
 ///
 /// Returns:
-///   string: The resulting hexadecimal string.
-///           Returns "invalid_input_type" if 'a' is not an array or blob.
-///           Returns an empty string if 'a' is empty or null.
-///           Includes "??" in the string for any element that fails hex conversion.
+///   string: The resulting hexadecimal string on success.
+///   string: "invalid_input_type" if 'a' is not an array or blob.
+///   string: An empty string if 'a' is empty or null.
+///
+/// Throws:
+///   Map: `#{ error: "message", value: original_value }` if an element
+///        cannot be converted.
 fn to_hexstring(a) {
     let s = "";
     let type_of_a = type_of(a);
@@ -44,27 +49,32 @@ fn to_hexstring(a) {
 
     for b in a {
         let h = ();
-        let hex_ok = true;
         try {
              h = b.to_hex();
         } catch (err) {
-             // User TODO: This should be a fatal error
-             debug(`error|to_hexstring: Value cannot be converted to hex: ${b} (${err})`);
-             hex_ok = false;
-             s += "??"; // Indicate conversion error in output
+             let error_msg =
+                `Value cannot be converted to hex: ${b} (original error: ${err})`;
+             debug(`error|to_hexstring: ${error_msg}`);
+             throw #{ // Make this fatal
+                "error": "to_hexstring: " + error_msg,
+                "value": b
+             };
         }
 
-        if hex_ok {
-            if type_of(h) == "string" {
-                if h.len() == 1 {
-                    s += "0"; // Pad with leading zero if necessary
-                }
-                s += h;
-            } else {
-                 // User TODO: This should be a fatal error
-                 debug(`error|to_hexstring: .to_hex() did not return string for: ${b}`);
-                 s += "??"; // Indicate conversion error
+        if type_of(h) == "string" {
+            if h.len() == 1 {
+                s += "0"; // Pad with leading zero if necessary
             }
+            s += h;
+        } else {
+            let error_msg =
+                `.to_hex() did not return a string for value: ${b}. Got type: ${type_of(h)}`;
+            debug(`error|to_hexstring: ${error_msg}`);
+            throw #{ // Make this fatal
+                "error": "to_hexstring: " + error_msg,
+                "value": b,
+                "hex_result_type": type_of(h)
+            };
         }
     }
     return s.to_string();
