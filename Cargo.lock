@@ -932,8 +932,7 @@ dependencies = [
 name = "gateway-ereport-messages"
 version = "0.1.0"
 dependencies = [
- "bitflags 2.9.0",
- "zerocopy 0.8.24",
+ "zerocopy 0.8.25",
 ]
 
 [[package]]
@@ -988,7 +987,7 @@ dependencies = [
  "usdt",
  "uuid",
  "version_check",
- "zerocopy 0.8.24",
+ "zerocopy 0.8.25",
  "zip",
 ]
 
