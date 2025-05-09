@@ -6,19 +6,6 @@
 // Define constants used in this module
 const ROT_FLASH_PAGE_SIZE = 512;
 
-/// Prints commonly available environment variables to the debug log.
-/// This function is primarily for demonstrating the `env_expand` function
-/// and for debugging purposes.
-fn show_env() {
-    debug(`info|cwd=${cwd().to_string()}`);
-    debug("info|Common environment variables:");
-    debug(`info|    ${env_expand("PWD=${PWD}", #{})}`);
-    debug(`info|    ${env_expand("HOME=${HOME}", #{})}`);
-    debug(`info|    ${env_expand("LOGNAME=${LOGNAME}", #{})}`);
-    debug(`info|    ${env_expand("SHELL=${SHELL}", #{})}`);
-    debug(`info|    ${env_expand("USER=${USER}", #{})}`);
-}
-
 /// Converts an array or blob of byte-like values into a hexadecimal string.
 /// Each byte is represented by two hexadecimal characters.
 /// Throws an error if any element cannot be converted to hex or if .to_hex()
@@ -55,7 +42,7 @@ fn to_hexstring(a) {
              let error_msg =
                 `Value cannot be converted to hex: ${b} (original error: ${err})`;
              debug(`error|to_hexstring: ${error_msg}`);
-             throw #{ // Make this fatal
+             throw #{
                 "error": "to_hexstring: " + error_msg,
                 "value": b
              };
@@ -70,7 +57,7 @@ fn to_hexstring(a) {
             let error_msg =
                 `.to_hex() did not return a string for value: ${b}. Got type: ${type_of(h)}`;
             debug(`error|to_hexstring: ${error_msg}`);
-            throw #{ // Make this fatal
+            throw #{
                 "error": "to_hexstring: " + error_msg,
                 "value": b,
                 "hex_result_type": type_of(h)
@@ -349,36 +336,6 @@ fn rot_boot_info() {
          return #{"error": "Parsed RBI missing valid 'active' slot."};
     }
     return rbi;
-}
-
-/// Gets system state information using `faux_mgs state`. Parses the V2 structure.
-///
-/// Returns:
-///   Map: A map of selected state fields (e.g., `base_mac_address`, `model`)
-///        on success.
-///   Map: An error map `#{ error: "message" }` or the direct error map
-///        from `faux_mgs` on failure.
-fn state() {
-    let r = faux_mgs(["state"]);
-    if r?.error != () {
-        debug(`error|util::state: faux_mgs command failed: ${r.error}`);
-        return r;
-    }
-    if r?.V2 == () {
-        let err_msg = "Failed to parse V2 state info from 'faux_mgs state'.";
-        debug(`error|util::state: ${err_msg} Raw Response: ${r}`);
-        return #{"error": err_msg};
-    }
-
-    let v2 = r.V2;
-    let state_map = #{
-        base_mac_address: array_to_mac(v2?.base_mac_address),
-        hubris_archive_id: to_hexstring(v2?.hubris_archive_id),
-        model: cstring_to_string(v2?.model),
-        power_state: v2?.power_state,
-        revision: v2?.revision,
-    };
-    return state_map;
 }
 
 /// Reads a specific key from a component's caboose.
@@ -889,10 +846,59 @@ fn reset_component(component_name) {
     }
 }
 
+// In scripts/util.rhai
 
-// A getopts implementation very similar to the bash built-in function.
-// TODO: Add detailed doc comments for getopts parameters and return value.
-// TODO: Write tests for getopts(), maybe move getopts() to a separate file.
+// (Previous functions like reset_component, etc.)
+
+/// Parses command-line arguments from an argv-style array based on an options string.
+/// This function is inspired by the behavior of POSIX getopts and GNU getopt,
+/// supporting short options, combined short options, options with arguments
+/// (attached or separate), and basic long option support (flag or with '=').
+///
+/// Args:
+///   argv (array): An array of strings representing the command-line arguments.
+///                 Typically, `argv[0]` is the script name, and parsing starts
+///                 from `argv[1]`.
+///   options (string): A string specifying the valid short options.
+///                     - Each character is a short option (e.g., "a", "b", "c").
+///                     - If a character is followed by a colon `:`, it signifies
+///                       that this short option requires an argument
+///                       (e.g., "ab:c" means -a and -c are flags, -b takes an argument).
+///                     - Long options are not defined in this string but are parsed
+///                       if they start with "--". Their argument requirement is
+///                       determined by the presence of an '=' sign.
+///
+/// Returns:
+///   Map:
+///     On success:
+///       #{
+///           "result": #{ // Map of parsed options
+///               // e.g., "a": true (for flag -a)
+///               //       "b": "value" (for option -b value or -bvalue)
+///               //       "long-option": true (for --long-option)
+///               //       "another-opt": "val" (for --another-opt=val)
+///           },
+///           "positional": [ // Array of positional arguments
+///               // e.g., "arg1", "arg2"
+///           ]
+///       }
+///     On failure (e.g., unknown short option, missing argument for short option):
+///       #{ "error": "Descriptive error message string" }
+///
+/// Behavior Notes:
+///   - Parsing stops at the first non-option argument if options are not intermingled
+///     with positional arguments, or when "--" is encountered. Any subsequent
+///     arguments are treated as positional. (Current basic implementation might
+///     collect all non-options as positional as it finds them).
+///   - Combined short options (e.g., `-abc`) are treated as `-a -b -c`.
+///   - If a short option in a combined group requires an argument (e.g., `options = "ab:c"`,
+///     and `-cbvalue` is passed), `value` is taken as the argument for `b`.
+///   - Long options (`--option`):
+///     - Are not validated against the `options` string.
+///     - If in the form `--option=value`, `option` is set to `"value"`.
+///     - If in the form `--option` (no `=`), `option` is set to `true` (boolean flag).
+///   - `--`: All subsequent arguments are treated as positional.
+//
 fn getopts(argv, options) {
     let result = #{};
     let positional = [];
@@ -908,41 +914,26 @@ fn getopts(argv, options) {
                 positional.push(argv[i]);
                 i += 1;
             }
-            break; // Exit outer loop
+            break;
         } else if arg.starts_with("--") && arg.len() > 2 {
-            // Long option
+            // Long option (e.g., --option, --option=value)
             let opt_full = arg.sub_string(2, arg.len());
             let opt_name = opt_full;
-            let opt_val = true; // Default for flag options
+            let opt_val = true; // Default for flag if no '='
 
-            // Check if option expects an argument (e.g., --option=value)
-            // This basic getopts doesn't support --option value (space separated)
-            // Nor does it check 'options' string for long opt definitions directly
-            // This part would need more advanced parsing if those features are required.
-            // For now, assuming long options are flags or use '=' for value.
-
-            // If using Rhai version that supports string.split_once(char) or similar:
-            // if let Some((name, val_str)) = opt_full.split_once('=') {
-            //    opt_name = name;
-            //    opt_val = val_str;
-            // } else {
-            //    opt_name = opt_full;
-            //    opt_val = true; // Flag
-            // }
-            // For simplicity without split_once:
             let eq_idx = opt_full.index_of("=");
             if eq_idx != -1 {
                 opt_name = opt_full.sub_string(0, eq_idx);
                 opt_val = opt_full.sub_string(eq_idx + 1, opt_full.len());
             }
-
-            // Long options are not validated against 'options' string in this basic impl.
             result[opt_name] = opt_val;
             i += 1;
         } else if arg.starts_with("-") && arg.len() > 1 {
-            // Short options, potentially combined: -a, -b, -c value, -dvalue
+            // Short options (e.g., -a, -b val, -bval, -abc)
             let short_opts_str = arg.sub_string(1, arg.len());
             let current_opt_char_idx = 0;
+            // True if the *next* argv element was consumed as an argument
+            // to the last short option in this group.
             let consumed_next_argv_for_opt = false;
 
             while current_opt_char_idx < short_opts_str.len() {
@@ -958,28 +949,30 @@ fn getopts(argv, options) {
                                      options[opt_spec_index + 1] == ":");
 
                  if requires_arg {
+                      // This short option requires an argument
                       if current_opt_char_idx + 1 < short_opts_str.len() {
-                           // Argument attached: -ovalue
+                           // Argument is attached (e.g., -fFILENAME)
                            result[opt_str] = short_opts_str.sub_string(
                                current_opt_char_idx + 1, short_opts_str.len()
                            );
-                           current_opt_char_idx = short_opts_str.len(); // Processed whole token
+                           // Consumed the rest of this combined arg token
+                           current_opt_char_idx = short_opts_str.len();
                       } else if i + 1 < argv.len() {
-                           // Argument separate: -o value
+                           // Argument is the next argv element (e.g., -f FILENAME)
                            result[opt_str] = argv[i + 1];
                            consumed_next_argv_for_opt = true;
-                           current_opt_char_idx += 1;
+                           current_opt_char_idx += 1; // Move past this option char
                       } else {
                            return #{ "error": `Option '-${opt_str}' requires an argument.` };
                       }
                  } else {
-                      // Option is a flag
+                      // Option is a flag (does not require an argument)
                       result[opt_str] = true;
-                      current_opt_char_idx += 1;
+                      current_opt_char_idx += 1; // Move to next char in combined opts
                  }
-            } // End while for chars in short_opts_str
+            }
 
-            i += 1; // Consumed current argv element (e.g., "-abc" or "-o")
+            i += 1; // Consumed the current argv element (e.g., "-abc" or "-o")
             if consumed_next_argv_for_opt {
                 i += 1; // Also consumed the next argv element if it was an opt arg
             }
@@ -988,7 +981,7 @@ fn getopts(argv, options) {
             positional.push(arg);
             i += 1;
         }
-    } // End while loop through argv
+    }
 
     return #{ "result": result, "positional": positional };
 }
