@@ -149,12 +149,12 @@ pub async fn interpreter(
                 let level = x[0].to_string().to_lowercase();
                 let msg = x[1].to_string();
                 match level.as_str() {
-                    "info" => ("info".to_string(), msg),
-                    "crit" => ("crit".to_string(), msg),
-                    "error" => ("error".to_string(), msg),
                     "trace" => ("trace".to_string(), msg),
-                    "warn" => ("warn".to_string(), msg),
                     "debug" => ("debug".to_string(), msg),
+                    "info" => ("info".to_string(), msg),
+                    "warn" => ("warn".to_string(), msg),
+                    "error" => ("error".to_string(), msg),
+                    "crit" => ("crit".to_string(), msg),
                     _ => ("debug".to_string(), format!("{}|{}", level, msg)),
                 }
             };
