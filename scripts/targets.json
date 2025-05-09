@@ -1,0 +1,53 @@
+{
+  "repo-home": "${HOME}/Oxide/src",
+  "base_repo": "${repo-home}/hubris/master",
+  "ut_repo": "${repo-home}/hubris/${UT_WORKTREE}",
+
+  "keyset": "bart",
+  "keyset-dvt-dock": "${repo-home}/dvt-dock/${keyset}",
+  "base-b-ver": "v1.3.1",
+  "ut-b-ver": "v1.3.3",
+
+  "bord": {
+    "sp": "grapefruit-standalone",
+    "rot": "oxide-rot-1-selfsigned"
+  },
+
+  "images": {
+    "base": {
+      "sp": "${base_repo}/target/${bord.sp}/dist/default/build-${bord.sp}-image-default.zip",
+      "rot_a": "${base_repo}/target/${bord.rot}/dist/a/build-${bord.rot}-image-a.zip",
+      "rot_b": "${base_repo}/target/${bord.rot}/dist/b/build-${bord.rot}-image-b.zip",
+      "stage0": "${keyset-dvt-dock}/gimlet/bootleby-${base-b-ver}-${keyset}-gimlet.zip"
+    },
+    "ut": {
+      "sp": "${ut_repo}/target/${bord.sp}/dist/default/build-${bord.sp}-image-default.zip",
+      "rot_a": "${ut_repo}/target/${bord.rot}/dist/a/build-${bord.rot}-image-a.zip",
+      "rot_b": "${ut_repo}/target/${bord.rot}/dist/b/build-${bord.rot}-image-b.zip",
+      "stage0": "${keyset-dvt-dock}/gimlet/bootleby-${ut-b-ver}-${keyset}-gimlet.zip"
+    }
+  },
+
+  "ipcc": {
+      "faux_ipcc": "${HOME}/.cargo/bin/faux-ipcc",
+      "port": "/dev/ttyUSB0"
+  },
+
+  "power_control": {
+    "dut": {
+      "comment": "Commands for the main Device Under Test (e.g. grapefruit)",
+      "on_cmd": ["/usr/local/bin/power_switch", "--device", "1", "--action", "ON"],
+      "off_cmd": ["/usr/local/bin/power_switch", "--device 1", "--action OFF"],
+      "status_cmd": ["/usr/local/bin/power_switch", "--device", "1", "--action", "STATUS"],
+      "status_on_stdout_contains": "STATE: ON"
+    },
+
+    "stlink": {
+      "comment": "Commands for the STLINK debugger (if needed)",
+      "off_cmd": ["echo", "'STLINK power off command placeholder'"],
+      "on_cmd": ["echo", "'STLINK power on command placeholder'"],
+      "status_cmd": ["/usr/sbin/uhubctl"],
+      "status_on_stdout_contains": "STLINK"
+    }
+  }
+}
