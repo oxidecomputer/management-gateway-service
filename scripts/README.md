@@ -110,18 +110,16 @@ two specified sets of firmware builds (a "baseline" and an "under-test" version)
 
 ### Key Command-Line Options:
 
+-   `-b <path>`: **Optional.** Path to the baseline Hubris repo`
 -   `-c <path>`: **Required.** Path to the JSON configuration file
     (e.g., `scripts/targets.json`).
 -   `-t`: Enable testing using the RoT "transient boot preference" feature.
     The script attempts to use this mechanism if the active RoT supports it
     and handles differences in behavior when targeting older "baseline" RoTs
     that may not fully support the feature.
+-   `-u <path>`: **Optional.** Path to the under-test Hubris repo`
 -   `-v`: Verbose output (enables more `debug("info|...")` messages).
 -   `-h`: Show help message.
--   `[path0]`: Optional positional argument to override the `base_repo` path
-    from the config file.
--   `[path1]`: Optional positional argument to override the `ut_repo` path
-    from the config file.
 
 ### Example Invocation:
 
@@ -138,9 +136,9 @@ cargo run --bin faux-mgs --features=rhaiscript -- \
   --interface=enp5s0 \
   --log-level=info \
   rhai scripts/upgrade-rollback.rhai \
-  -c scripts/targets.json -t -- \
-  $HOME/Oxide/src/hubris/master \
-  $HOME/Oxide/src/hubris/${UT_WORKTREE}
+  -c scripts/targets.json -t \
+  -b $HOME/Oxide/src/hubris/master \
+  -u $HOME/Oxide/src/hubris/${UT_WORKTREE}
 
 # Check exit code
 echo $?
