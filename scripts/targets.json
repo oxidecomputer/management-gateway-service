@@ -31,5 +31,23 @@
   "ipcc": {
       "faux_ipcc": "${HOME}/.cargo/bin/faux-ipcc",
       "port": "/dev/ttyUSB0"
+  },
+
+  "power_control": {
+    "dut": {
+      "comment": "Commands for the main Device Under Test (e.g. grapefruit)",
+      "on_cmd": ["/usr/local/bin/power_switch", "--device", "1", "--action", "ON"],
+      "off_cmd": ["/usr/local/bin/power_switch", "--device 1", "--action OFF"],
+      "status_cmd": ["/usr/local/bin/power_switch", "--device", "1", "--action", "STATUS"],
+      "status_on_stdout_contains": "STATE: ON"
+    },
+
+    "stlink": {
+      "comment": "Commands for the STLINK debugger (if needed)",
+      "off_cmd": ["echo", "'STLINK power off command placeholder'"],
+      "on_cmd": ["echo", "'STLINK power on command placeholder'"],
+      "status_cmd": ["/usr/sbin/uhubctl"],
+      "status_on_stdout_contains": "STLINK"
+    }
   }
 }

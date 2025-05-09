@@ -847,8 +847,165 @@ fn reset_component(component_name) {
 }
 
 // In scripts/util.rhai
+// ... (other existing functions) ...
 
-// (Previous functions like reset_component, etc.)
+/// Retrieves and expands a power control command array from the configuration.
+/// Each element of the command array will be expanded.
+///
+/// Args:
+///   conf (map): The main configuration map.
+///   target_device (string): Key for the target device in `conf.power_control`.
+///   action (string): Power action ("on", "off", "status").
+///
+/// Returns:
+///   array: An array of strings representing the expanded command and its arguments.
+///   (): Returns null/unit `()` if the command is not defined, not an array,
+///       empty, or if any part fails expansion.
+fn get_power_command(conf, target_device, action) {
+    let cmd_key = action + "_cmd"; // e.g., "on_cmd"
+    let command_template_array = conf?.power_control?[target_device]?[cmd_key];
+
+    if command_template_array == () {
+        debug(
+            `warn|util::get_power_command: No command array defined for device ` +
+            `'${target_device}', action '${action}' (expected key '${cmd_key}').`
+        );
+        return ();
+    }
+    if type_of(command_template_array) != "array" {
+        debug(
+            `error|util::get_power_command: Command for ` +
+            `'${target_device}.${cmd_key}' is not an array.`
+        );
+        return ();
+    }
+    if command_template_array.len() == 0 {
+        debug(
+            `error|util::get_power_command: Command array for ` +
+            `'${target_device}.${cmd_key}' is empty.`
+        );
+        return ();
+    }
+
+    let expanded_command_array = [];
+    for part_template in command_template_array {
+        if type_of(part_template) != "string" {
+            debug(
+                `error|util::get_power_command: Non-string element ` +
+                `'${part_template}' in command array for '${target_device}.${cmd_key}'.`
+            );
+            return (); // All parts must be strings before expansion
+        }
+        let expanded_part = util::env_expand(part_template, conf);
+        if expanded_part == () || type_of(expanded_part) != "string" {
+            debug(
+                `error|util::get_power_command: Failed to expand or got non-string ` +
+                `for part '${part_template}' in command for '${target_device}.${cmd_key}'.`
+            );
+            return ();
+        }
+        expanded_command_array.push(expanded_part);
+    }
+    return expanded_command_array;
+}
+
+/// Controls power for a specified target device using external commands as arrays.
+/// Uses the Rhai `system()` function to execute configured commands.
+///
+/// Args:
+///   target_device (string): Key for the target device in `conf.power_control`.
+///   action (string): Power action: "on", "off", or "status".
+///   conf (map): Main configuration map including the `power_control` section.
+///
+/// Returns:
+///   For "on", "off" actions:
+///     true: If command executes with exit code 0.
+///     false: If command not defined, fails execution, or has non-zero exit code.
+///   For "status" action:
+///     true: If status indicates "ON" (exit code 0, and stdout check if configured).
+///     false: If status indicates "OFF" or an error occurs.
+///     (): If command is not defined or fails so status cannot be determined.
+fn control_power(target_device, action, conf) {
+    debug(
+        `info|util::control_power: Attempting action '${action}' ` +
+        `for device '${target_device}'.`
+    );
+    // get_power_command now returns an array of strings or ()
+    let command_array = get_power_command(conf, target_device, action);
+
+    if command_array == () || type_of(command_array) != "array" || command_array.len() == 0 {
+        debug(
+            `error|util::control_power: Could not retrieve a valid command array ` +
+            `for '${target_device}' action '${action}'.`
+        );
+        // Maintain previous return logic for status being indeterminate
+        return if action == "status" { () } else { false };
+    }
+
+    debug(`info|util::control_power: Executing command array: ${command_array}`);
+    // The system() function expects a single array where the first element
+    // is the command and the rest are arguments.
+    let system_result = system(command_array);
+
+    if system_result?.error != () { // Error from system() itself (e.g., command not found)
+        debug(`error|util::control_power: system() call failed for '${command_array[0]}': ${system_result.error}`);
+        return if action == "status" { () } else { false };
+    }
+
+    debug(`info|util::control_power: System result for '${action}': ${system_result}`);
+
+    // Interpret result
+    if action == "on" || action == "off" {
+        if system_result.exit_code == 0 {
+            debug(
+                `info|util::control_power: Action '${action}' for ` +
+                `'${target_device}' succeeded (exit code 0).`
+            );
+            return true;
+        } else {
+            debug(
+                `error|util::control_power: Action '${action}' for ` +
+                `'${target_device}' failed (exit code ${system_result.exit_code}). ` +
+                `Stdout: ${system_result.stdout}, Stderr: ${system_result.stderr}`
+            );
+            return false;
+        }
+    } else if action == "status" {
+        let expected_on_text = conf?.power_control?[target_device]?.status_on_stdout_contains;
+        if system_result.exit_code == 0 {
+            if expected_on_text == () || type_of(expected_on_text) != "string" || expected_on_text.len() == 0 {
+                debug(
+                    `info|util::control_power: Status for '${target_device}' is ON ` +
+                    `(exit code 0, no stdout check configured).`
+                );
+                return true;
+            } else if system_result.stdout.contains(expected_on_text) {
+                debug(
+                    `info|util::control_power: Status for '${target_device}' is ON ` +
+                    `(exit code 0, stdout contains '${expected_on_text}').`
+                );
+                return true;
+            } else {
+                debug(
+                    `info|util::control_power: Status for '${target_device}' is considered OFF ` +
+                    `(exit code 0, but stdout does not contain '${expected_on_text}'). ` +
+                    `Stdout: ${system_result.stdout}`
+                );
+                return false;
+            }
+        } else {
+            debug(
+                `info|util::control_power: Status for '${target_device}' is OFF or error ` +
+                `(exit code ${system_result.exit_code}). `+
+                `Stdout: ${system_result.stdout}, Stderr: ${system_result.stderr}`
+            );
+            return false;
+        }
+    } else {
+        debug(`error|util::control_power: Unknown action '${action}'.`);
+        return if action == "status" { () } else { false };
+    }
+}
 
 /// Parses command-line arguments from an argv-style array based on an options string.
 /// This function is inspired by the behavior of POSIX getopts and GNU getopt,
