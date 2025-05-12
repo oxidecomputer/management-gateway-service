@@ -20,7 +20,7 @@ use gateway_messages::SpResponse;
 
 #[test]
 fn sp_response() {
-    let response = SpResponse::PowerStateUnchaged;
+    let response = SpResponse::PowerStateUnchanged;
     let expected = &[83];
     assert_serialized(expected, &response);
 }
