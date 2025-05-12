@@ -958,7 +958,7 @@ pub struct UpdateInProgressStatus {
 #[derive(Copy, Clone, PartialEq, Eq)]
 #[repr(u8)]
 pub enum PowerStateTransition {
-    Changed = 1,
+    Changed,
     Unchanged,
 }
 
