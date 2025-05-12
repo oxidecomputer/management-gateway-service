@@ -87,7 +87,12 @@ pub enum SpResponse {
     },
     SerialConsoleDetachAck,
     PowerState(PowerState),
-    SetPowerStateAck,
+    /// Indicates that a `SetPowerState` request was performed successfully
+    /// and resulted in a power state transition.
+    ///
+    /// If the SP is already in the desired power state, the
+    /// [`Self::PowerStateUnchanged`] response is returned instead.
+    PowerStateSet,
     ResetPrepareAck,
     // There is intentionally no `ResetTriggerAck` response; the expected
     // "response" to `ResetTrigger` is an SP reset, which won't allow for
@@ -143,6 +148,10 @@ pub enum SpResponse {
     ///
     /// The packet may contain trailing dump data
     Dump(DumpResponse),
+
+    /// Response to a `SetPowerState` request indicating that the system was
+    /// already in the desired power state and no transition occurred.
+    PowerStateUnchanged,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -942,6 +951,24 @@ pub struct UpdateInProgressStatus {
     pub id: UpdateId,
     pub bytes_received: u32,
     pub total_size: u32,
+}
+
+/// Represents the result of a successful [`SetPowerState`] request.
+/// [`SetPowerState`]: crate::MgsRequest::SetPowerState
+#[derive(Copy, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PowerStateTransition {
+    Changed = 1,
+    Unchanged,
+}
+
+impl From<PowerStateTransition> for SpResponse {
+    fn from(transition: PowerStateTransition) -> Self {
+        match transition {
+            PowerStateTransition::Changed => SpResponse::PowerStateSet,
+            PowerStateTransition::Unchanged => SpResponse::PowerStateUnchanged,
+        }
+    }
 }
 
 #[derive(

@@ -838,7 +838,7 @@ fn sp_response() {
         assert_serialized(expected, &response);
     }
 
-    let response = SpResponse::SetPowerStateAck;
+    let response = SpResponse::PowerStateSet;
     let expected = &[14];
     assert_serialized(expected, &response);
 

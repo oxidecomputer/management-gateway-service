@@ -43,6 +43,7 @@ use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::MonorailError;
 use gateway_messages::PowerState;
+use gateway_messages::PowerStateTransition;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotRequest;
 use gateway_messages::SensorReading;
@@ -822,10 +823,13 @@ impl SingleSp {
     }
 
     /// Set the current power state.
-    pub async fn set_power_state(&self, power_state: PowerState) -> Result<()> {
+    pub async fn set_power_state(
+        &self,
+        power_state: PowerState,
+    ) -> Result<PowerStateTransition> {
         self.rpc(MgsRequest::SetPowerState(power_state))
             .await
-            .and_then(expect_set_power_state_ack)
+            .and_then(expect_power_state_transition)
     }
 
     /// "Attach" to the serial console, setting up a tokio channel for all
