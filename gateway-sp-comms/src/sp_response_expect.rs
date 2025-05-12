@@ -9,6 +9,7 @@ use gateway_messages::ComponentActionResponse;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
+use gateway_messages::PowerStateTransition;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotResponse;
 use gateway_messages::SensorResponse;
@@ -103,7 +104,6 @@ expect_fn!(UpdateStatus(status) -> UpdateStatus);
 expect_fn!(UpdateChunkAck);
 expect_fn!(UpdateAbortAck);
 expect_fn!(PowerState(power_state) -> PowerState);
-expect_fn!(SetPowerStateAck);
 expect_fn!(StartupOptions(options) -> StartupOptions);
 expect_fn!(SetStartupOptionsAck);
 expect_fn!(ComponentClearStatusAck);
@@ -190,6 +190,29 @@ pub(crate) fn expect_sp_state(
         SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
         other => Err(CommunicationError::BadResponseType {
             expected: "versioned_sp_state", // hard-coded special string
+            got: other.into(),
+        }),
+    }?;
+    if !data.is_empty() {
+        return Err(CommunicationError::UnexpectedTrailingData(data));
+    }
+    Ok(out)
+}
+
+/// Converts `SpResponse::{PowerStateSet, PowerStateUnchanged}` into
+/// [`PowerStateTransition`].
+pub(crate) fn expect_power_state_transition(
+    r: (SocketAddrV6, SpResponse, Vec<u8>),
+) -> Result<PowerStateTransition> {
+    // This function translates between SpResponse variants and
+    // `PowerStateTransition`, so we can't use the usual expect! macro here
+    let (_peer, response, data) = r;
+    let out = match response {
+        SpResponse::PowerStateSet => Ok(PowerStateTransition::Changed),
+        SpResponse::PowerStateUnchanged => Ok(PowerStateTransition::Unchanged),
+        SpResponse::Error(err) => Err(CommunicationError::SpError(err)),
+        other => Err(CommunicationError::BadResponseType {
+            expected: "power_state_transition", // hard-coded special string
             got: other.into(),
         }),
     }?;
