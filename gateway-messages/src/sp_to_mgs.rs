@@ -92,6 +92,12 @@ pub enum SpResponse {
     ///
     /// If the SP is already in the desired power state, the
     /// [`Self::PowerStateUnchanged`] response is returned instead.
+    ///
+    /// **Note**: Prior to v18, this message was named `SetPowerStateAck`, but
+    /// it was only sent when a power state change occurred (so its semantic
+    /// meaning has remained the same). In v17 and earlier, a
+    /// [`SpError::SeqError`] message was sent in the case where no power state
+    /// transition occurred, instead of a `PowerStateUnchanged` message.
     PowerStateSet,
     ResetPrepareAck,
     // There is intentionally no `ResetTriggerAck` response; the expected
@@ -956,7 +962,6 @@ pub struct UpdateInProgressStatus {
 /// Represents the result of a successful [`SetPowerState`] request.
 /// [`SetPowerState`]: crate::MgsRequest::SetPowerState
 #[derive(Copy, Clone, PartialEq, Eq)]
-#[repr(u8)]
 pub enum PowerStateTransition {
     Changed,
     Unchanged,
