@@ -30,6 +30,7 @@ use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
+use crate::PowerStateTransition;
 use crate::RotBootInfo;
 use crate::RotRequest;
 use crate::RotResponse;
@@ -204,7 +205,7 @@ pub trait SpHandler {
         &mut self,
         sender: Sender<Self::VLanId>,
         power_state: PowerState,
-    ) -> Result<(), SpError>;
+    ) -> Result<PowerStateTransition, SpError>;
 
     fn serial_console_attach(
         &mut self,
@@ -820,9 +821,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::GetPowerState => {
             handler.power_state().map(SpResponse::PowerState)
         }
-        MgsRequest::SetPowerState(power_state) => handler
-            .set_power_state(sender, power_state)
-            .map(|()| SpResponse::SetPowerStateAck),
+        MgsRequest::SetPowerState(power_state) => {
+            handler.set_power_state(sender, power_state).map(SpResponse::from)
+        }
         MgsRequest::ResetPrepare => handler
             .reset_component_prepare(SpComponent::SP_ITSELF)
             .map(|()| SpResponse::ResetPrepareAck),
@@ -1174,7 +1175,7 @@ mod tests {
             &mut self,
             _sender: Sender<Self::VLanId>,
             _power_state: PowerState,
-        ) -> Result<(), SpError> {
+        ) -> Result<PowerStateTransition, SpError> {
             unimplemented!()
         }
 
