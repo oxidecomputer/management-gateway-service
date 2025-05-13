@@ -56,7 +56,8 @@ impl core::fmt::Debug for Ena {
 }
 
 impl Ena {
-    pub const ZERO: Self = Self(le::U64::ZERO);
+    /// ENA 0 is reserved to represent "no ENA".
+    pub const NONE: Self = Self(le::U64::ZERO);
 
     #[must_use]
     pub const fn new(u: u64) -> Self {
@@ -172,24 +173,24 @@ impl RequestIdV0 {
 /// ```text
 ///     0         1        2        3
 /// +--------+--------+--------+--------+
-/// | version|-------C| limit  | req ID |
-/// +--------+--------+--------+--------+
+/// | version| limit  | req ID |        |
+/// +--------+--------+--------+        +
 /// |                                   |
 /// +                                   +
 /// |                                   |
 /// +       restart ID (128 bits)       +
 /// |                                   |
-/// +                                   +
-/// |                                   |
-/// +--------+--------+--------+--------+
+/// +                          *--------+
+/// |                          |        |
+/// +--------+--------+--------+        +
 /// |   first ENA desired in response   |
-/// +            (64 bits)              +
-/// |                                   |
-/// +--------+--------+--------+--------+
-/// |    last ENA written to database   | only present when C bit set
-/// +            (64 bits)              +
-/// |                                   |
-/// +--------+--------+--------+--------+
+/// +            (64 bits)     +--------+
+/// |                          |        |
+/// +--------+--------+--------+        *
+/// |    last ENA written to database   | or 0, if no committed ENA exists
+/// +            (64 bits)     +--------+ for this restart generation.
+/// |                          |
+/// +--------+--------+--------+
 /// ```
 ///
 /// See [RFD 545 §4.4.3.1] for details.
@@ -199,8 +200,6 @@ impl RequestIdV0 {
 )]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
 pub struct RequestV0 {
-    pub flags: RequestFlagsV0,
-
     /// Maximum number of ereports to include in the response packet.
     pub limit: u8,
 
@@ -232,8 +231,8 @@ pub struct RequestV0 {
     /// this value. If the restart ID has changed from the provided one, the
     /// reporter will not discard data.
     ///
-    /// This value is only present if the [`RequestFlagsV0::COMMIT`] bit is
-    /// set.
+    /// If this is zero, then no committed ENA is sent and the SP should not
+    /// discard data.
     committed_ena: Ena,
 }
 
@@ -245,16 +244,6 @@ pub struct RequestV0 {
 #[repr(transparent)]
 pub struct RequestFlagsV0(u8);
 
-bitflags::bitflags! {
-    impl RequestFlagsV0: u8 {
-        /// Indicates that a "committed ENA" field is present in this request.
-        ///
-        /// If this is not set, the "committed ENA" field will be zero, but this
-        /// does not indicate that ENA 0 has been committed.
-        const COMMIT = 1 << 0;
-    }
-}
-
 impl RequestV0 {
     pub const fn new(
         restart_id: RestartId,
@@ -263,11 +252,11 @@ impl RequestV0 {
         limit: u8,
         committed_ena: Option<Ena>,
     ) -> Self {
-        let (committed_ena, flags) = match committed_ena {
-            Some(ena) => (ena, RequestFlagsV0::COMMIT),
-            None => (Ena::ZERO, RequestFlagsV0::empty()),
+        let committed_ena = match committed_ena {
+            Some(ena) => ena,
+            None => Ena::NONE,
         };
-        Self { flags, limit, request_id, restart_id, start_ena, committed_ena }
+        Self { limit, request_id, restart_id, start_ena, committed_ena }
     }
 
     /// Returns the "committed ENA" field if this packet contains one.
@@ -275,11 +264,11 @@ impl RequestV0 {
     /// This checks the value of the [`RequestFlagsV0::COMMIT`] bit, and returns
     /// the ENA only if it is set.
     #[must_use]
-    pub const fn committed_ena(&self) -> Option<Ena> {
-        if self.flags.contains(RequestFlagsV0::COMMIT) {
-            Some(self.committed_ena)
-        } else {
+    pub fn committed_ena(&self) -> Option<&Ena> {
+        if self.committed_ena == Ena::NONE {
             None
+        } else {
+            Some(&self.committed_ena)
         }
     }
 }

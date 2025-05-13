@@ -1123,7 +1123,7 @@ mod test {
 
         let header = ResponseHeader::V0(ResponseHeaderV0 {
             restart_id: restart_id.as_u128().into(),
-            start_ena: Ena::ZERO,
+            start_ena: Ena::NONE,
             request_id,
         });
 
@@ -1205,7 +1205,7 @@ mod test {
 
         assert_ereport_matches(
             &ereports[0],
-            Ena::ZERO,
+            Ena::NONE,
             json_map! {
                 KEY_ARCHIVE: "defaceddead".to_string(),
                 KEY_SERIAL: "BRM69000666".to_string(),
