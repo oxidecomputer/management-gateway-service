@@ -1396,15 +1396,27 @@ async fn run_command(
         }
         Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
-                sp.set_power_state(state).await.with_context(|| {
-                    format!("failed to set power state to {state:?}")
-                })?;
-                info!(log, "successfully set SP power state to {state:?}");
+                let transition =
+                    sp.set_power_state(state).await.with_context(|| {
+                        format!("failed to set power state to {state:?}")
+                    })?;
+                info!(
+                    log,
+                    "successfully set SP power state to {state:?} \
+                     ({transition:?})"
+                );
                 if json {
-                    Ok(Output::Json(json!({ "ack": "set", "state": state })))
+                    let changed = transition
+                        == gateway_messages::PowerStateTransition::Changed;
+                    Ok(Output::Json(json!({
+                        "ack": "set",
+                        "state": state,
+                        "changed": changed,
+                    })))
                 } else {
                     Ok(Output::Lines(vec![format!(
-                        "successfully set SP power state to {state:?}"
+                        "successfully set SP power state to {state:?}\
+                         ({transition:?})"
                     )]))
                 }
             } else {

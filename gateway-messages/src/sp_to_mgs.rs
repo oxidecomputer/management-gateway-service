@@ -961,7 +961,7 @@ pub struct UpdateInProgressStatus {
 
 /// Represents the result of a successful [`SetPowerState`] request.
 /// [`SetPowerState`]: crate::MgsRequest::SetPowerState
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PowerStateTransition {
     Changed,
     Unchanged,
