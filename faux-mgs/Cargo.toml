@@ -14,6 +14,7 @@ hex.workspace = true
 humantime.workspace = true
 nix.workspace = true
 rand.workspace = true
+parse_int.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
