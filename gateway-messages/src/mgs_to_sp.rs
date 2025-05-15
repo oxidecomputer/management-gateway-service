@@ -221,6 +221,11 @@ pub enum MgsRequest {
     },
 
     Dump(DumpRequest),
+
+    /// Read the host flash at the specified address. Always returns one page size
+    ReadHostFlash {
+        addr: u32,
+    },
 }
 
 #[derive(

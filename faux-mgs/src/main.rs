@@ -454,6 +454,11 @@ enum Command {
         #[clap(subcommand)]
         cmd: DumpCommand,
     },
+    /// Read Host flash at address
+    ReadHostFlash {
+        #[clap(value_parser = parse_int::parse::<u32>)]
+        addr: u32,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1702,6 +1707,10 @@ async fn run_command(
                 }
             }
         },
+        Command::ReadHostFlash { addr } => {
+            let result = sp.read_host_flash(addr).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
     }
 }
 
