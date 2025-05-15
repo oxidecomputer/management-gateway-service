@@ -247,7 +247,9 @@ enum Command {
     },
 
     /// Get or set startup options on an SP.
-    StartupOptions { options: Option<u64> },
+    StartupOptions {
+        options: Option<u64>,
+    },
 
     /// Ask SP for its inventory.
     Inventory,
@@ -305,7 +307,9 @@ enum Command {
     UsartDetach,
 
     /// Serve host phase 2 images.
-    ServeHostPhase2 { directory: PathBuf },
+    ServeHostPhase2 {
+        directory: PathBuf,
+    },
 
     /// Upload a new image to the SP or one of its components.
     ///
@@ -453,6 +457,20 @@ enum Command {
     Dump {
         #[clap(subcommand)]
         cmd: DumpCommand,
+    },
+    /// Read Host flash at address
+    ReadHostFlash {
+        slot: u16,
+        // Giving addresses in hex is nice and the default clap parser
+        // does not support that
+        #[clap(value_parser = parse_int::parse::<u32>)]
+        addr: u32,
+    },
+    StartHostFlashHash {
+        slot: u16,
+    },
+    GetHostFlashHash {
+        slot: u16,
     },
 }
 
@@ -1702,6 +1720,18 @@ async fn run_command(
                 }
             }
         },
+        Command::ReadHostFlash { slot, addr } => {
+            let result = sp.read_host_flash(slot, addr).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+        Command::StartHostFlashHash { slot } => {
+            sp.start_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec!["hash started".to_string()]))
+        }
+        Command::GetHostFlashHash { slot } => {
+            let result = sp.get_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
     }
 }
 

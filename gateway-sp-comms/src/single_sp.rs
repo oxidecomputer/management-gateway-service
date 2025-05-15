@@ -59,6 +59,7 @@ use gateway_messages::SprotProtocolError;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
+use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
 use gateway_messages::ROT_PAGE_SIZE;
 use serde::Serialize;
@@ -1416,6 +1417,28 @@ impl SingleSp {
             .await
             .expect("ereport worker should not have unexpectedly died");
         rsp_rx.await.expect("ereport requests are never cancelled")
+    }
+
+    pub async fn read_host_flash(
+        &self,
+        slot: u16,
+        addr: u32,
+    ) -> Result<[u8; HF_PAGE_SIZE]> {
+        self.rpc(MgsRequest::ReadHostFlash { slot, addr })
+            .await
+            .and_then(expect_host_flash_read)
+    }
+
+    pub async fn start_host_flash_hash(&self, slot: u16) -> Result<()> {
+        self.rpc(MgsRequest::StartHostFlashHash { slot })
+            .await
+            .and_then(expect_start_host_flash_hash_ack)
+    }
+
+    pub async fn get_host_flash_hash(&self, slot: u16) -> Result<[u8; 32]> {
+        self.rpc(MgsRequest::GetHostFlashHash { slot })
+            .await
+            .and_then(expect_host_flash_hash)
     }
 }
 
