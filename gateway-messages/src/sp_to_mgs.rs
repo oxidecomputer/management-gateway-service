@@ -158,6 +158,9 @@ pub enum SpResponse {
     /// Response to a `SetPowerState` request indicating that the system was
     /// already in the desired power state and no transition occurred.
     PowerStateUnchanged,
+
+    /// Packet contains the host flash data
+    ReadHostFlash,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -1075,6 +1078,9 @@ pub enum SpError {
     Watchdog(WatchdogError),
     Monorail(MonorailError),
     Dump(DumpError),
+    // These are common enough they get a specific error
+    HfNotMuxedToSp,
+    HfBadAddress,
 }
 
 impl fmt::Display for SpError {
@@ -1189,6 +1195,8 @@ impl fmt::Display for SpError {
             Self::Watchdog(e) => write!(f, "watchdog: {}", e),
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
+            Self::HfNotMuxedToSp => write!(f, "Host flash not muxed to SP"),
+            Self::HfBadAddress => write!(f, "Bad host flash address"),
         }
     }
 }
