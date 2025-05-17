@@ -21,9 +21,6 @@ fn usage(prog, error) {
     print("  -u UNDER_TEST_PATH # Path to under-test hubris repo");
     print("  -v # be verbose");
     print("  -h # Help. Print this message");
-    print("path0 - optionally override configuration base_repo value");
-    print("path1 - optionally override configuration ut_repo value");
-    print("");
 }
 
 /// Parse command line options including the required / JSON configuration file.
@@ -165,13 +162,13 @@ fn main() {
     let images = helper::get_image_info(conf);
     if type_of(images) == "i64" {
         // Error code from get_image_info
-        debug("error|Main: Failed to get image info.");
+        debug("error|Failed to get image info.");
         return images;
     }
 
     // Ensure device is in a clean state with baseline firmware
     if (!helper::ensure_initial_baseline_state(conf, images)) {
-        debug("error|Main: Failed to ensure initial baseline state. Exiting.");
+        debug("error|Failed to ensure initial baseline state. Exiting.");
         return 1;
     }
 
@@ -207,25 +204,25 @@ fn main() {
         if conf.use_transient_boot_preference {
             if helper::rot_supports_transient_boot_preference() {
                 debug(
-                    `info|Main: Current RoT supports transient commands. ` +
+                    `info|Current RoT supports transient commands. ` +
                     `Attempting transient update to ${v_params.label}.`
                  );
                 use_transient_for_this_op = true;
             } else {
                 debug(
-                    `warn|Main: Current RoT does NOT support transient commands. ` +
+                    `warn|Current RoT does NOT support transient commands. ` +
                     `Using persistent update to ${v_params.label}.`
                 );
             }
         } else {
             debug(
-                `info|Main: Transient preference not enabled (-t option). ` +
+                `info|Transient preference not enabled (-t option). ` +
                 `Using persistent update to ${v_params.label}.`
             );
         }
 
         debug(
-            `info|Main: Updating RoT Hubris to ${v_params.label} image ` +
+            `info|Updating RoT Hubris to ${v_params.label} image ` +
             `(use_transient=${use_transient_for_this_op}).`
         );
         // Call helper
@@ -236,14 +233,14 @@ fn main() {
             v_params.label,
             conf
         ) {
-            debug(`error|Main: Failed to ${v_params.up_down} RoT to ${v_params.label}.`);
+            debug(`error|Failed to ${v_params.up_down} RoT to ${v_params.label}.`);
             return 1;
         }
 
-        debug(`info|Main: Updating SP Hubris to ${v_params.label} image.`);
+        debug(`info|Updating SP Hubris to ${v_params.label} image.`);
         // Call helper
         if !helper::update_sp(v_params.sp_path) {
-            debug(`error|Main: Failed to ${v_params.up_down} SP to ${v_params.label}.`);
+            debug(`error|Failed to ${v_params.up_down} SP to ${v_params.label}.`);
             return 1;
         }
 
@@ -253,13 +250,13 @@ fn main() {
            result_loop_check.ok?.rot
         {
             debug(
-                `error|Main: image_check error or failed ${v_params.label} updates: ` +
+                `error|image_check error or failed ${v_params.label} updates: ` +
                 `${result_loop_check}`
             );
             return 1;
         }
         debug(
-            `info|SUCCESS: Main: ${v_params.up_down} to SP and RoT ${v_params.label} ` +
+            `info|SUCCESS: ${v_params.up_down} to SP and RoT ${v_params.label} ` +
             `images completed successfully.`
         );
     }
