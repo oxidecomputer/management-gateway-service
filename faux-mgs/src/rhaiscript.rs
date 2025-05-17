@@ -79,6 +79,8 @@ pub async fn interpreter(
             }
         };
 
+        let script_file_name: String = script.file_name().unwrap().to_string_lossy().into();
+
         // Construct argv for the script and canonicalize the script path.
         let pb = fs::canonicalize(&script)
             .context("Cannot canonicalize {&script}")?;
@@ -137,11 +139,12 @@ pub async fn interpreter(
         // etc.
         let rhai_log = log.clone();
         engine.on_debug(move |x, src, pos| {
-            let src = if src.is_some() {
-                format!("{}@", src.unwrap())
+            let src: String = if let Some(src) = src {
+                std::path::Path::new(src).file_name().unwrap().to_string_lossy().into()
             } else {
-                "".to_string()
+                script_file_name.clone().into()
             };
+            let location = format!("{src}@{pos:?}");
             let x: Vec<&str> = x.trim_matches('"').splitn(2, '|').collect();
             let (level, msg) = if x.len() == 1 {
                 ("info".to_string(), x[0].to_string())
@@ -158,12 +161,7 @@ pub async fn interpreter(
                     _ => ("debug".to_string(), format!("{}|{}", level, msg)),
                 }
             };
-            let src = if src.is_empty() {
-                format!("{}@", src)
-            } else {
-                "".to_string()
-            };
-            let msg = format!("{}pos={:?} {}", src, pos, msg);
+            let msg = format!("{location} {msg}");
             match level.as_str() {
                 "crit" => crit!(rhai_log, "{msg}"),
                 "debug" => debug!(rhai_log, "{msg}"),
