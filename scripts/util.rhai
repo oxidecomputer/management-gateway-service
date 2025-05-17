@@ -685,7 +685,7 @@ fn set_rot_boot_preference(target_slot, use_transient_flag, target_label) {
     }
 }
 
-/// Resets the RoT component, waits, gets RotBootInfo (RBI), and validates RBI.
+/// Reset the RoT, wait, get RotBootInfo (RBI), and validate RBI.
 /// Wraps `faux_mgs reset-component rot` and calls `util::rot_boot_info()`.
 ///
 /// Args:
@@ -693,43 +693,80 @@ fn set_rot_boot_preference(target_slot, use_transient_flag, target_label) {
 ///   target_label (string): Descriptive label for logging.
 ///
 /// Returns:
-///   Map: The RBI map on success.
-///   Map: An error map `#{ "error": "message" }` on any failure.
+///   Map: `#{ "ok": rbi_map }` on full success, where `rbi_map` is the parsed RBI.
+///   Map: An error map on any failure, structured as
+///        `#{ "error": "message", "error_type": "type", "details": original_map_if_any }`.
+///        Possible `error_type` values include: "reset_command_failed",
+///        "reset_ack_mismatch", "rbi_fetch_failed", "rbi_invalid_structure".
 fn reset_rot_and_get_rbi(reset_description, target_label) {
-    debug(
-        `info|util::reset_rot_and_get_rbi: Resetting RoT: ` +
-        `${reset_description} (target '${target_label}').`
-    );
+    debug(`info|Resetting RoT: ${reset_description} (target '${target_label}')`);
+
     let r_reset = faux_mgs(["reset-component", "rot"]);
+
+    // Check 1: Did the faux_mgs command itself return an error?
+    if r_reset?.Err != () {
+        let err_msg = `RoT reset command failed. Error: ${r_reset.Err}`;
+        debug(`error|${err_msg}`);
+        return #{
+            "error": err_msg,
+            "error_type": "reset_command_failed",
+            "details": r_reset // Contains the original "Err" from faux_mgs
+        };
+    }
+
+    // Check 2: Did the command succeed but not give the expected ack?
     if r_reset?.ack != "reset" {
         let err_msg =
-            `RoT reset command failed (${reset_description}, ` +
-            `target '${target_label}'). Result: ${r_reset}`;
-        debug(`error|util::reset_rot_and_get_rbi: ${err_msg}`);
-        return #{"error": err_msg};
+            `RoT reset command did not return expected 'ack: "reset"'. ` +
+            `Received: ${r_reset}`;
+        debug(`error|${err_msg}`);
+        return #{
+            "error": err_msg,
+            "error_type": "reset_ack_mismatch",
+            "details": r_reset
+        };
     }
-    sleep(5); // Consider making sleep duration a global constant
 
-    let rbi = rot_boot_info(); // Calls this file's rot_boot_info()
-    if rbi?.error != () {
-        let err_msg =
-            `Failed to get RBI after reset (${reset_description}, ` +
-            `target '${target_label}'). Error: ${rbi.error}`;
-        debug(`error|util::reset_rot_and_get_rbi: ${err_msg}`);
-        return rbi; // Propagate RBI's error map
-    }
-    if rbi?.active == () { // Basic validity check
-        let err_msg =
-            `RBI invalid/incomplete after reset (${reset_description}, `+
-            `target '${target_label}'). RBI: ${rbi}`;
-        debug(`error|util::reset_rot_and_get_rbi: ${err_msg}`);
-        return #{"error": err_msg};
-    }
     debug(
-        `info|util::reset_rot_and_get_rbi: Success ` +
-        `(${reset_description}, target '${target_label}'). Active: ${rbi.active}`
+        `info|RoT reset command acknowledged. Waiting for RoT to boot ` +
+        `(context: ${reset_description}).`
     );
-    return rbi;
+    // TODO: Consider replacing this fixed sleep with active polling for RoT readiness
+    //       if a lightweight "ping" or status command for RoT becomes available.
+    sleep(5);
+
+    // util::rot_boot_info() itself returns either an error map or the RBI map.
+    let rbi_result = util::rot_boot_info();
+
+    if rbi_result?.error != () {
+        // This means rot_boot_info detected an error (either its own parsing
+        // or an error propagated from its internal faux_mgs call).
+        let err_msg =
+            `Failed to get valid RBI after reset (${reset_description}, ` +
+            `target '${target_label}'). Underlying error: ${rbi_result.error}`;
+        debug(`error|${err_msg}`);
+        let error_type = if rbi_result?.error_type != () {
+          rbi_result.error_type
+        } else {
+          "rbi_fetch_failed"
+        };
+        return #{
+            "error": err_msg,
+            // Attempt to preserve original error type if possible, or use a general one
+            "error_type": error_type,
+            "details": rbi_result // Contains the original error map from rot_boot_info
+        };
+    }
+    // If no 'error' key, rbi_result *is* the RBI map.
+    // The current util::rot_boot_info already checks rbi.active internally
+    // and returns an error map if it's missing/invalid.
+
+    debug(
+        `info|Successfully reset RoT and fetched RBI ` +
+        `(${reset_description}, target '${target_label}'). Active: ${rbi_result.active}`
+    );
+    // Standardize success return
+    return #{ "ok": rbi_result };
 }
 
 /// Updates the SP image file (assumes slot 0).
@@ -747,10 +784,7 @@ fn update_sp_image(image_path) {
     if r_update?.ack == "updated" {
         return true;
     } else {
-        print(
-            `ERROR: util::update_sp_image: SP image update command failed. ` +
-            `Result: ${r_update}`
-        );
+        debug(`error|SP image update command failed. Result: ${r_update}`);
         return false;
     }
 }
@@ -770,7 +804,6 @@ fn reset_sp() {
         let err_msg =
             `SP reset command failed or gave unexpected ack. Result: ${r_reset}`;
         debug(`error|util::reset_sp: ${err_msg}`);
-        print(`FAIL - ${err_msg}\n`);
         return false;
     }
 }
@@ -823,16 +856,10 @@ fn reset_component(component_name) {
         );
         return true;
     } else if result?.error != () {
-        print(
-            `ERROR: util::reset_component: Failed to reset component ` +
-            `'${component_name}'. Error: ${result.error}`
-        );
+        debug(`error|reset component ${component_name}: ${result.error}`);
         return false;
     } else {
-        print(
-            `ERROR: util::reset_component: Unexpected response for reset ` +
-            `component '${component_name}'. Ack: ${result?.ack}, Full: ${result}`
-        );
+        debug(`error|reset ${component_name}: result=${result}`);
         return false;
     }
 }
@@ -886,7 +913,7 @@ fn get_power_command(conf, target_device, action) {
             );
             return ();
         }
-        let expanded_part = env_expand(part_template, conf); // util::env_expand
+        let expanded_part = env_expand(part_template, conf);
         if expanded_part == () || type_of(expanded_part) != "string" {
             debug(
                 `error|util::get_power_command: Failed to expand or got non-string ` +
