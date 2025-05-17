@@ -7,9 +7,13 @@ Testing complex scenarios involving multiple commands, conditional logic based
 on hardware state, and interactions across resets can be challenging when
 using individual `faux-mgs` commands manually or via simple shell scripts.
 
-While `faux-mgs` itself can be extended with new commands in Rust, this
-directory provides an alternative approach using the embedded **Rhai**
-scripting language to automate test sequences and workflows.
+`faux-mgs` can be extended with new commands in Rust. For code of
+general utility, that is encouraged.
+
+However, it is sometimes desirable to code in a scripting language.
+This directory provides the ability to use the embedded **Rhai**
+scripting language to automate one-off procedures, test sequences,
+and personal workflows.
 
 ## Benefits of Rhai Scripting
 
@@ -29,9 +33,9 @@ scripting language to automate test sequences and workflows.
 
 ## Rhai Integration Details
 
-* **Entry Point:** Rhai scripts must define a `main()` function that returns
-    an integer (`fn main() -> i64`), typically `0` for success and non-zero
-    for failure.
+* **Entry Point:** These Rhai scripts must define a `main()` function that
+    returns an integer (`fn main() -> i64`), typically `0` for success and
+    non-zero for failure.
 * **Available Globals:** The following globals are available within the
     script's scope:
     * `argv`: An array of string arguments passed to the script after `--`
@@ -66,7 +70,7 @@ scripting language to automate test sequences and workflows.
         (no shell expansion) and returns `#{ exit_code: i64, stdout: str, stderr: str }`.
         *Use with caution.*
 
-## Utility Script (`scripts/util.rhai`)
+## Utility Scripts (`scripts/util.rhai`)
 
 Common helper functions, constants, and wrappers around direct `faux_mgs` calls
 are placed in `scripts/util.rhai`. Scripts should import this using:
@@ -126,7 +130,7 @@ two specified sets of firmware builds (a "baseline" and an "under-test" version)
 Assumes `faux-mgs` is built with `rhaiscript` feature enabled.
 
 ```bash
-# Set environment variable used in targets.json for the 'under-test' repo
+# Set environment variable used in targets.json for the 'under-test' repo, e.g.
 export UT_WORKTREE=my-feature-branch
 
 # Run faux-mgs, targeting the script, providing config and transient flag,

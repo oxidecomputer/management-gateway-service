@@ -30,7 +30,7 @@ fn get_image_info(conf) {
         debug("error|Failed to read CMPA or CFPA from device.");
         return 1;
     }
-    images["keyset"] = util::get_rot_keyset(images.cfpa);
+    images["keyset"] = util::get_rot_keyset(images.cmpa);
     debug(`info|Detected RoT keyset: ${images.keyset}`);
 
     let gitc = #{};
@@ -40,7 +40,7 @@ fn get_image_info(conf) {
     for branch in ["base", "ut"] {
         images[branch] = #{};
         for image_type in ["sp", "rot_a", "rot_b", "stage0"] {
-            let zip_path = conf[branch][image_type];
+            let zip_path = conf?[branch]?[image_type];
             if zip_path == () {
                  debug(`warn|Skipping missing path for ${branch}.${image_type}`);
                  continue;
@@ -141,7 +141,7 @@ fn get_image_info(conf) {
     if images.failed_to_verify.len() > 0 {
          debug("warn|Some RoT images FAILED signature verification:");
          for path_str in images.failed_to_verify {
-            print(`  - ${path_str}`);
+            debug(`warn|failed to verify: ${path_str}`);
          }
     }
     debug("debug|Image Info Map (get_image_info):\n" + images);
@@ -181,10 +181,10 @@ fn sp_needs_flashing(target_image_label, gitc_map) {
         debug("warn|SP GITC does not match known base/ut images.");
         return #{"ok": true};
     } else if target_image_label in known_images {
-        print(`info|Target ${target_image_label} IS IN known images.`);
+        debug(`info|Target ${target_image_label} IS IN known images.`);
         return #{"ok": false};
     } else {
-        print(`warn|Target ${target_image_label} IS NOT in known images.`);
+        debug(`warn|Target ${target_image_label} IS NOT in known images.`);
         return #{"ok": true};
     }
 }
@@ -208,7 +208,7 @@ fn rot_needs_flashing(target_branch_prefix, gitc_map) {
     if rot_gitc == () {
          return #{"error": `Could not read RoT GITC for slot ${rot_active_slot}.`};
     }
-    print(`RoT is running GITC=${rot_gitc} on active slot ${rot_active_slot}`);
+    debug(`info|RoT is running GITC=${rot_gitc} on active slot ${rot_active_slot}`);
     let known_images = gitc_map?[rot_gitc];
     debug(`info|Known images for RoT GITC ${rot_gitc}: ${known_images}`);
     if known_images == () {
@@ -395,8 +395,7 @@ fn update_sp(sp_zip) {
         return false;
     }
     debug("info|SP readiness and clean status confirmed.");
-    print(`### SUCCESS update_sp: ${sp_zip}`);
-    print("");
+    debug(`info|SUCCESS update_sp: ${sp_zip}`);
     return true;
 }
 
@@ -575,7 +574,7 @@ fn power_cycle_dut(conf, context_msg) {
         return;
     }
 
-    let active_slot_after_cycle = rbi_after_cycle.active;
+    let active_slot_after_cycle = rbi_after_cycle.ok.active;
     debug(`info|RoT active slot after power cycle: ${active_slot_after_cycle}`);
     if active_slot_after_cycle != () {
         let gitc_after_cycle = util::caboose_value("rot", `${active_slot_after_cycle}`, "GITC");
@@ -595,145 +594,162 @@ fn power_cycle_dut(conf, context_msg) {
 ///   path_b (string): Path to image for RoT slot B.
 ///   use_transient (bool): Whether to attempt using transient preference mechanism.
 ///   target_label (string): Descriptive label (e.g., "baseline", "under-test").
-///   conf (map): The main configuration map. (New parameter)
+///   conf (map): The main configuration map.
 ///
 /// Returns:
-///   bool: `true` on successful original update and validation, `false` otherwise
-///         (even if a power cycle recovery test was performed).
-/// TODO: Error returns should indicate the cause of the error.
+///   bool: `true` on successful original update and validation, `false` otherwise.
 fn update_rot_hubris(
     path_a,
     path_b,
     use_transient,
     target_label,
-    conf) {
-    print("");
-    print(
-        `### update_rot_hubris (target: ${target_label}, ` +
-        `use_transient: ${use_transient})`
-    );
-    print(`    Image A: ${path_a}`);
-    print(`    Image B: ${path_b}`);
+    conf
+) {
+    debug(`info|update_rot_hubris target=${target_label}`);
+    debug(`info|transient=${use_transient}`);
+    debug(`info|Image A: ${path_a}`);
+    debug(`info|Image B: ${path_b}`);
 
     // Determine the non-active partition and select the appropriate update
     // image.
-    let r_get_active = get_rot_active();
-    if r_get_active?.error != () {
-        debug(`error|get_rot_active failed: ${r_get_active.error}`);
-        // No failure simulation here, as this is prerequisite state checking
+    let r = get_rot_active();
+    if r?.error != () {
+        debug(`error|get_rot_active failed: ${r.error}`);
         return false;
     }
-    let initial_slot = r_get_active.ok;
-    debug(`info|initial_slot=${initial_slot}`);
+    let initial_slot = r.ok;
     let target_slot = if initial_slot == 0 { 1 } else { 0 };
     let target_image = if target_slot == 0 { path_a } else { path_b };
 
     rot_log_initial_params(
-       initial_slot,
-       target_slot,
-       target_image,
-       target_label,
-       use_transient
+        initial_slot,
+        target_slot,
+        target_image,
+        target_label,
+        use_transient
     );
-
-    // Note: While a power cycle recovery may be useful in other cases,
-    // it is only used here in reponse to a failure after reset where the
-    // transient boot preference feature was utilized. The specific failure is
-    // a timeout waiting for the RoT to become responsive after the RoT is
-    // reset, i.e. `reset-component rot` command.
 
     if (!util::update_rot_image_file(target_slot, target_image, target_label)) {
-        return false;
-    }
-
-    // Set the boot preference (transient or persistent)
-    if (!util::set_rot_boot_preference(target_slot, use_transient, target_label)) {
-        return false;
-    }
-
-    // Perform the first reset and get the resulting RBI
-    let rbi_after_first_reset = util::reset_rot_and_get_rbi(
-        "after initial preference set", target_label
-    );
-    if rbi_after_first_reset?.error != () {
-        // TODO: We want to know that the error was a timeout and that
-        // `use_transient` true. Otherwise, power cycling may not be the correct
-        // remedy.
-        if use_transient {
-          power_cycle_dut(conf, "RoT first reset or RBI read failed");
+        // Power cycle only if recovery test for this type of failure is enabled
+        if conf?.rot_hubris_power_cycle_on_failure == true {
+            power_cycle_dut(conf, "RoT image file update command failed");
         }
         return false;
     }
-    // Log RBI details using local helper
+
+    if (!util::set_rot_boot_preference(target_slot, use_transient, target_label)) {
+        if conf?.rot_hubris_power_cycle_on_failure == true {
+            power_cycle_dut(conf, "RoT set boot preference command failed");
+        }
+        return false;
+    }
+
+    let r = util::reset_rot_and_get_rbi(
+        "after initial preference set", target_label
+    );
+    if r?.error != () { // Checks for the "error" key
+        debug(
+            `error|RoT first reset or RBI read failed. Error details: ` +
+            `${r.error}`
+        );
+        // Decide to power cycle based on the error_type
+        if conf?.rot_hubris_power_cycle_on_failure == true {
+            let error_type = r?.error_type;
+            // Only power cycle on errors where device might be unresponsive or in bad state
+            if error_type == "reset_command_failed" ||
+               error_type == "rbi_fetch_failed"
+            {
+                 debug(
+                    `info|Error type '${error_type}' suggests power cycle might help.`
+                 );
+                 power_cycle_dut(conf, `RoT reset/RBI read failed (${error_type})`);
+            } else {
+                 debug(
+                    `info|Error type '${error_type}' - power cycle ` +
+                    `likely won't resolve. Skipping.`
+                 );
+            }
+        }
+        return false;
+    }
+    let rbi = r.ok; // Get the actual RBI data
+
     rot_log_rbi_details(
-        rbi_after_first_reset, "after first reset", initial_slot,
+        rbi, "after first reset", initial_slot,
         target_slot, use_transient
     );
 
-    // Perform validation and potentially make persistent depending on path
     if use_transient {
-
-        // TODO: When Hubris issue #2066 is fixed, then the boot loader decision
-        // log will be available in RotBootInfo. We will then be able to
-        // confirm that the Hubris image was chosen due to the transient
+        // TODO: When Hubris issue #2066 is fixed, then the boot loader
+        // decision log will be available in RotBootInfo. We will then be able
+        // to confirm that the Hubris image was chosen due to the transient
         // preference feature.
 
-        // --- Transient Boot Flow ---
-        if (!rot_validate_initial_transient_boot_state( // Local helper
-            rbi_after_first_reset, initial_slot,
+        if (!rot_validate_initial_transient_boot_state(
+            rbi, initial_slot,
             target_slot, target_label
         )) {
-            power_cycle_dut(conf, "RoT initial transient boot validation failed");
+            if (conf?.rot_hubris_power_cycle_on_failure == true) {
+                power_cycle_dut(conf, "RoT initial transient boot validation failed");
+            }
             return false;
         }
-        if (!rot_ensure_persistence_after_transient_boot( // Local helper
-            rbi_after_first_reset, target_slot, target_label
+        if (!rot_ensure_persistence_after_transient_boot(
+            rbi, target_slot, target_label
         )) {
-            power_cycle_dut(conf, "RoT ensure persistence failed");
+            if (conf?.rot_hubris_power_cycle_on_failure == true) {
+                power_cycle_dut(conf, "RoT ensure persistence failed");
+            }
             return false;
         }
 
-        // Final reset & validation
-        let final_rbi = util::reset_rot_and_get_rbi(
+        let final_rbi_result = util::reset_rot_and_get_rbi(
             "after setting persistence", target_label
         );
-        if final_rbi?.error != () {
-            power_cycle_dut(conf, "RoT final reset or RBI read failed");
+        if final_rbi_result?.error != () {
+            if (conf?.rot_hubris_power_cycle_on_failure == true) {
+                let error_type = final_rbi_result?.error_type;
+                if error_type == "reset_command_failed" || error_type == "rbi_fetch_failed" {
+                     power_cycle_dut(conf, `RoT final reset/RBI read failed (${error_type})`);
+                }
+            }
             return false;
         }
-        rot_log_rbi_details( // Local helper
+        let final_rbi = final_rbi_result.ok;
+
+        rot_log_rbi_details(
             final_rbi, "after final reset (persistence check)",
             initial_slot, target_slot, use_transient
         );
-        if (!rot_validate_final_persistent_boot_state( // Local helper
+        if (!rot_validate_final_persistent_boot_state(
             final_rbi, target_slot, target_label
         )) {
-            power_cycle_dut(conf, "RoT final persistent boot validation failed");
+            if (conf?.rot_hubris_power_cycle_on_failure == true) {
+                power_cycle_dut(conf, "RoT final persistent boot validation failed");
+            }
             return false;
         }
     } else {
-        // --- Direct Persistent Boot Flow ---
-        if (!rot_validate_direct_persistent_boot_state( // Local helper
-            rbi_after_first_reset, target_slot, target_label
+        // Direct Persistent Boot Flow
+        if (!rot_validate_direct_persistent_boot_state(
+            rbi, target_slot, target_label
         )) {
-            power_cycle_dut(conf, "RoT direct persistent boot validation failed");
+            // No specific error type from this local helper yet to condition power cycle
+            if (conf?.rot_hubris_power_cycle_on_failure == true) {
+                power_cycle_dut(conf, "RoT direct persistent boot validation failed");
+            }
             return false;
         }
     }
 
-    // If we reached here, the original update operation succeeded
-    print(
-        `### SUCCESS update_rot_hubris (target: ${target_label}): ` +
-        `successfully updated and booted slot ${target_slot}`
-    );
-    print("");
+    debug(`info|updated and booted target:${target_label} slot=${target_slot}`);
     return true;
 }
 
 /// Ensures the device is in a clean state and running baseline firmware.
 /// Called once at the beginning of the main script.
 fn ensure_initial_baseline_state(conf, images) {
-    print("\n## Phase 1: Determine initial FW state and install baseline if needed");
+    debug("info|Phase 1: Determine initial FW state and install baseline if needed");
     let problems = 0;
     for attempt in 1..=2 {
         problems = 0;
@@ -784,7 +800,7 @@ fn ensure_initial_baseline_state(conf, images) {
 
     if flash_rot {
         debug("info|Initial: RoT needs baseline update (persistent).");
-        if !update_rot_hubris(conf.base.rot_a, conf.base.rot_b, false, "baseline_setup") {
+        if !update_rot_hubris(conf.base.rot_a, conf.base.rot_b, false, "baseline_setup", conf) {
             debug("error|Failed to update RoT to baseline (initial setup).");
             return false;
         }
