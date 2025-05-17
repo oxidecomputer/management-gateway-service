@@ -1,4 +1,8 @@
 {
+  "rot_hubris_power_cycle_on_failure": true,
+  "power_off_delay_secs": 2,
+  "dut_boot_delay_secs": 10,
+
   "repo-home": "${HOME}/Oxide/src",
   "base_repo": "${repo-home}/hubris/master",
   "ut_repo": "${repo-home}/hubris/${UT_WORKTREE}",
@@ -36,17 +40,17 @@
   "power_control": {
     "dut": {
       "comment": "Commands for the main Device Under Test (e.g. grapefruit)",
-      "on_cmd": ["/usr/local/bin/power_switch", "--device", "1", "--action", "ON"],
-      "off_cmd": ["/usr/local/bin/power_switch", "--device 1", "--action OFF"],
-      "status_cmd": ["/usr/local/bin/power_switch", "--device", "1", "--action", "STATUS"],
-      "status_on_stdout_contains": "STATE: ON"
+      "on_cmd": ["grapefruit-power", "on"],
+      "off_cmd": ["grapefruit-power", "off"],
+      "status_cmd": ["grapefruit-power", "state"],
+      "status_on_stdout_contains": "ON"
     },
 
     "stlink": {
-      "comment": "Commands for the STLINK debugger (if needed)",
+      "comment": "Commands for the STLINK debugger (optional)",
       "off_cmd": ["echo", "'STLINK power off command placeholder'"],
       "on_cmd": ["echo", "'STLINK power on command placeholder'"],
-      "status_cmd": ["/usr/sbin/uhubctl"],
+      "status_cmd": ["echo", "'STLINK power status command placeholder'"],
       "status_on_stdout_contains": "STLINK"
     }
   }

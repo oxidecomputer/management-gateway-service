@@ -233,7 +233,8 @@ fn main() {
             v_params.rot_a_path,
             v_params.rot_b_path,
             use_transient_for_this_op,
-            v_params.label
+            v_params.label,
+            conf
         ) {
             debug(`error|Main: Failed to ${v_params.up_down} RoT to ${v_params.label}.`);
             return 1;
