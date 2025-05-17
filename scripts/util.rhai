@@ -632,29 +632,20 @@ fn check_update_in_progress(component) {
 /// Wraps `faux_mgs update rot <slot> <image_path>`.
 ///
 /// Args:
-///   target_slot (int): The RoT slot to update (0 or 1).
+///   slot (int): The RoT slot to update (0 or 1).
 ///   image_path (string): Path to the RoT image file.
-///   target_label (string): Descriptive label for logging (e.g., "baseline").
+///   label (string): Descriptive label for logging (e.g., "baseline").
 ///
 /// Returns:
 ///   true if the command was acknowledged as "updated", false otherwise.
-fn update_rot_image_file(target_slot, image_path, target_label) {
-    debug(
-        `info|util::update_rot_image_file: Updating RoT slot ${target_slot} `+
-        `with ${image_path} (target '${target_label}').`
-    );
-    let r_update = faux_mgs(["update", "rot", `${target_slot}`, image_path]);
-    debug(
-        `info|util::update_rot_image_file: Result for '${target_label}': `+
-        `${r_update}`
-    );
-    if r_update?.ack == "updated" {
+fn update_rot_image_file(slot, image_path, label) {
+    debug(`info|Updating RoT slot ${slot} with ${image_path} (target '${label}').`);
+    let r = faux_mgs(["update", "rot", `${slot}`, image_path]);
+    debug(`info|Result for '${label}': ${r}`);
+    if r?.ack == "updated" {
         return true;
     } else {
-        print(
-            `ERROR: util::update_rot_image_file: RoT update failed for ` +
-            `'${target_label}', slot ${target_slot}. Result: ${r_update}`
-        );
+        debug(`error|RoT update failed for '${label}' slot ${slot}): ${r}`);
         return false;
     }
 }
@@ -846,11 +837,10 @@ fn reset_component(component_name) {
     }
 }
 
-// In scripts/util.rhai
-// ... (other existing functions) ...
-
 /// Retrieves and expands a power control command array from the configuration.
-/// Each element of the command array will be expanded.
+/// Each element of the command array will be expanded using `util::env_expand`.
+/// (This function remains largely the same as proposed in Turn 52, ensuring
+/// it returns () on errors which control_power will then handle.)
 ///
 /// Args:
 ///   conf (map): The main configuration map.
@@ -860,9 +850,9 @@ fn reset_component(component_name) {
 /// Returns:
 ///   array: An array of strings representing the expanded command and its arguments.
 ///   (): Returns null/unit `()` if the command is not defined, not an array,
-///       empty, or if any part fails expansion.
+///       empty, contains non-string elements, or if any part fails expansion.
 fn get_power_command(conf, target_device, action) {
-    let cmd_key = action + "_cmd"; // e.g., "on_cmd"
+    let cmd_key = action + "_cmd";
     let command_template_array = conf?.power_control?[target_device]?[cmd_key];
 
     if command_template_array == () {
@@ -894,9 +884,9 @@ fn get_power_command(conf, target_device, action) {
                 `error|util::get_power_command: Non-string element ` +
                 `'${part_template}' in command array for '${target_device}.${cmd_key}'.`
             );
-            return (); // All parts must be strings before expansion
+            return ();
         }
-        let expanded_part = util::env_expand(part_template, conf);
+        let expanded_part = env_expand(part_template, conf); // util::env_expand
         if expanded_part == () || type_of(expanded_part) != "string" {
             debug(
                 `error|util::get_power_command: Failed to expand or got non-string ` +
@@ -906,6 +896,10 @@ fn get_power_command(conf, target_device, action) {
         }
         expanded_command_array.push(expanded_part);
     }
+    debug(
+        `info|util::get_power_command: Expanded for '${target_device}' action '${action}': `+
+        `${expanded_command_array}`
+    );
     return expanded_command_array;
 }
 
@@ -922,88 +916,101 @@ fn get_power_command(conf, target_device, action) {
 ///     true: If command executes with exit code 0.
 ///     false: If command not defined, fails execution, or has non-zero exit code.
 ///   For "status" action:
-///     true: If status indicates "ON" (exit code 0, and stdout check if configured).
-///     false: If status indicates "OFF" or an error occurs.
-///     (): If command is not defined or fails so status cannot be determined.
+///     "ON" (string): Power is confirmed to be ON.
+///     "OFF" (string): Power is confirmed to be OFF.
+///     "UNKNOWN" (string): Command ran successfully but output was ambiguous.
+///     Map `#{ "error": "message", ... }`: If status could not be determined due
+///                                        to configuration error or command failure.
 fn control_power(target_device, action, conf) {
     debug(
-        `info|util::control_power: Attempting action '${action}' ` +
+        `info|util::control_power: Requesting action '${action}' ` +
         `for device '${target_device}'.`
     );
-    // get_power_command now returns an array of strings or ()
     let command_array = get_power_command(conf, target_device, action);
 
-    if command_array == () || type_of(command_array) != "array" || command_array.len() == 0 {
-        debug(
-            `error|util::control_power: Could not retrieve a valid command array ` +
-            `for '${target_device}' action '${action}'.`
-        );
-        // Maintain previous return logic for status being indeterminate
-        return if action == "status" { () } else { false };
+    if command_array == () { // Checks for null from get_power_command indicating config error
+        let err_msg =
+            `Configuration error: Could not retrieve command for ` +
+            `'${target_device}' action '${action}'.`;
+        debug(`error|util::control_power: ${err_msg}`);
+        return #{ "error": err_msg };
     }
+    // No need to check type_of(command_array) != "array" or len == 0 here
+    // as get_power_command would have returned () in those cases.
 
     debug(`info|util::control_power: Executing command array: ${command_array}`);
-    // The system() function expects a single array where the first element
-    // is the command and the rest are arguments.
     let system_result = system(command_array);
 
-    if system_result?.error != () { // Error from system() itself (e.g., command not found)
-        debug(`error|util::control_power: system() call failed for '${command_array[0]}': ${system_result.error}`);
-        return if action == "status" { () } else { false };
+    if system_result?.error != () { // Error from system() call itself
+        let err_msg =
+            `Command execution failed: system() call for '${command_array[0]}' ` +
+            `failed: ${system_result.error}`;
+        debug(`error|util::control_power: ${err_msg}`);
+        return #{ "error": err_msg, "details": system_result };
     }
 
-    debug(`info|util::control_power: System result for '${action}': ${system_result}`);
+    debug(`info|util::control_power: System result for '${action}' on '${target_device}': ${system_result}`);
 
-    // Interpret result
     if action == "on" || action == "off" {
         if system_result.exit_code == 0 {
             debug(
                 `info|util::control_power: Action '${action}' for ` +
-                `'${target_device}' succeeded (exit code 0).`
+                `'${target_device}' SUCCEEDED (exit code 0).`
             );
             return true;
         } else {
+            let err_msg =
+                `Action '${action}' for '${target_device}' FAILED ` +
+                `(command exit code ${system_result.exit_code}).`;
             debug(
-                `error|util::control_power: Action '${action}' for ` +
-                `'${target_device}' failed (exit code ${system_result.exit_code}). ` +
-                `Stdout: ${system_result.stdout}, Stderr: ${system_result.stderr}`
+                `error|util::control_power: ${err_msg} `+
+                `Stdout: [${system_result.stdout}], Stderr: [${system_result.stderr}]`
             );
-            return false;
+            return false; // Explicit false for command failure for on/off actions
         }
     } else if action == "status" {
+        let cmd_name = if command_array.len() > 0 { command_array[0] } else { "unknown_command" };
+        if system_result.exit_code != 0 {
+            let err_msg =
+                `Status command '${cmd_name}' for '${target_device}' indicated failure ` +
+                `with exit code ${system_result.exit_code}.`;
+            debug(
+                `error|util::control_power: ${err_msg} Stdout: [${system_result.stdout}], ` +
+                `Stderr: [${system_result.stderr}]`
+            );
+            return #{ "error": err_msg, "details": system_result };
+        }
+
+        // Status command executed successfully (exit code 0). Now determine power state.
         let expected_on_text = conf?.power_control?[target_device]?.status_on_stdout_contains;
-        if system_result.exit_code == 0 {
-            if expected_on_text == () || type_of(expected_on_text) != "string" || expected_on_text.len() == 0 {
+
+        if expected_on_text != () && type_of(expected_on_text) == "string" && expected_on_text.len() > 0 {
+            // status_on_stdout_contains is configured, use it
+            if system_result.stdout.contains(expected_on_text) {
                 debug(
                     `info|util::control_power: Status for '${target_device}' is ON ` +
-                    `(exit code 0, no stdout check configured).`
+                    `(stdout matched '${expected_on_text}').`
                 );
-                return true;
-            } else if system_result.stdout.contains(expected_on_text) {
-                debug(
-                    `info|util::control_power: Status for '${target_device}' is ON ` +
-                    `(exit code 0, stdout contains '${expected_on_text}').`
-                );
-                return true;
+                return "ON";
             } else {
                 debug(
-                    `info|util::control_power: Status for '${target_device}' is considered OFF ` +
-                    `(exit code 0, but stdout does not contain '${expected_on_text}'). ` +
-                    `Stdout: ${system_result.stdout}`
+                    `info|util::control_power: Status for '${target_device}' is OFF `+
+                    `(stdout did not match '${expected_on_text}'). Stdout: [${system_result.stdout}]`
                 );
-                return false;
+                return "OFF";
             }
         } else {
+            // No status_on_stdout_contains configured. Exit code 0 from status_cmd means ON.
             debug(
-                `info|util::control_power: Status for '${target_device}' is OFF or error ` +
-                `(exit code ${system_result.exit_code}). `+
-                `Stdout: ${system_result.stdout}, Stderr: ${system_result.stderr}`
+                `info|util::control_power: Status for '${target_device}' is ON ` +
+                `(exit code 0 from command, no specific stdout check configured).`
             );
-            return false;
+            return "ON";
         }
     } else {
-        debug(`error|util::control_power: Unknown action '${action}'.`);
-        return if action == "status" { () } else { false };
+        let err_msg = `Unknown action '${action}' requested for power control.`;
+        debug(`error|util::control_power: ${err_msg}`);
+        return #{ "error": err_msg }; // Should not happen if called correctly
     }
 }
 
