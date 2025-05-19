@@ -37,5 +37,4 @@ fn read_host_flash() {
 
     let error4 = SpError::HfQspiTransferError;
     assert_serialized(&[41], &error4);
-
 }
