@@ -1218,7 +1218,9 @@ impl fmt::Display for SpError {
             Self::HfNotMuxedToSp => write!(f, "Host flash not muxed to SP"),
             Self::HfBadAddress => write!(f, "Bad host flash address"),
             Self::HfQspiTimeout => write!(f, "Host QSPI timeout"),
-            Self::HfQspiTransferError => write!(f, "Host QSPI Transfer Error (check address)"),
+            Self::HfQspiTransferError => {
+                write!(f, "Host QSPI Transfer Error (check address)")
+            }
         }
     }
 }
