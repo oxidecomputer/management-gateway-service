@@ -31,4 +31,11 @@ fn read_host_flash() {
 
     let error2 = SpError::HfBadAddress;
     assert_serialized(&[39], &error2);
+
+    let error3 = SpError::HfQspiTimeout;
+    assert_serialized(&[40], &error3);
+
+    let error4 = SpError::HfQspiTransferError;
+    assert_serialized(&[41], &error4);
+
 }
