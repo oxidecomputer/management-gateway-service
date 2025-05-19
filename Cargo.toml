@@ -24,7 +24,7 @@ anyhow = "1.0"
 async-trait = "0.1"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.22.1"
-bitflags = "2.9.0"
+bitflags = "2.9.1"
 camino = "1.1.9"
 clap = { version = "4.5", features = ["derive", "env"] }
 futures = "0.3.31"
