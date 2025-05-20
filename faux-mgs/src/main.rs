@@ -456,6 +456,8 @@ enum Command {
     },
     /// Read Host flash at address
     ReadHostFlash {
+        // Giving addresses in hex is nice and the default clap parser
+        // does not support that
         #[clap(value_parser = parse_int::parse::<u32>)]
         addr: u32,
     },
