@@ -16,7 +16,7 @@
 //! tests can be removed as we will stop supporting $VERSION.
 
 use super::assert_serialized;
-use gateway_messages::{MgsRequest, SpError, SpResponse};
+use gateway_messages::{HfError, MgsRequest, SpError, SpResponse};
 
 #[test]
 fn read_host_flash() {
@@ -26,15 +26,16 @@ fn read_host_flash() {
     let response = SpResponse::ReadHostFlash;
     assert_serialized(&[49], &response);
 
-    let error1 = SpError::HfNotMuxedToSp;
-    assert_serialized(&[38], &error1);
-
-    let error2 = SpError::HfBadAddress;
-    assert_serialized(&[39], &error2);
-
-    let error3 = SpError::HfQspiTimeout;
-    assert_serialized(&[40], &error3);
-
-    let error4 = SpError::HfQspiTransferError;
-    assert_serialized(&[41], &error4);
+    for (i, e) in [
+        HfError::NotMuxedToSp,
+        HfError::BadAddress,
+        HfError::QspiTimeout,
+        HfError::QspiTransferError,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        let request = SpError::Hf(e);
+        assert_serialized(&[38, i as u8], &request);
+    }
 }
