@@ -412,6 +412,12 @@ pub trait SpHandler {
         addr: u32,
         buf: &mut [u8],
     ) -> Result<(), SpError>;
+
+    fn host_flash_hash(
+        &mut self,
+        buf: &mut [u8],
+    ) -> Result<(), SpError>;
+
 }
 
 /// Handle a single incoming message.
@@ -1021,6 +1027,16 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::ReadHostFlash)
         }
+        MgsRequest::HostFlashHash => {
+            let r = handler.host_flash_hash(trailing_tx_buf);
+            if r.is_ok() {
+                // This is always sha256
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(32));
+            }
+            r.map(|_| SpResponse::HostFlashHash)
+        }
+
     };
 
     let response = match result {
