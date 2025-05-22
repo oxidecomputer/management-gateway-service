@@ -161,6 +161,9 @@ pub enum SpResponse {
 
     /// Packet contains the host flash data
     ReadHostFlash,
+
+    /// Packet contains host flash hash
+    HostFlashHash,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

@@ -213,10 +213,13 @@ pub enum MgsRequest {
 
     Dump(DumpRequest),
 
-    /// Read the host flash at the specified address. Always returns one page size
+    /// Read the host flash at the specified address for the current
+    /// persistent slot. Always returns one page size
     ReadHostFlash {
         addr: u32,
     },
+    /// sha256 sum of the currently selected persistent slot
+    HostFlashHash,
 }
 
 #[derive(
