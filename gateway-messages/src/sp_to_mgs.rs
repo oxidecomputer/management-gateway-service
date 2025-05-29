@@ -36,8 +36,17 @@ use monorail_port_status::{PortStatus, PortStatusError};
 use ignition::LinkEvents;
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum SpRequest {
     /// Data traveling from an SP-attached component (in practice, a CPU) on the
     /// component's serial console.
@@ -66,6 +75,7 @@ pub enum SpRequest {
     Serialize,
     Deserialize,
     strum_macros::IntoStaticStr,
+    strum_macros::VariantNames,
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum SpResponse {
@@ -977,8 +987,16 @@ impl From<PowerStateTransition> for SpResponse {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum SpError {
     /// The SP is busy; retry the request mometarily.
     ///

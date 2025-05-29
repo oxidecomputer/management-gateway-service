@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "compose-wireshark-plugin",
     "faux-mgs",
     "gateway-ereport-messages",
     "gateway-messages",
@@ -8,6 +9,7 @@ members = [
 ]
 
 default-members = [
+    "compose-wireshark-plugin",
     "faux-mgs",
     "gateway-ereport-messages",
     "gateway-messages",
@@ -27,6 +29,7 @@ base64 = "0.22.1"
 bitflags = "2.9.1"
 camino = "1.1.9"
 clap = { version = "4.5", features = ["derive", "env"] }
+convert_case = "0.8"
 futures = "0.3.31"
 fxhash = "0.2.1"
 glob = "0.3.2"
@@ -55,7 +58,8 @@ socket2 = "0.5.9"
 ssh-agent-client-rs = "0.9.1"
 ssh-key = { version = "0.6.7", features = ["p256"] }
 static_assertions = "1.1.0"
-strum_macros = "0.25"
+strum = { version = "0.27.1", default-features = false }
+strum_macros = "0.27.1"
 string_cache = "0.8.9"
 termios = "0.3"
 thiserror = "1.0.69"
