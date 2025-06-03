@@ -51,12 +51,7 @@ impl LuaWriter {
         || -> io::Result<()> {
             let f = &mut self.output_protofields;
 
-            writeln!(
-                f,
-                "-- This file is auto-generated. Any hand edits \
-                    will be overwritten!"
-            )?;
-            writeln!(f)?;
+            write_license_header(f)?;
             writeln!(f, "local M = {{}}")?;
             writeln!(f)?;
 
@@ -108,6 +103,7 @@ impl LuaWriter {
         enum_name: &str,
         mut f: BufWriter<fs::File>,
     ) -> io::Result<()> {
+        write_license_header(&mut f)?;
         writeln!(f, "local util = require('util')")?;
         writeln!(f, "local protofields = require('protofields')")?;
         writeln!(f)?;
@@ -163,6 +159,16 @@ impl LuaWriter {
 
         Ok(())
     }
+}
+
+fn write_license_header(f: &mut BufWriter<fs::File>) -> io::Result<()> {
+    writeln!(
+        f,
+        "\
+-- This Source Code Form is subject to the terms of the Mozilla Public
+-- License, v. 2.0. If a copy of the MPL was not distributed with this
+-- file, You can obtain one at https://mozilla.org/MPL/2.0/.\n"
+    )
 }
 
 macro_rules! emit_enum {
