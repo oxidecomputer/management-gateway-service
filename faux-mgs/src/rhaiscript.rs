@@ -307,7 +307,7 @@ pub async fn interpreter(
 //   are converted to `Dynamic` using `.into()`.
 // * Place the underlying error in the third position of the
 //   `EvalAltResult::ErrorInFunctionCall` variant.
-// * Use `context.position()` to get the error position.
+// * Use `context.call_position()` to get the error position.
 // * Do not use the `mut` keyword on the `child` variable when calling
 //   `command.spawn()`.
 //
@@ -328,7 +328,7 @@ fn system(
             Err(_) => {
                 return Err(Box::new(EvalAltResult::ErrorRuntime(
                     "Arguments must be strings.".into(),
-                    context.position(),
+                    context.call_position(),
                 )));
             }
         }
@@ -340,9 +340,9 @@ fn system(
             "Expected at least one argument.".to_string(),
             Box::new(EvalAltResult::ErrorRuntime(
                 "".into(),
-                context.position(),
+                context.call_position(),
             )),
-            context.position(),
+            context.call_position(),
         )));
     }
 
@@ -361,7 +361,7 @@ fn system(
         Err(e) => {
             return Err(Box::new(EvalAltResult::ErrorRuntime(
                 format!("Failed to spawn command: {}", e).into(),
-                context.position(),
+                context.call_position(),
             )));
         }
     };
@@ -371,7 +371,7 @@ fn system(
         Err(e) => {
             return Err(Box::new(EvalAltResult::ErrorRuntime(
                 format!("Failed to get command output: {}", e).into(),
-                context.position(),
+                context.call_position(),
             )));
         }
     };

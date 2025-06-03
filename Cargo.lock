@@ -19,15 +19,16 @@ checksum = "f26201604c87b1e01bd3d98f8d5d9a8fcbb815e8cedb41ffccbeb4bf593a35fe"
 
 [[package]]
 name = "ahash"
-version = "0.8.3"
+version = "0.8.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2c99f64d1e06488f620f932677e24bc6e2897582980441ae90a671415bd7ec2f"
+checksum = "5a15f179cd60c4584b8a8c596927aadc462e27f2ca70c04e0071964a73ba7a75"
 dependencies = [
  "cfg-if",
  "const-random",
- "getrandom 0.2.7",
+ "getrandom 0.3.1",
  "once_cell",
  "version_check",
+ "zerocopy 0.8.26",
 ]
 
 [[package]]
@@ -2418,9 +2419,9 @@ dependencies = [
 
 [[package]]
 name = "rhai"
-version = "1.21.0"
+version = "1.22.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ce4d759a4729a655ddfdbb3ff6e77fb9eadd902dae12319455557796e435d2a6"
+checksum = "2780e813b755850e50b178931aaf94ed24f6817f46aaaf5d21c13c12d939a249"
 dependencies = [
  "ahash",
  "bitflags 2.9.1",
