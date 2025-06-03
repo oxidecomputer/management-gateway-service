@@ -50,33 +50,23 @@ impl LuaWriter {
     }
 
     fn write_protofields_preamble(&mut self) -> anyhow::Result<()> {
-        || -> io::Result<()> {
-            let f = &mut self.output_protofields;
-
+        self.write_to_protofields(|f| {
             write_license_header(f)?;
             writeln!(f, "local M = {{}}")?;
             writeln!(f)?;
-
             Ok(())
-        }()
-        .with_context(|| {
-            format!("failed to write to {}/protofields.lua", self.output_dir)
         })
     }
 
     fn finish(mut self) -> anyhow::Result<()> {
-        writeln!(self.output_protofields, "return M").with_context(|| {
-            format!("failed to write to {}/protofields.lua", self.output_dir)
-        })
+        self.write_to_protofields(|f| writeln!(f, "return M"))
     }
 
     fn emit_enum<T: VariantNames>(
         &mut self,
         enum_name: &str,
     ) -> anyhow::Result<()> {
-        self.append_protofields::<T>(enum_name).with_context(|| {
-            format!("failed to write to {}/protofields.lua", self.output_dir)
-        })?;
+        self.write_to_protofields(|f| append_protofields::<T>(f, enum_name))?;
 
         // Create a placeholder (TODO-filled) dissector lua module, if one
         // doesn't exist already. If it does exist, don't overwrite it: it may
@@ -98,6 +88,20 @@ impl LuaWriter {
         }
 
         Ok(())
+    }
+
+    // helper to convert an io::Result to an anyhow::Result by attaching context
+    // that we failed writing to `PROTOFIELDS_FILENAME`
+    fn write_to_protofields<F>(&mut self, f: F) -> anyhow::Result<()>
+    where
+        F: FnOnce(&mut BufWriter<fs::File>) -> io::Result<()>,
+    {
+        f(&mut self.output_protofields).with_context(|| {
+            format!(
+                "failed to write to {}/{PROTOFIELDS_FILENAME}",
+                self.output_dir
+            )
+        })
     }
 
     fn write_dissectors<T: VariantNames>(
@@ -123,44 +127,42 @@ impl LuaWriter {
 
         Ok(())
     }
+}
 
-    fn append_protofields<T: VariantNames>(
-        &mut self,
-        enum_name: &str,
-    ) -> io::Result<()> {
-        let f = &mut self.output_protofields;
+fn append_protofields<T: VariantNames>(
+    f: &mut BufWriter<fs::File>,
+    enum_name: &str,
+) -> io::Result<()> {
+    let snake = enum_name.to_case(Case::Snake);
 
-        let snake = enum_name.to_case(Case::Snake);
+    // empty table
+    writeln!(f, "M.{snake} = {{}}")?;
 
-        // empty table
-        writeln!(f, "M.{snake} = {{}}")?;
-
-        // variant names
-        writeln!(f, "M.{snake}.names = {{")?;
-        for (i, v) in T::VARIANTS.iter().enumerate() {
-            let c = v.to_case(Case::Pascal);
-            writeln!(f, r#"    [{i}] = "{c}","#)?;
-        }
-        writeln!(f, "}}")?;
-
-        // handler function names
-        writeln!(f, "M.{snake}.handlers = {{")?;
-        for (i, v) in T::VARIANTS.iter().enumerate() {
-            writeln!(f, r#"    [{i}] = "dissect_{v}","#)?;
-        }
-        writeln!(f, "}}")?;
-
-        // proto field
-        writeln!(f, "M.{snake}.field = ProtoField.uint8(")?;
-        writeln!(f, r#"    "mgs.{snake}","#)?;
-        writeln!(f, r#"    "{enum_name}","#)?;
-        writeln!(f, r#"    base.DEC,"#)?;
-        writeln!(f, r#"    M.{snake}.names"#)?;
-        writeln!(f, ")")?;
-        writeln!(f)?;
-
-        Ok(())
+    // variant names
+    writeln!(f, "M.{snake}.names = {{")?;
+    for (i, v) in T::VARIANTS.iter().enumerate() {
+        let c = v.to_case(Case::Pascal);
+        writeln!(f, r#"    [{i}] = "{c}","#)?;
     }
+    writeln!(f, "}}")?;
+
+    // handler function names
+    writeln!(f, "M.{snake}.handlers = {{")?;
+    for (i, v) in T::VARIANTS.iter().enumerate() {
+        writeln!(f, r#"    [{i}] = "dissect_{v}","#)?;
+    }
+    writeln!(f, "}}")?;
+
+    // proto field
+    writeln!(f, "M.{snake}.field = ProtoField.uint8(")?;
+    writeln!(f, r#"    "mgs.{snake}","#)?;
+    writeln!(f, r#"    "{enum_name}","#)?;
+    writeln!(f, r#"    base.DEC,"#)?;
+    writeln!(f, r#"    M.{snake}.names"#)?;
+    writeln!(f, ")")?;
+    writeln!(f)?;
+
+    Ok(())
 }
 
 fn write_license_header(f: &mut BufWriter<fs::File>) -> io::Result<()> {
