@@ -16,5 +16,4 @@ jobs:
           deno-version: v2.x
 
       - name: Run license check
-        run |
-          deno run --allow-read jsr:@kt3k/license-checker@3.3.1/main
+        run: deno run --allow-read jsr:@kt3k/license-checker@3.3.1/main
