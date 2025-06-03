@@ -19,8 +19,17 @@ use serde::Serialize;
 use serde_big_array::BigArray;
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MgsRequest {
     Discover,
     IgnitionState {
@@ -215,8 +224,17 @@ pub enum MgsRequest {
 }
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MgsResponse {
     Error(MgsError),
     /// Sent in response to an `SpRequest::HostPhase2Data` request. Followed by
@@ -229,8 +247,17 @@ pub enum MgsResponse {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MgsError {
     /// The request from the SP was invalid.
     BadRequest(BadRequestReason),

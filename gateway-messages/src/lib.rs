@@ -92,8 +92,16 @@ pub struct Message {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Serialize, Deserialize, SerializedSize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Serialize,
+    Deserialize,
+    SerializedSize,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MessageKind {
     MgsRequest(MgsRequest),
     MgsResponse(MgsResponse),

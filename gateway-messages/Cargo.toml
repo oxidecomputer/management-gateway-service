@@ -12,6 +12,7 @@ serde-big-array.workspace = true
 serde_repr.workspace = true
 smoltcp = { workspace = true, optional = true }
 static_assertions.workspace = true
+strum.workspace = true
 strum_macros.workspace = true
 uuid.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
