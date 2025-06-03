@@ -27,9 +27,11 @@ async-trait = "0.1"
 backoff = { version = "0.4.0", features = ["tokio"] }
 base64 = "0.22.1"
 bitflags = "2.9.1"
-camino = "1.1.9"
+camino = "1.1.10"
+camino-tempfile = "1.4.1"
 clap = { version = "4.5", features = ["derive", "env"] }
 convert_case = "0.8"
+expectorate = "=1.1.0" # 1.2 requires rust 1.75; bump eventually
 futures = "0.3.31"
 fxhash = "0.2.1"
 glob = "0.3.2"

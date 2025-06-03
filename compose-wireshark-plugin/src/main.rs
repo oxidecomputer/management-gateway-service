@@ -20,6 +20,8 @@ use std::io::BufWriter;
 use std::io::Write as _;
 use strum::VariantNames;
 
+const PROTOFIELDS_FILENAME: &str = "protofields.lua";
+
 #[derive(Parser, Debug)]
 struct Args {
     #[clap(default_value = "wireshark")]
@@ -37,7 +39,7 @@ impl LuaWriter {
             format!("failed to create output dir {output_dir}")
         })?;
 
-        let path = output_dir.join("protofields.lua");
+        let path = output_dir.join(PROTOFIELDS_FILENAME);
         println!("creating or overwriting {path}");
         let output_protofields =
             BufWriter::new(fs::File::create(&path).with_context(|| {
@@ -177,9 +179,8 @@ macro_rules! emit_enum {
     };
 }
 
-fn main() -> anyhow::Result<()> {
-    let args = Args::parse();
-    let mut writer = LuaWriter::new(args.output_dir)?;
+fn compose_into_dir(dir: Utf8PathBuf) -> anyhow::Result<()> {
+    let mut writer = LuaWriter::new(dir)?;
     writer.write_protofields_preamble()?;
     emit_enum!(writer, MessageKind);
     emit_enum!(writer, MgsError);
@@ -190,4 +191,31 @@ fn main() -> anyhow::Result<()> {
     emit_enum!(writer, SpResponse);
     writer.finish()?;
     Ok(())
+}
+
+fn main() -> anyhow::Result<()> {
+    let args = Args::parse();
+    compose_into_dir(args.output_dir)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use camino_tempfile::Utf8TempDir;
+
+    #[test]
+    fn protofields_is_up_to_date() {
+        let tempdir = Utf8TempDir::new().expect("created tempdir");
+        compose_into_dir(tempdir.path().to_owned())
+            .expect("composed lua plugin");
+
+        let written_protofields =
+            fs::read_to_string(tempdir.path().join(PROTOFIELDS_FILENAME))
+                .expect("read protofields from tempdir");
+
+        expectorate::assert_contents(
+            format!("../wireshark/{PROTOFIELDS_FILENAME}"),
+            &written_protofields,
+        );
+    }
 }

@@ -11,3 +11,7 @@ clap.workspace = true
 convert_case.workspace = true
 gateway-messages.workspace = true
 strum.workspace = true
+
+[dev-dependencies]
+camino-tempfile.workspace = true
+expectorate.workspace = true
