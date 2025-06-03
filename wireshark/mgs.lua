@@ -2,7 +2,7 @@
 -- License, v. 2.0. If a copy of the MPL was not distributed with this
 -- file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-local mgs = Proto("mgs", "MGS <-> SP UDP Protocol")
+local mgs = Proto("mgs", "MGS <-> SP control-plane-agent UDP Protocol")
 
 local util = require('util')
 local protofields = require('protofields')
@@ -34,7 +34,7 @@ function mgs.dissector(buffer, pinfo, tree)
 
     pinfo.cols.protocol = mgs.name
 
-    local subtree = tree:add(mgs, buffer(), "MGS Protocol")
+    local subtree = tree:add(mgs, buffer(), "MGS/control-plane-agent Protocol")
     local kind = buffer(8,1):uint()
 
     subtree:add_le(f_version, buffer(0,4))
@@ -51,7 +51,7 @@ end
 
 local udp_port = DissectorTable.get("udp.port")
 
--- Attach to both the SP and MGS ports.
+-- Attach to both the SP and MGS control-plane-agent ports.
 --
 -- We could consider splitting this into "SP -> MGS protocol" and "MGS -> SP
 -- protocol" and registering them separately?
