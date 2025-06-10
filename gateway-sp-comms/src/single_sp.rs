@@ -1428,25 +1428,17 @@ impl SingleSp {
             .and_then(expect_host_flash_read)
     }
 
-    pub async fn start_host_flash_hash(
-        &self,
-        slot: u8
-    ) -> Result<()> {
+    pub async fn start_host_flash_hash(&self, slot: u8) -> Result<()> {
         self.rpc(MgsRequest::StartHostFlashHash { slot })
             .await
             .and_then(expect_start_host_flash_hash_ack)
-
     }
 
-    pub async fn get_host_flash_hash(
-        &self,
-        slot: u8
-    ) -> Result<[u8; 32]> {
+    pub async fn get_host_flash_hash(&self, slot: u8) -> Result<[u8; 32]> {
         self.rpc(MgsRequest::GetHostFlashHash { slot })
             .await
             .and_then(expect_host_flash_hash)
     }
-
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)

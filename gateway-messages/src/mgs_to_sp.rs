@@ -234,7 +234,7 @@ pub enum MgsRequest {
     /// sha256 sum of the slot
     GetHostFlashHash {
         slot: u8,
-    }
+    },
 }
 
 #[derive(

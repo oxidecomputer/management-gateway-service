@@ -23,14 +23,28 @@ fn read_host_flash() {
     let request = MgsRequest::ReadHostFlash { addr: 0 };
     assert_serialized(&[47, 0, 0, 0, 0], &request);
 
+    let request = MgsRequest::StartHostFlashHash { slot: 0 };
+    assert_serialized(&[48, 0], &request);
+
+    let request = MgsRequest::GetHostFlashHash { slot: 0 };
+    assert_serialized(&[49, 0], &request);
+
     let response = SpResponse::ReadHostFlash;
     assert_serialized(&[49], &response);
+
+    let response = SpResponse::StartHostFlashHashAck;
+    assert_serialized(&[50], &response);
+
+    let response = SpResponse::HostFlashHash;
+    assert_serialized(&[51], &response);
 
     for (i, e) in [
         HfError::NotMuxedToSp,
         HfError::BadAddress,
         HfError::QspiTimeout,
         HfError::QspiTransferError,
+        HfError::HashUncalculated,
+        HfError::RecalculateHash,
     ]
     .into_iter()
     .enumerate()

@@ -247,7 +247,9 @@ enum Command {
     },
 
     /// Get or set startup options on an SP.
-    StartupOptions { options: Option<u64> },
+    StartupOptions {
+        options: Option<u64>,
+    },
 
     /// Ask SP for its inventory.
     Inventory,
@@ -305,7 +307,9 @@ enum Command {
     UsartDetach,
 
     /// Serve host phase 2 images.
-    ServeHostPhase2 { directory: PathBuf },
+    ServeHostPhase2 {
+        directory: PathBuf,
+    },
 
     /// Upload a new image to the SP or one of its components.
     ///
@@ -462,11 +466,11 @@ enum Command {
         addr: u32,
     },
     StartHostFlashHash {
-        slot: u8
+        slot: u8,
     },
     GetHostFlashHash {
-        slot: u8
-    }
+        slot: u8,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1720,14 +1724,13 @@ async fn run_command(
             Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
         Command::StartHostFlashHash { slot } => {
-            let result = sp.start_host_flash_hash(slot).await?;
-            Ok(Output::Lines(vec![format!("{result:x?}")]))
+            sp.start_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec!["hash started".to_string()]))
         }
         Command::GetHostFlashHash { slot } => {
             let result = sp.get_host_flash_hash(slot).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
-
     }
 }
 

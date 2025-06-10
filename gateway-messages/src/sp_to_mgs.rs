@@ -1732,6 +1732,8 @@ pub enum HfError {
     BadAddress,
     QspiTimeout,
     QspiTransferError,
+    HashUncalculated,
+    RecalculateHash,
 }
 
 impl fmt::Display for HfError {
@@ -1743,6 +1745,8 @@ impl fmt::Display for HfError {
             Self::QspiTransferError => {
                 "Host QSPI Transfer Error (check address)"
             }
+            Self::HashUncalculated => "No hash calculated for slot",
+            Self::RecalculateHash => "Slot requires hash recalculation",
         };
         write!(f, "{s}")
     }

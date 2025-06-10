@@ -413,10 +413,7 @@ pub trait SpHandler {
         buf: &mut [u8],
     ) -> Result<(), SpError>;
 
-    fn start_host_flash_hash(
-        &mut self,
-        slot: u8,
-    ) -> Result<(), SpError>;
+    fn start_host_flash_hash(&mut self, slot: u8) -> Result<(), SpError>;
 
     fn get_host_flash_hash(
         &mut self,
@@ -1032,9 +1029,9 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::ReadHostFlash)
         }
-        MgsRequest::StartHostFlashHash { slot } => {
-            handler.start_host_flash_hash(slot).map(|_| SpResponse::StartHostFlashHashAck)
-        }
+        MgsRequest::StartHostFlashHash { slot } => handler
+            .start_host_flash_hash(slot)
+            .map(|_| SpResponse::StartHostFlashHashAck),
         MgsRequest::GetHostFlashHash { slot } => {
             let r = handler.get_host_flash_hash(slot, trailing_tx_buf);
             if r.is_ok() {
@@ -1042,9 +1039,7 @@ fn handle_mgs_request<H: SpHandler>(
                     Some(OutgoingTrailingData::ShiftFromTail(32));
             }
             r.map(|_| SpResponse::HostFlashHash)
-
         }
-
     };
 
     let response = match result {
@@ -1459,10 +1454,7 @@ mod tests {
             unimplemented!()
         }
 
-        fn start_host_flash_hash(
-            &mut self,
-            _slot: u8,
-        ) -> Result<(), SpError> {
+        fn start_host_flash_hash(&mut self, _slot: u8) -> Result<(), SpError> {
             unimplemented!()
         }
 
@@ -1473,8 +1465,6 @@ mod tests {
         ) -> Result<(), SpError> {
             unimplemented!()
         }
-
-
     }
 
     #[cfg(feature = "std")]
