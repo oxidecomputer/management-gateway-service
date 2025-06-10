@@ -461,7 +461,12 @@ enum Command {
         #[clap(value_parser = parse_int::parse::<u32>)]
         addr: u32,
     },
-    HostFlashHash,
+    StartHostFlashHash {
+        slot: u8
+    },
+    GetHostFlashHash {
+        slot: u8
+    }
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1714,10 +1719,15 @@ async fn run_command(
             let result = sp.read_host_flash(addr).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
-        Command::HostFlashHash => {
-            let result = sp.host_flash_hash().await?;
+        Command::StartHostFlashHash { slot } => {
+            let result = sp.start_host_flash_hash(slot).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
+        Command::GetHostFlashHash { slot } => {
+            let result = sp.get_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+
     }
 }
 

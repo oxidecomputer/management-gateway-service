@@ -413,11 +413,16 @@ pub trait SpHandler {
         buf: &mut [u8],
     ) -> Result<(), SpError>;
 
-    fn host_flash_hash(
+    fn start_host_flash_hash(
         &mut self,
-        buf: &mut [u8],
+        slot: u8,
     ) -> Result<(), SpError>;
 
+    fn get_host_flash_hash(
+        &mut self,
+        slot: u8,
+        buf: &mut [u8],
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -1027,14 +1032,17 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|_| SpResponse::ReadHostFlash)
         }
-        MgsRequest::HostFlashHash => {
-            let r = handler.host_flash_hash(trailing_tx_buf);
+        MgsRequest::StartHostFlashHash { slot } => {
+            handler.start_host_flash_hash(slot).map(|_| SpResponse::StartHostFlashHashAck)
+        }
+        MgsRequest::GetHostFlashHash { slot } => {
+            let r = handler.get_host_flash_hash(slot, trailing_tx_buf);
             if r.is_ok() {
-                // This is always sha256
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::ShiftFromTail(32));
             }
             r.map(|_| SpResponse::HostFlashHash)
+
         }
 
     };
@@ -1450,6 +1458,23 @@ mod tests {
         ) -> Result<(), SpError> {
             unimplemented!()
         }
+
+        fn start_host_flash_hash(
+            &mut self,
+            _slot: u8,
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn get_host_flash_hash(
+            &mut self,
+            _slot: u8,
+            _buf: &mut [u8],
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+
     }
 
     #[cfg(feature = "std")]

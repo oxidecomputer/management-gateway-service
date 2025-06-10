@@ -172,7 +172,10 @@ pub enum SpResponse {
     /// Packet contains the host flash data
     ReadHostFlash,
 
-    /// Packet contains host flash hash
+    /// Started a hash of a flash bank
+    StartHostFlashHashAck,
+
+    /// Packet contains hash of a flash bank
     HostFlashHash,
 }
 

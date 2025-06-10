@@ -192,6 +192,8 @@ pub(crate) fn expect_host_flash_read(
     }
 }
 
+expect_fn!(StartHostFlashHashAck);
+
 pub(crate) fn expect_host_flash_hash(
     r: (SocketAddrV6, SpResponse, Vec<u8>),
 ) -> Result<[u8; 32]> {
