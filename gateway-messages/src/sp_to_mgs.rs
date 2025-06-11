@@ -1734,6 +1734,7 @@ pub enum HfError {
     QspiTransferError,
     HashUncalculated,
     RecalculateHash,
+    HashInProgress,
 }
 
 impl fmt::Display for HfError {
@@ -1747,6 +1748,7 @@ impl fmt::Display for HfError {
             }
             Self::HashUncalculated => "No hash calculated for slot",
             Self::RecalculateHash => "Slot requires hash recalculation",
+            Self::HashInProgress => "Hash calcuation in progress",
         };
         write!(f, "{s}")
     }

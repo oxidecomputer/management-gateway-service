@@ -45,6 +45,7 @@ fn read_host_flash() {
         HfError::QspiTransferError,
         HfError::HashUncalculated,
         HfError::RecalculateHash,
+        HfError::HashInProgress,
     ]
     .into_iter()
     .enumerate()
