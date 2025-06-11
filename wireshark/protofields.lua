@@ -91,6 +91,9 @@ M.mgs_request.names = {
     [44] = "ComponentWatchdogSupported",
     [45] = "VersionedRotBootInfo",
     [46] = "Dump",
+    [47] = "ReadHostFlash",
+    [48] = "StartHostFlashHash",
+    [49] = "GetHostFlashHash",
 }
 M.mgs_request.handlers = {
     [0] = "dissect_discover",
@@ -140,6 +143,9 @@ M.mgs_request.handlers = {
     [44] = "dissect_component_watchdog_supported",
     [45] = "dissect_versioned_rot_boot_info",
     [46] = "dissect_dump",
+    [47] = "dissect_read_host_flash",
+    [48] = "dissect_start_host_flash_hash",
+    [49] = "dissect_get_host_flash_hash",
 }
 M.mgs_request.field = ProtoField.uint8(
     "mgs.mgs_request",
@@ -204,6 +210,7 @@ M.sp_error.names = {
     [35] = "Watchdog",
     [36] = "Monorail",
     [37] = "Dump",
+    [38] = "Hf",
 }
 M.sp_error.handlers = {
     [0] = "dissect_busy",
@@ -244,6 +251,7 @@ M.sp_error.handlers = {
     [35] = "dissect_watchdog",
     [36] = "dissect_monorail",
     [37] = "dissect_dump",
+    [38] = "dissect_hf",
 }
 M.sp_error.field = ProtoField.uint8(
     "mgs.sp_error",
@@ -319,6 +327,9 @@ M.sp_response.names = {
     [46] = "ComponentAction",
     [47] = "Dump",
     [48] = "PowerStateUnchanged",
+    [49] = "ReadHostFlash",
+    [50] = "StartHostFlashHashAck",
+    [51] = "HostFlashHash",
 }
 M.sp_response.handlers = {
     [0] = "dissect_discover",
@@ -370,6 +381,9 @@ M.sp_response.handlers = {
     [46] = "dissect_component_action",
     [47] = "dissect_dump",
     [48] = "dissect_power_state_unchanged",
+    [49] = "dissect_read_host_flash",
+    [50] = "dissect_start_host_flash_hash_ack",
+    [51] = "dissect_host_flash_hash",
 }
 M.sp_response.field = ProtoField.uint8(
     "mgs.sp_response",

@@ -49,6 +49,7 @@ use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
+use crate::HF_PAGE_SIZE;
 use crate::ROT_PAGE_SIZE;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
@@ -405,6 +406,20 @@ pub trait SpHandler {
         seq: u32,
         buf: &mut [u8],
     ) -> Result<Option<DumpSegment>, SpError>;
+
+    fn read_host_flash(
+        &mut self,
+        addr: u32,
+        buf: &mut [u8],
+    ) -> Result<(), SpError>;
+
+    fn start_host_flash_hash(&mut self, slot: u8) -> Result<(), SpError>;
+
+    fn get_host_flash_hash(
+        &mut self,
+        slot: u8,
+        buf: &mut [u8],
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -1006,6 +1021,25 @@ fn handle_mgs_request<H: SpHandler>(
             }
             r.map(|d| SpResponse::Dump(DumpResponse::TaskDumpRead(d)))
         }
+        MgsRequest::ReadHostFlash { addr } => {
+            let r = handler.read_host_flash(addr, trailing_tx_buf);
+            if r.is_ok() {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(HF_PAGE_SIZE));
+            }
+            r.map(|_| SpResponse::ReadHostFlash)
+        }
+        MgsRequest::StartHostFlashHash { slot } => handler
+            .start_host_flash_hash(slot)
+            .map(|_| SpResponse::StartHostFlashHashAck),
+        MgsRequest::GetHostFlashHash { slot } => {
+            let r = handler.get_host_flash_hash(slot, trailing_tx_buf);
+            if r.is_ok() {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(32));
+            }
+            r.map(|_| SpResponse::HostFlashHash)
+        }
     };
 
     let response = match result {
@@ -1409,6 +1443,26 @@ mod tests {
             _seq: u32,
             _buf: &mut [u8],
         ) -> Result<Option<DumpSegment>, SpError> {
+            unimplemented!()
+        }
+
+        fn read_host_flash(
+            &mut self,
+            _addr: u32,
+            _buf: &mut [u8],
+        ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn start_host_flash_hash(&mut self, _slot: u8) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn get_host_flash_hash(
+            &mut self,
+            _slot: u8,
+            _buf: &mut [u8],
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }
