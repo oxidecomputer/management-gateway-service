@@ -1,0 +1,78 @@
+#!/usr/bin/bash
+
+# This is a helper script to run `faux-mgs` with the `rhaiscript` feature
+# enabled.
+# Linking this script as "FMR-info", etc. will select that log level (info)
+# as a filter.
+
+set -u
+
+fatal() {
+  printf "Fatal: %s" "$*" 1>&2
+  exit 1
+}
+
+# Assuming that this script is in $REPO/scripts/FMR
+REPO="$(dirname "$(dirname "$(readlink -f "$0")")")"
+
+if [[ "${1:-}" == "link" ]]; then
+  if [[ -r "./FMR" ]]; then
+    fatal There is already a local file named FMR
+  fi
+  ln -sf $REPO/scripts/FMR "./FMR"
+  for level in off crit error warn info debug trace; do
+    ln -sf ./FMR "./FMR-${level}"
+  done
+  echo Linked: $(ls FMR*)
+  exit
+fi
+
+get_connection() (
+  # TODO: Need use simulator if that is running
+  if [[ -n "${INTERFACE:-}" ]]; then
+    printf -- "--interface %s" "${INTERFACE}"
+  fi
+  # Assuming typical Linux networking commands and configuration to extract
+  # the interface name.
+  set $(ip route get 8.8.8.8)
+  printf -- "--interface %s" "$5"
+)
+CONNECTION="$(get_connection)"
+[[ -z "${CONNECTION}" ]] && fatal Did not find connection to SP
+
+case "$(basename "$0")" in
+*-off) LOG_LEVEL=off ;;
+*-crit) LOG_LEVEL=crit ;;
+*-error) LOG_LEVEL=error ;;
+*-warn) LOG_LEVEL=warn ;;
+*-info) LOG_LEVEL=info ;;
+*-debug) LOG_LEVEL=debug ;;
+*-trace) LOG_LEVEL=trace ;;
+*) LOG_LEVEL=crit ;;
+esac
+if [[ "${1:-}" == "--too-quick" ]]; then
+  shift
+  # too fast for update to succeed. try to trigger watchdog
+  MAXATTEMPTS=5
+  MAXATTEMPTS_RESET=1
+  PER_ATTEMPT_MS=2000
+else
+  # Normal values
+  MAXATTEMPTS=5
+  MAXATTEMPTS_RESET=30
+  # PER_ATTEMPT_MS=2000
+  # 2165 is on the edge 10825
+  PER_ATTEMPT_MS=2200
+fi
+
+cd "${REPO}" || fatal "Cannot cd to ${REPO}"
+
+set -x
+cargo -q run --bin faux-mgs --features=rhaiscript -- \
+  --log-level="${LOG_LEVEL}" \
+  ${CONNECTION} \
+  --json=pretty \
+  --max-attempts=${MAXATTEMPTS} \
+  --max-attempts-reset=${MAXATTEMPTS_RESET} \
+  --per-attempt-timeout-millis=${PER_ATTEMPT_MS} \
+  "$@"
