@@ -17,17 +17,19 @@ fn usage(prog, error) {
     );
     print("  -b BASELINE_PATH # Path to baseline hubris repo");
     print("  -c CONFIG.JSON # Path to configuration");
+    print("  -h # Help. Print this message");
+    print("  --hubris-2093 # Enable workaround for Hubris issue #2093 (pending pref bug)");
+    print("  -N # Run negative test for RoT update failure and recovery");
     print("  -t # Use transient boot preference to vet RoT Hubris");
     print("  -u UNDER_TEST_PATH # Path to under-test hubris repo");
     print("  -v # be verbose");
-    print("  -h # Help. Print this message");
 }
 
 /// Parse command line options including the required / JSON configuration file.
 /// Return an exit code or the configuration map
 fn process_cli(argv) {
     let prog = argv[0];
-    let options = "b:c:htu:v";
+    let options = "b:c:hNtu:v";
     let parsed = util::getopts(argv, options);
     if parsed?["error"] != () {
         usage(prog, parsed.error);
@@ -42,6 +44,8 @@ fn process_cli(argv) {
     let conf = #{};
     conf["verbose"] = parsed.result?["v"] == true;
     conf["use_transient_boot_preference"] = parsed.result?["t"] == true;
+    conf["run_negative_tests"] = parsed.result?["N"] == true;
+    conf["hubris_2093_workaround"] = parsed.result?["hubris-2093"] == true;
 
     let conf_path_str = parsed.result?["c"];
     if conf_path_str == () {
@@ -200,13 +204,39 @@ fn main() {
             `info|Starting ${v_params.up_down} to ${v_params.label} ` +
             `(${v_params.branch} branch versions)`
         );
+
+        // This variable is needed by both the negative test and the main update logic.
+        let supports_transient = helper::rot_supports_transient_boot_preference();
+
+        // This logic runs for each iteration (upgrade and rollback) if -N is present.
+        if (conf.run_negative_tests) {
+            debug(`info|Checking transient support on current RoT for '${v_params.label}' negative test.`);
+            if (supports_transient) {
+                // Call the test with the correct string argument: v_params.branch
+                if (!helper::test_and_recover_from_preferred_slot_update_failure(conf, v_params.branch)) {
+                    debug(`error|Negative test for '${v_params.label}' FAILED.`);
+                    return 1;
+                }
+                debug(`info|Negative test for '${v_params.label}' PASSED. Resetting to known good state.`);
+                // Re-run ensure_initial_baseline_state to get back to a clean slate before the next operation.
+                if (!helper::ensure_initial_baseline_state(conf, images)) { return 1; }
+            } else {
+                if (v_params.branch == "ut") {
+                    debug(`error|FATAL: Under-test image MUST support transient preference, but it does not.`);
+                    return 1;
+                } else {
+                    debug(`warn|Skipping negative test for '${v_params.label}': RoT does not support transient preference.`);
+                }
+            }
+        }
+
         let use_transient_for_this_op = false;
         if conf.use_transient_boot_preference {
-            if helper::rot_supports_transient_boot_preference() {
+            if (supports_transient) {
                 debug(
                     `info|Current RoT supports transient commands. ` +
                     `Attempting transient update to ${v_params.label}.`
-                 );
+                );
                 use_transient_for_this_op = true;
             } else {
                 debug(
