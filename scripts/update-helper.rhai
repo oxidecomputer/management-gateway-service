@@ -275,7 +275,7 @@ fn get_rot_active() {
 /// An update attempt can transmit and flash an incomplete or improperly signed
 /// image.
 /// The signature validity is only known after an RoT reset.
-fn _get_active_and_next_rot_boot_preference() {
+fn get_rot_active_etc() {
     let rbi = util::rot_boot_info();
     if rbi?.error != () {
         return #{"error": `Cannot get RBI: ${rbi.error}`};
@@ -295,31 +295,43 @@ fn _get_active_and_next_rot_boot_preference() {
         rbi.persistent_boot_preference
     };
 
-    return #{"ok": #{"active": rbi.active, "next": next_preferred}};
+    return #{
+      "ok": #{
+        "active": rbi.active,
+        "next": next_preferred,
+        "transient": rbi.transient_boot_preference,
+        "pending_persistent": rbi.pending_persistent_boot_preference,
+        "persistent": rbi.persistent_boot_preference,
+      }
+    };
 }
 
-/// Check if the currently running RoT firmware supports transient boot commands.
-// Note this test will eventually be unnecessary. It modifies the RoT state in
-// that it tries to set the transient preference to the currently active slot.
-// If it fails, then the image does not have the transient feature implmented.
-// In order to clear the transient preference, one needs to reset the RoT.
-// This is a kludge.
-// This will also fail later for violating rollback protection.
-// TODO: Should distinguish the `RollbackProtection` error vs `Unsupported`
+/// Checks if the currently running RoT firmware supports transient boot commands.
+/// This is a state-modifying function that attempts to set the transient
+/// preference to the currently active slot. For compliant firmware, this action
+/// succeeds and clears any existing transient preference. For non-compliant
+/// firmware, it fails.
 fn rot_supports_transient_boot_preference() {
-    let r = _get_active_and_next_rot_boot_preference();
+    let r = get_rot_active_etc();
     if r?.error != () {
         debug(`error|Cannot get active RoT slot. Error: ${r.error}`);
         return false;
     }
-    let active_slot = r.ok.active;
-    if util::set_rot_boot_preference(active_slot, true, "transient_support_test") {
+    if r.ok.transient != () {
+        // Evidence shows that the feature is supported.
+        // Don't alter the state
+        return true;
+    }
+    // For compliant firmware, this command succeeds and ensures the transient
+    // preference is cleared. For non-compliant firmware, it will fail.
+    if util::set_rot_boot_preference(r.ok.active, true, "transient_support_test") {
+        // Setting the transient preference to the active slot is a no-op
+        // but shows that the feature is supported.
         debug("info|transient boot preference feature is supported.");
         return true;
-    } else {
-        debug(`warn|Failed to set transient boot to ${active_slot}.`);
-        return false;
     }
+    debug("warn|transient boot preference feature is not supported.");
+    return false;
 }
 
 /// Resets both SP and RoT components sequentially.
@@ -750,6 +762,11 @@ fn update_rot_hubris(
 /// This is a high-cost function that may use resets to sanitize the state.
 /// It should be called once at the beginning of a test run.
 fn ensure_initial_baseline_state(conf, images) {
+    // PRE-FLIGHT CHECK
+    if (!check_for_sp_debugger_and_sp_pending_update()) {
+        return false;
+    }
+
     debug("info|Phase 1: Sanitize state to establish a clean baseline.");
 
     // Step 1: Sanitize any lingering preferences from previous runs.
@@ -1012,6 +1029,45 @@ fn sanitize_boot_preferences(conf) {
     return true;
 }
 
+/// Checks for the specific case of an an SWD debugger attached to the SP and
+/// the SP having a pending update.
+/// Returns:
+///   bool: `true` if no debugger and pending update detected, `false` otherwise.
+//
+/// Fixing Hubris issue 2066 will give us more definitive information to use in
+/// testing.
+fn check_for_sp_debugger_and_sp_pending_update() {
+    debug("info|Performing pre-flight check for attached SP debugger...");
+
+    // We call faux_mgs directly here instead of util::reset_component
+    // so we can inspect the specific error message.
+    let result = faux_mgs(["reset-component", "sp"]);
+
+    if result?.ack == "reset" {
+        debug("info|SP reset successful. No debugger detected.");
+        // A reset here is fine and helps ensure a clean state.
+        return true;
+    }
+
+    if result?.error != () {
+        // Use the 'message' key to get the detailed error string
+        let error_string = `${result.message}`;
+        if "the SP programming dongle is connected" in error_string {
+            debug("error|FATAL: SP Debugger Detected.");
+            debug("error|A JTAG/SWD debugger probe appears to be attached to the SP.");
+            debug("error|Please disconnect or power-off the debugger and restart the test.");
+            return false;
+        } else {
+            debug(`error|An unexpected error occurred while trying to reset the SP: ${result}`);
+            return false;
+        }
+    }
+
+    // Should not be reached if the command returns a well-formed map.
+    debug(`warn|Unexpected result from SP reset command: ${result}`);
+    return false;
+}
+
 /// Injects a fault by setting a conflicting pending persistent preference.
 /// This sets up a state that should cause the next update attempt to fail.
 ///
@@ -1021,7 +1077,6 @@ fn inject_conflicting_pending_preference() {
     let rbi = util::rot_boot_info();
     if rbi?.error != () { return false; }
     let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
-
     // Set persistent preference for the INACTIVE slot.
     // This creates a pending preference that conflicts with any update to that slot.
     return util::set_rot_boot_preference(inactive_slot, false, "inject_pending_fault");
@@ -1033,9 +1088,21 @@ fn inject_conflicting_transient_preference() {
     let rbi = util::rot_boot_info();
     if rbi?.error != () { return false; }
     let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
-
     // Set transient preference for the INACTIVE slot.
     return util::set_rot_boot_preference(inactive_slot, true, "inject_transient_fault");
 }
 
-
+/// Checks if a specific fault injection test is enabled in the config.
+///
+/// Args:
+///   conf (map): The configuration map.
+///   fault_name (string): The name of the fault to check (e.g., "pending").
+///
+/// Returns:
+///   bool: `true` if the fault is in the list of tests to run.
+fn is_fault_enabled(conf, fault_name) {
+    if conf?.faults_to_inject == () {
+        return false;
+    }
+    return fault_name in conf.faults_to_inject;
+}

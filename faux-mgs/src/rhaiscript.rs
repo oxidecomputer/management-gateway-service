@@ -259,9 +259,18 @@ pub async fn interpreter(
                     unreachable!();
                 }
                 Err(e) => {
-                    // println!("RESULT: Err: {:?}", &e);
-                    format!("{{\"error\": \"failed\", \"message\": \"{}\"}}", e)
+                    // Create a proper JSON Value. `serde_json` will handle
+                    // correctly escaping any special characters like newlines
+                    // in the error message.
+                    let json_err = serde_json::json!({
+                        "error": "failed",
+                        "message": format!("{:?}", e)
+                    });
+                    // `to_string` on a `serde_json::Value` is guaranteed to
+                    // produce a valid JSON string.
+                    serde_json::to_string(&json_err).unwrap()
                 }
+
             }
         } else {
             "{{\"error\": \"cannot serialize faux_mgs args to json\"}}"
