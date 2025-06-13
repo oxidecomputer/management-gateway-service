@@ -116,7 +116,7 @@ pub enum UpdateError {
     InvalidComponent,
     #[error("an image was not found")]
     ImageNotFound,
-    #[error("cannot update preferred boot image")]
+    #[error("updating a bootloader preferred slot is not permitted")]
     InvalidPreferredSlotId,
 }
 
