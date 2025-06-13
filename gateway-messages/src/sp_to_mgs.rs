@@ -1344,7 +1344,10 @@ impl fmt::Display for UpdateError {
                 write!(f, "invalid component for operation")
             }
             Self::InvalidPreferredSlotId => {
-                write!(f, "updating a bootloader preferred slot is not permitted")
+                write!(
+                    f,
+                    "updating a bootloader preferred slot is not permitted"
+                )
             }
         }
     }
