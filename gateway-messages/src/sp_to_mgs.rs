@@ -1283,6 +1283,7 @@ pub enum UpdateError {
     ImageMismatch,
     SignatureNotValidated,
     VersionNotSupported,
+    InvalidPreferredSlotId,
 }
 
 impl fmt::Display for UpdateError {
@@ -1341,6 +1342,12 @@ impl fmt::Display for UpdateError {
             }
             Self::InvalidComponent => {
                 write!(f, "invalid component for operation")
+            }
+            Self::InvalidPreferredSlotId => {
+                write!(
+                    f,
+                    "updating a bootloader preferred slot is not permitted"
+                )
             }
         }
     }
