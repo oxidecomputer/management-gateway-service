@@ -142,11 +142,15 @@ fn error_enums() {
     let expected = vec![0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12];
     assert_serialized(&expected, &response);
 
-    let response: [UpdateError; 3] = [
+    let response: [UpdateError; 7] = [
         UpdateError::BlockOutOfOrder,
         UpdateError::InvalidComponent,
         UpdateError::InvalidSlotIdForOperation,
+        UpdateError::InvalidArchive,
+        UpdateError::ImageMismatch,
+        UpdateError::SignatureNotValidated,
+        UpdateError::VersionNotSupported,
     ];
-    let expected = vec![27, 28, 29];
+    let expected = vec![27, 28, 29, 30, 31, 32, 33];
     assert_serialized(&expected, &response);
 }
