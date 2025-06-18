@@ -38,6 +38,9 @@ pub const MAX_SERIALIZED_SIZE: usize = 1024;
 /// Size for a memory page in the Root of Trust (LPC55)
 pub const ROT_PAGE_SIZE: usize = 512;
 
+/// Size for a host flash page
+pub const HF_PAGE_SIZE: usize = 256;
+
 /// Module specifying the minimum and current version of the MGS protocol.
 ///
 /// Our primary mechanism for serializing requests and responses is enums
@@ -66,7 +69,7 @@ pub const ROT_PAGE_SIZE: usize = 512;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 18;
+    pub const CURRENT: u32 = 19;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;
