@@ -16,7 +16,6 @@ fn usage(prog, error) {
         `[path0] [path1]`
     );
     print("  -c CONFIG.JSON # Path to configuration");
-    print("  -v # be verbose");
     print("  -h # Help. Print this message");
     print("");
 }
@@ -25,7 +24,7 @@ fn usage(prog, error) {
 /// Return an exit code or the configuration map
 fn process_cli(argv) {
     let prog = argv[0];
-    let options = "b:c:htu:v";
+    let options = "b:c:htu:";
     let parsed = util::getopts(argv, options);
     if parsed?["error"] != () {
         usage(prog, parsed.error);
@@ -38,7 +37,6 @@ fn process_cli(argv) {
     }
 
     let conf = #{};
-    conf["verbose"] = parsed.result?["v"] == true;
 
     let conf_path_str = parsed.result?["c"];
     if conf_path_str == () {
@@ -72,22 +70,16 @@ fn process_cli(argv) {
          );
          return 1;
     }
-    if conf.verbose {
-        print("");
-        print(`Parsed JSON config from ${conf_path}: ${config_from_file}`);
-    }
+    debug(`Parsed JSON config from ${conf_path}: ${config_from_file}`);
     // The base configurartion is in `config_from_file`, command line options
     // and positional parameters override the base.
     let merged_config = config_from_file;
 
     // Add CLI flags to the config map passed around
     conf += merged_config; // Add contents of merged_config to conf
-    // Now 'conf' contains original JSON + CLI overrides + verbose/transient flags
+    // Now 'conf' contains original JSON + CLI overrides + transient flags
 
-    if conf.verbose {
-        print("\nFully resolved configuration map (process_cli):");
-        print(conf);
-    }
+    debug("Fully resolved configuration map (process_cli):");
     return conf;
 }
 

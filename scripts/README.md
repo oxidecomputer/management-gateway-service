@@ -168,11 +168,8 @@ faux-mgs [faux-mgs options] rhai <script_path.rhai> [script options] -- [script 
 
 ## Contributing / TODO
 
-These scripts are evolving. Key areas for improvement include:
+See [`scripts/TODO.md`](TODO.md) for more details.
 
--   Refactoring remaining direct `faux_mgs` calls into `util.rhai`.
--   Improving error handling consistency in `util.rhai`.
--   Adding more tests and validation (config schema, script unit tests).
--   Implementing power control features via `system()`.
--   General code cleanup and documentation enhancements.
-    (See `scripts/TODO.md` for more details).
+## SP and RoT Update/Rollback test plan
+
+See [`scripts/TEST_PLAN.md`](TEST_PLAN.md) for more details.
