@@ -275,7 +275,7 @@ fn get_rot_active() {
 /// An update attempt can transmit and flash an incomplete or improperly signed
 /// image.
 /// The signature validity is only known after an RoT reset.
-fn _get_active_and_next_rot_boot_preference() {
+fn get_rot_active_etc() {
     let rbi = util::rot_boot_info();
     if rbi?.error != () {
         return #{"error": `Cannot get RBI: ${rbi.error}`};
@@ -295,31 +295,43 @@ fn _get_active_and_next_rot_boot_preference() {
         rbi.persistent_boot_preference
     };
 
-    return #{"ok": #{"active": rbi.active, "next": next_preferred}};
+    return #{
+      "ok": #{
+        "active": rbi.active,
+        "next": next_preferred,
+        "transient": rbi.transient_boot_preference,
+        "pending_persistent": rbi.pending_persistent_boot_preference,
+        "persistent": rbi.persistent_boot_preference,
+      }
+    };
 }
 
-/// Check if the currently running RoT firmware supports transient boot commands.
-// Note this test will eventually be unnecessary. It modifies the RoT state in
-// that it tries to set the transient preference to the currently active slot.
-// If it fails, then the image does not have the transient feature implmented.
-// In order to clear the transient preference, one needs to reset the RoT.
-// This is a kludge.
-// This will also fail later for violating rollback protection.
-// TODO: Should distinguish the `RollbackProtection` error vs `Unsupported`
+/// Checks if the currently running RoT firmware supports transient boot commands.
+/// This is a state-modifying function that attempts to set the transient
+/// preference to the currently active slot. For compliant firmware, this action
+/// succeeds and clears any existing transient preference. For non-compliant
+/// firmware, it fails.
 fn rot_supports_transient_boot_preference() {
-    let r = _get_active_and_next_rot_boot_preference();
+    let r = get_rot_active_etc();
     if r?.error != () {
         debug(`error|Cannot get active RoT slot. Error: ${r.error}`);
         return false;
     }
-    let active_slot = r.ok.active;
-    if util::set_rot_boot_preference(active_slot, true, "transient_support_test") {
+    if r.ok.transient != () {
+        // Evidence shows that the feature is supported.
+        // Don't alter the state
+        return true;
+    }
+    // For compliant firmware, this command succeeds and ensures the transient
+    // preference is cleared. For non-compliant firmware, it will fail.
+    if util::set_rot_boot_preference(r.ok.active, true, "transient_support_test") {
+        // Setting the transient preference to the active slot is a no-op
+        // but shows that the feature is supported.
         debug("info|transient boot preference feature is supported.");
         return true;
-    } else {
-        debug(`warn|Failed to set transient boot to ${active_slot}.`);
-        return false;
     }
+    debug("warn|transient boot preference feature is not supported.");
+    return false;
 }
 
 /// Resets both SP and RoT components sequentially.
@@ -747,9 +759,25 @@ fn update_rot_hubris(
 }
 
 /// Ensures the device is in a clean state and running baseline firmware.
-/// Called once at the beginning of the main script.
+/// This is a high-cost function that may use resets to sanitize the state.
+/// It should be called once at the beginning of a test run.
 fn ensure_initial_baseline_state(conf, images) {
-    debug("info|Phase 1: Determine initial FW state and install baseline if needed");
+    // PRE-FLIGHT CHECK
+    if (!check_for_sp_debugger_and_sp_pending_update()) {
+        return false;
+    }
+
+    debug("info|Phase 1: Sanitize state to establish a clean baseline.");
+
+    // Step 1: Sanitize any lingering preferences from previous runs.
+    // This may reset the RoT.
+    if (!sanitize_boot_preferences(conf)) {
+        debug("error|Failed to sanitize boot preferences during initial setup.");
+        return false;
+    }
+
+    // Step 2: Clear any stuck "Complete" update states.
+    // This may also reset the RoT and SP.
     let problems = 0;
     for attempt in 1..=2 {
         problems = 0;
@@ -761,20 +789,19 @@ fn ensure_initial_baseline_state(conf, images) {
             }
             if r_check != () {
                 problems += 1;
+                debug(`info|Component ${component} has update status: ${r_check}.`);
                 let id = r_check?.id;
-                debug(`info|Component ${component} has update status: ${r_check}. Aborting id=${id}.`);
-                debug(`warn|SP component '${component}' may need reset. Aborting update id=${id}`);
-                let r_abort = util::abort_update(component, `${id}`);
-                debug(`info|Abort result for ${component} id ${id}: ${r_abort}`);
+                if (id != ()) {
+                    util::abort_update(component, `${id}`);
+                }
             }
         }
         if problems == 0 {
             break;
         }
         debug(`warn|Attempt ${attempt}: Found ${problems} issues. Resetting SP and RoT.`);
-        let r_reset = reset_sp_and_rot();
-        if r_reset?["error"] != () {
-            debug(`error|Cannot reset RoT/SP: ${r_reset.error}`);
+        if (reset_sp_and_rot()?.error != ()) {
+            debug(`error|Cannot reset RoT/SP to clear update status.`);
             return false;
         }
     }
@@ -783,7 +810,11 @@ fn ensure_initial_baseline_state(conf, images) {
         return false;
     }
 
-    debug("info|Checking initial images against baseline.");
+    // --- STABLE STATE ---
+    // At this point, all sanitizing operations and potential resets are complete.
+    // We can now safely check the device's state and act on it.
+
+    debug("info|Phase 2: State is clean. Checking firmware versions against baseline.");
     let initial_check = image_check("base", images);
     if initial_check?.error != () {
         debug(`error|Initial image_check for baseline: ${initial_check.error}`);
@@ -793,35 +824,285 @@ fn ensure_initial_baseline_state(conf, images) {
     let flash_rot = initial_check.ok?.rot;
 
     if !flash_sp && !flash_rot {
-        debug("info|Initial state: SP and RoT already on baseline.");
+        debug("info|Device is already running correct baseline firmware.");
     } else {
-        debug(`info|Initial state needs baseline flashing. SP: ${flash_sp}, RoT: ${flash_rot}`);
-    }
-
-    if flash_rot {
-        debug("info|Initial: RoT needs baseline update (persistent).");
-        if !update_rot_hubris(conf.base.rot_a, conf.base.rot_b, false, "baseline_setup", conf) {
-            debug("error|Failed to update RoT to baseline (initial setup).");
-            return false;
+        debug(`info|Device needs baseline flashing. SP: ${flash_sp}, RoT: ${flash_rot}`);
+        if flash_rot {
+            debug("info|Updating RoT to baseline (persistent).");
+            if !update_rot_hubris(conf.base.rot_a, conf.base.rot_b, false, "baseline_setup", conf) {
+                debug("error|Failed to update RoT to baseline.");
+                return false;
+            }
         }
-    }
-    if flash_sp {
-        debug("info|Initial: SP needs baseline update.");
-        if !update_sp(conf.base.sp) {
-            debug("error|Failed to update SP to baseline (initial setup).");
-            return false;
+        if flash_sp {
+            debug("info|Updating SP to baseline.");
+            if !update_sp(conf.base.sp) {
+                debug("error|Failed to update SP to baseline.");
+                return false;
+            }
         }
-    }
 
-    if flash_sp || flash_rot {
+        // Final verification after flashing.
         debug("info|Re-checking images after baseline updates.");
         let post_update_check = image_check("base", images);
         if post_update_check?.error != () || post_update_check.ok?.sp || post_update_check.ok?.rot {
-            debug(`warn|Post-baseline image_check failed or not correct: ${post_update_check}`);
+            debug(`warn|Post-baseline image_check FAILED or images are still not correct: ${post_update_check}`);
             return false;
         }
-        debug("info|Successfully installed/verified baseline images.");
     }
+
     debug("info|ensure_initial_baseline_state completed successfully.");
     return true;
+}
+
+/// Tests that a RoT update to a preferred slot fails, then recovers by
+/// clearing the transient preference (without a reset) and successfully
+/// completes the update.
+///
+/// Args:
+///   conf (map): The main configuration map.
+///   target_branch_name (string): "base" or "ut", to select the correct image paths.
+///
+/// Returns:
+///   bool: `true` if the entire test passes, `false` otherwise.
+fn test_and_recover_from_preferred_slot_update_failure(conf, target_branch_name) {
+    debug(`info|--- Starting Negative Test for '${target_branch_name}' (Reset-less Recovery) ---`);
+
+    // 1. SETUP
+    let r = get_rot_active();
+    if r?.error != () { return false; }
+    let initial_active_slot = r.ok;
+    let preferred_slot = if initial_active_slot == 0 { 1 } else { 0 };
+    debug!(`//// conf=${conf}`);
+    debug!(`//// target_branch_name=${target_branch_name}`);
+    let branch_conf = conf[target_branch_name];
+    debug!(`//// branch_conf=${branch_conf}`);
+    let image_path = if preferred_slot == 0 { branch_conf.rot_a } else { branch_conf.rot_b };
+    let test_label = `neg_test_${target_branch_name}`;
+
+    debug(`info|Negative Test: Initial active=${initial_active_slot}, setting transient pref to=${preferred_slot}`);
+
+    // 2. INDUCE FAILURE: Set transient preference, then confirm update fails.
+    if (!util::set_rot_boot_preference(preferred_slot, true, test_label)) {
+        debug(`error|Negative Test: Could not set transient pref for '${test_label}'.`);
+        return false;
+    }
+    if (util::update_rot_image_file(preferred_slot, image_path, test_label)) {
+        debug(`error|Negative Test FAILED: Update to preferred slot '${preferred_slot}' SUCCEEDED.`);
+        return false;
+    }
+    debug("info|Negative Test PASSED: Update to preferred slot failed as expected.");
+
+    // 3. RECOVER: Use the new helper to clear the preference without a reset.
+    if (!clear_transient_preference_without_reset()) {
+        debug("error|Negative Test FAILED: Could not recover by clearing transient preference.");
+        return false;
+    }
+    debug("info|Negative Test: Recovery successful. Conflicting preference cleared.");
+
+    // 4. RETRY UPDATE: Attempt the same update again. It should now succeed.
+    debug(`info|Negative Test: Retrying update on slot ${preferred_slot}.`);
+    if (!util::update_rot_image_file(preferred_slot, image_path, test_label)) {
+        debug(`error|Negative Test FAILED: Update retry on slot ${preferred_slot} failed.`);
+        return false;
+    }
+    debug("info|Negative Test PASSED: Update retry succeeded.");
+
+    // 5. FINALIZE (Optional but good practice):
+    // To leave the device in a predictable state, we can now set the preference
+    // and reset to actually boot the image we just flashed.
+    debug(`info|Negative Test: Finalizing by setting persistent pref to ${preferred_slot} and resetting.`);
+    if (!util::set_rot_boot_preference(preferred_slot, false, test_label)) {
+        return false;
+    }
+    let rbi_result = util::reset_rot_and_get_rbi("finalizing negative test", test_label);
+    if (rbi_result?.error != () || rbi_result.ok.active != preferred_slot) {
+        debug(`error|Negative Test FAILED: Could not boot into newly updated image. RBI: ${rbi_result}`);
+        return false;
+    }
+
+    debug(`info|--- Negative Test for '${target_branch_name}' COMPLETED SUCCESSFULLY ---`);
+    return true;
+}
+
+/// Clears an active transient boot preference without a reset by setting the
+/// transient preference to the already-active slot. It then verifies that
+/// the transient preference field in RotBootInfo is null.
+///
+/// Returns:
+///   bool: `true` if the preference was successfully cleared, `false` otherwise.
+fn clear_transient_preference_without_reset() {
+    debug("info|Attempting to clear transient preference without reset.");
+    let r_active = get_rot_active();
+    if r_active?.error != () {
+        debug(`error|clear_transient_preference: Could not get active slot: ${r_active.error}`);
+        return false;
+    }
+    let active_slot = r_active.ok;
+
+    debug(`info|clearing transient pref by setting it to current active slot: ${active_slot}`);
+    if (!util::set_rot_boot_preference(active_slot, true, "clearing_transient")) {
+        debug("error|clear_transient_preference: Call to set_rot_boot_preference failed.");
+        return false;
+    }
+
+    // Verify it was cleared
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () || rbi.transient_boot_preference != () {
+        debug(`error|clear_transient_preference: Verification failed. RBI: ${rbi}`);
+        return false;
+    }
+
+    debug("info|Successfully cleared transient boot preference.");
+    return true;
+}
+
+/// Ensures there are no conflicting boot preferences set for the inactive slot.
+/// This function is intended to be called before any update operation to ensure
+/// the device is in a clean state.
+/// - If a conflicting transient preference is found, it is cleared without a reset.
+/// - If a conflicting pending persistent preference is found, it uses a
+///   workaround (#2093) or the ideal method based on the conf flag.
+///
+/// Args:
+///   conf (map): The configuration map, used to check for workarounds.
+///
+/// Returns:
+///   bool: `true` if the state is clean or was successfully cleaned, `false` otherwise.
+fn sanitize_boot_preferences(conf) {
+    debug("info|Sanitizing boot preferences...");
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () {
+        debug(`error|sanitize_boot_preferences: Could not get initial RBI: ${rbi.error}`);
+        return false;
+    }
+
+    let active = rbi.active;
+    let inactive = if active == 0 { 1 } else { 0 };
+
+    // Case 1: Conflicting transient preference (clear is the same for both cases)
+    if rbi.transient_boot_preference == inactive {
+        debug(`warn|Found conflicting transient preference for inactive slot ${inactive}. Clearing it.`);
+        if (!clear_transient_preference_without_reset()) {
+            debug("error|sanitize_boot_preferences: Failed to clear conflicting transient preference.");
+            return false;
+        }
+    }
+
+    // Case 2: Conflicting pending persistent preference
+    let rbi = util::rot_boot_info(); // Re-fetch state
+    if rbi.pending_persistent_boot_preference == inactive {
+        debug(`warn|Found conflicting pending persistent preference for inactive slot ${inactive}.`);
+
+        if (conf?.hubris_2093_workaround) {
+            // --- WORKAROUND for Hubris issue #2093 ---
+            // The current firmware has a bug preventing a pending preference
+            // from being cleared by setting a new persistent one.
+            // The only reliable way to clear it is to reset the RoT.
+            debug("info|Hubris #2093 workaround enabled. Resetting RoT to clear pending preference.");
+            if !util::reset_component("rot") {
+                debug("error|sanitize_boot_preferences: Failed to reset RoT to clear pending preference.");
+                return false;
+            }
+            sleep(5); // Wait for RoT to come back up.
+        } else {
+            // --- IDEAL a.k.a. POST-BUGFIX LOGIC ---
+            // Once the firmware is fixed, we should be able to clear a pending
+            // preference for the inactive slot by simply re-setting the
+            // persistent preference to the already-active slot.
+            debug("info|Hubris #2093 workaround disabled. Attempting to clear pending preference without reset.");
+            if !util::set_rot_boot_preference(active, false, "clearing_pending") {
+                debug("error|sanitize_boot_preferences: Failed to send command to clear pending preference.");
+                return false;
+            }
+        }
+
+        // Final verification
+        let final_rbi = util::rot_boot_info();
+        if final_rbi?.error != () || final_rbi.pending_persistent_boot_preference != () {
+             debug(`error|sanitize_boot_preferences: Failed to verify pending pref was cleared. RBI: ${final_rbi}`);
+             return false;
+        }
+    }
+
+    debug("info|Boot preferences sanitized successfully.");
+    return true;
+}
+
+/// Checks for the specific case of an an SWD debugger attached to the SP and
+/// the SP having a pending update.
+/// Returns:
+///   bool: `true` if no debugger and pending update detected, `false` otherwise.
+//
+/// Fixing Hubris issue 2066 will give us more definitive information to use in
+/// testing.
+fn check_for_sp_debugger_and_sp_pending_update() {
+    debug("info|Performing pre-flight check for attached SP debugger...");
+
+    // We call faux_mgs directly here instead of util::reset_component
+    // so we can inspect the specific error message.
+    let result = faux_mgs(["reset-component", "sp"]);
+
+    if result?.ack == "reset" {
+        debug("info|SP reset successful. No debugger detected.");
+        // A reset here is fine and helps ensure a clean state.
+        return true;
+    }
+
+    if result?.error != () {
+        // Use the 'message' key to get the detailed error string
+        let error_string = `${result.message}`;
+        if "the SP programming dongle is connected" in error_string {
+            debug("error|FATAL: SP Debugger Detected.");
+            debug("error|A JTAG/SWD debugger probe appears to be attached to the SP.");
+            debug("error|Please disconnect or power-off the debugger and restart the test.");
+            return false;
+        } else {
+            debug(`error|An unexpected error occurred while trying to reset the SP: ${result}`);
+            return false;
+        }
+    }
+
+    // Should not be reached if the command returns a well-formed map.
+    debug(`warn|Unexpected result from SP reset command: ${result}`);
+    return false;
+}
+
+/// Injects a fault by setting a conflicting pending persistent preference.
+/// This sets up a state that should cause the next update attempt to fail.
+///
+/// Returns: bool - true on success
+fn inject_conflicting_pending_preference() {
+    debug("info|FAULT INJECTION: Setting a conflicting pending persistent preference.");
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () { return false; }
+    let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
+    // Set persistent preference for the INACTIVE slot.
+    // This creates a pending preference that conflicts with any update to that slot.
+    return util::set_rot_boot_preference(inactive_slot, false, "inject_pending_fault");
+}
+
+/// Injects a fault by setting a conflicting transient preference.
+fn inject_conflicting_transient_preference() {
+    debug("info|FAULT INJECTION: Setting a conflicting transient preference.");
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () { return false; }
+    let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
+    // Set transient preference for the INACTIVE slot.
+    return util::set_rot_boot_preference(inactive_slot, true, "inject_transient_fault");
+}
+
+/// Checks if a specific fault injection test is enabled in the config.
+///
+/// Args:
+///   conf (map): The configuration map.
+///   fault_name (string): The name of the fault to check (e.g., "pending").
+///
+/// Returns:
+///   bool: `true` if the fault is in the list of tests to run.
+fn is_fault_enabled(conf, fault_name) {
+    if conf?.faults_to_inject == () {
+        return false;
+    }
+    return fault_name in conf.faults_to_inject;
 }
