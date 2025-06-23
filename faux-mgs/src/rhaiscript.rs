@@ -79,7 +79,8 @@ pub async fn interpreter(
             }
         };
 
-        let script_file_name: String = script.file_name().unwrap().to_string_lossy().into();
+        let script_file_name: String =
+            script.file_name().unwrap().to_string_lossy().into();
 
         // Construct argv for the script and canonicalize the script path.
         let pb = fs::canonicalize(&script)
@@ -140,7 +141,11 @@ pub async fn interpreter(
         let rhai_log = log.clone();
         engine.on_debug(move |x, src, pos| {
             let src: String = if let Some(src) = src {
-                std::path::Path::new(src).file_name().unwrap().to_string_lossy().into()
+                std::path::Path::new(src)
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into()
             } else {
                 script_file_name.clone().into()
             };
@@ -258,10 +263,14 @@ pub async fn interpreter(
                     // The --json=pretty option is hard-coded
                     unreachable!();
                 }
-                Err(e) => {
-                    // println!("RESULT: Err: {:?}", &e);
-                    format!("{{\"error\": \"failed\", \"message\": \"{}\"}}", e)
-                }
+                Err(e) => serde_json::to_string(
+                    json!({
+                        "Err": serde_json::Value::String(format!("{:?}", e))
+                    })
+                    .as_object()
+                    .unwrap(),
+                )
+                .unwrap(),
             }
         } else {
             "{{\"error\": \"cannot serialize faux_mgs args to json\"}}"

@@ -167,7 +167,7 @@ fn run_standard_test_flow(conf, images) {
         }
     ] {
         debug(
-            `info|\n--- Starting ${v_params.up_down} to ${v_params.label} ` +
+            `info|--- Starting ${v_params.up_down} to ${v_params.label} ` +
             `(${v_params.branch} branch versions) ---`
         );
 
@@ -234,7 +234,7 @@ fn run_standard_test_flow(conf, images) {
         );
     }
 
-    debug(`info|\nElapsed time total: ${start_ts.elapsed}`);
+    debug(`info|Elapsed time total: ${start_ts.elapsed}`);
     debug(`info|Current time: ${datetime_local()}`);
     debug("info|Done.");
     return 0;
@@ -258,7 +258,7 @@ fn main() {
         let passed_tests = [];
 
         if (helper::is_fault_enabled(conf, "pending")) {
-            debug("info|\n--- FAULT INJECTION: PENDING PREFERENCE ---");
+            debug("info|--- FAULT INJECTION: PENDING PREFERENCE ---");
             if (!helper::ensure_initial_baseline_state(conf, images)) { return 1; }
             if (!helper::inject_conflicting_pending_preference()) {
                 debug("error|Failed to inject pending preference fault.");
@@ -276,7 +276,7 @@ fn main() {
         }
 
         if (helper::is_fault_enabled(conf, "transient")) {
-            debug("info|\n--- FAULT INJECTION: TRANSIENT PREFERENCE ---");
+            debug("info|--- FAULT INJECTION: TRANSIENT PREFERENCE ---");
             if (!helper::ensure_initial_baseline_state(conf, images)) { return 1; }
             if (!helper::inject_conflicting_transient_preference()) {
                 debug("error|Failed to inject transient preference fault.");
@@ -293,7 +293,7 @@ fn main() {
             }
         }
 
-        debug("info|\n--- FAULT INJECTION SUMMARY ---");
+        debug("info|--- FAULT INJECTION SUMMARY ---");
         if (passed_tests.len() > 0) {
             debug(`info|PASSED: ${passed_tests}`);
         }
@@ -308,4 +308,309 @@ fn main() {
         debug("info|--- Executing in Standard Upgrade/Rollback Mode ---");
         return run_standard_test_flow(conf, images);
     }
+}
+
+/// Tests that a RoT update to a preferred slot fails, then recovers by
+/// clearing the transient preference (without a reset) and successfully
+/// completes the update.
+///
+/// Args:
+///   conf (map): The main configuration map.
+///   target_branch_name (string): "base" or "ut", to select the correct image paths.
+///
+/// Returns:
+///   bool: `true` if the entire test passes, `false` otherwise.
+fn test_and_recover_from_preferred_slot_update_failure(conf, target_branch_name) {
+    debug(`info|--- Starting Negative Test for '${target_branch_name}' (Reset-less Recovery) ---`);
+
+    // 1. SETUP
+    let r = get_rot_active();
+    if r?.error != () { return false; }
+    let initial_active_slot = r.ok;
+    let preferred_slot = if initial_active_slot == 0 { 1 } else { 0 };
+    debug!(`//// conf=${conf}`);
+    debug!(`//// target_branch_name=${target_branch_name}`);
+    let branch_conf = conf[target_branch_name];
+    debug!(`//// branch_conf=${branch_conf}`);
+    let image_path = if preferred_slot == 0 { branch_conf.rot_a } else { branch_conf.rot_b };
+    let test_label = `neg_test_${target_branch_name}`;
+
+    debug(`info|Negative Test: Initial active=${initial_active_slot}, setting transient pref to=${preferred_slot}`);
+
+    // 2. INDUCE FAILURE: Set transient preference, then confirm update fails.
+    let set_pref_result = util::rot_boot_preference(preferred_slot, util::SET, true, test_label);
+    if set_pref_result?.error != () {
+        // Check if the error is due to a pending persistent preference
+        if set_pref_result.error.contains("pending preference must be canceled first") {
+            debug("info|Negative Test: Found pending persistent preference. Attempting to clear it.");
+            let rbi = util::rot_boot_info();
+            if rbi?.error != () { return false; }
+            let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
+            let clear_pending_result = util::rot_boot_preference(inactive_slot, util::PREF_CLEAR, false, "clear_pending_for_test");
+            if clear_pending_result?.error != () {
+                debug("error|Negative Test: Failed to clear pending persistent preference.");
+                return false;
+            }
+            debug("info|Negative Test: Pending persistent preference cleared. Retrying set transient preference.");
+            // Retry setting the transient preference
+            let retry_set_pref_result = util::rot_boot_preference(preferred_slot, util::SET, true, test_label);
+            if retry_set_pref_result?.error != () {
+                debug(`error|Negative Test: Could not set transient pref after clearing pending: '${test_label}'. Error: ${retry_set_pref_result.error}`);
+                return false;
+            }
+        } else {
+            debug(`error|Negative Test: Could not set transient pref for '${test_label}' (unexpected error: ${set_pref_result.error}).`);
+            return false;
+        }
+    }
+    if (util::update_rot_image_file(preferred_slot, image_path, test_label)) {
+        debug(`error|Negative Test FAILED: Update to preferred slot '${preferred_slot}' SUCCEEDED unexpectedly.`);
+        return false;
+    }
+    debug("info|Negative Test PASSED: Update to preferred slot failed as expected due to transient preference.");
+
+    // 3. RECOVER: clear the RoT Hubris transient boot preference without a reset.
+    if (!clear_transient_preference_without_reset()) {
+        debug("error|Negative Test FAILED: Could not recover by clearing transient preference.");
+        return false;
+    }
+    debug("info|Negative Test: Recovery successful. Conflicting preference cleared.");
+
+    // 4. RETRY UPDATE: Attempt the same update again. It should now succeed.
+    debug(`info|Negative Test: Retrying update on slot ${preferred_slot}.`);
+    if (!util::update_rot_image_file(preferred_slot, image_path, test_label)) {
+        debug(`error|Negative Test FAILED: Update retry on slot ${preferred_slot} failed.`);
+        return false;
+    }
+    debug("info|Negative Test PASSED: Update retry succeeded.");
+
+    // 5. FINALIZE (Optional but good practice):
+    // To leave the device in a predictable state, we can now set the preference
+    // and reset to actually boot the image we just flashed.
+    let final_set_pref_result = util::rot_boot_preference(preferred_slot, util::PREF_SET, false, test_label);
+    if final_set_pref_result?.error != () {
+        debug(`error|Negative Test: Finalizing by setting persistent pref failed: ${final_set_pref_result.error}`);
+        return false;
+    }
+    let rbi_result = util::reset_rot_and_get_rbi("finalizing negative test", test_label);
+    if (rbi_result?.error != () || rbi_result.ok.active != preferred_slot) {
+        debug(`error|Negative Test FAILED: Could not boot into newly updated image. RBI: ${rbi_result}`);
+        return false;
+    }
+
+    debug(`info|--- Negative Test for '${target_branch_name}' COMPLETED SUCCESSFULLY ---`);
+
+    return true;
+}
+
+/// Clears an active transient boot preference without a reset by setting the
+/// transient preference to the already-active slot. It then verifies that
+/// the transient preference field in RotBootInfo is null.
+///
+/// Returns:
+///   bool: `true` if the preference was successfully cleared, `false` otherwise.
+fn clear_transient_preference_without_reset() {
+    debug("info|Attempting to clear transient preference without reset.");
+
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () {
+        debug(`error|clear_transient_preference: could not get rbi: ${rbi}`);
+        return false;
+    }
+    let target_slot = rbi.transient_boot_preference;
+
+    if target_slot == () {
+        debug("info|clear_transient_preference: No transient preference to clear.");
+        return true;
+    }
+
+    debug(`info|clearing transient pref for slot: ${target_slot}`);
+    let clear_pref_result = util::rot_boot_preference(target_slot, util::PREF_CLEAR, true, "clearing_transient");
+    if clear_pref_result?.error != () {
+        debug(`error|clear_transient_preference: Call to rot_boot_preference PREF_CLEAR failed: ${clear_pref_result.error}`);
+        return false;
+    }
+
+    // Verify it was cleared
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () || rbi.transient_boot_preference != () {
+        debug(`error|clear_transient_preference: Verification failed. RBI: ${rbi}`);
+        return false;
+    }
+
+    debug("info|Successfully cleared transient boot preference.");
+    return true;
+}
+
+/// Ensures there are no conflicting boot preferences set for the inactive slot.
+/// This function is intended to be called before any update operation to ensure
+/// the device is in a clean state.
+/// - If a conflicting transient preference is found, it is cleared without a reset.
+/// - If a conflicting pending persistent preference is found, it uses a
+///   workaround (#2093) or the ideal method based on the conf flag.
+///
+/// Args:
+///   conf (map): The configuration map, used to check for workarounds.
+///
+/// Returns:
+///   bool: `true` if the state is clean or was successfully cleaned, `false` otherwise.
+fn sanitize_boot_preferences(conf) {
+    debug("info|Sanitizing boot preferences...");
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () {
+        debug(`error|sanitize_boot_preferences: Could not get initial RBI: ${rbi.error}`);
+        return false;
+    }
+
+    let active = rbi.active;
+    let inactive = if active == 0 { 1 } else { 0 };
+    debug(`crit|XXX active=${active} type=${type_of(active)}`);
+    debug(`crit|XXX inactive=${inactive} type=${type_of(inactive)}`);
+
+    // Older RoT Hubris does not report transient or pending persistent
+    // preferences. As a work-around, we could always reset the RoT.
+
+    let pending_transient = rbi.transient_boot_preference;
+    debug(`crit|XXX pending_transient=${pending_transient} ${type_of(pending_transient)}`);
+
+    let pending_persistent = rbi.pending_persistent_boot_preference;
+    debug(`crit|XXX pending_persistent=${pending_persistent} ${type_of(pending_persistent)}`);
+
+
+    // Case 1: Clear transient preference if set
+    if pending_transient != () {
+        debug(`warn|Found pending transient preference (${pending_transient}). Clearing it.`);
+        if (!clear_transient_preference_without_reset()) {
+            debug("error|sanitize_boot_preferences: Failed to clear conflicting transient preference.");
+            return false;
+        }
+    } else {
+      debug("info|No pending transient preference");
+    }
+
+
+    // Case 2: Conflicting pending persistent preference
+    if pending_persistent != () {
+        debug(`warn|Found conflicting pending persistent preference.`);
+
+        if (conf?.hubris_2093_workaround) {
+            // --- WORKAROUND for Hubris issue #2093 ---
+            // The current firmware has a bug preventing a pending preference
+            // from being cleared by setting a new persistent one.
+            // The only reliable way to clear it is to reset the RoT.
+            debug("info|Hubris #2093 workaround enabled. Resetting RoT to clear pending preference.");
+            if !util::reset_component("rot") {
+                debug("error|sanitize_boot_preferences: Failed to reset RoT to clear pending preference.");
+                return false;
+            }
+            sleep(5); // Wait for RoT to come back up.
+        } else {
+            // --- IDEAL a.k.a. POST-BUGFIX LOGIC ---
+            // Once the firmware is fixed, we should be able to clear a pending
+            // preference for the inactive slot.
+            let clear_pref_result = util::rot_boot_preference(inactive, util::PREF_CLEAR, false, "clearing_pending");
+            if clear_pref_result?.error != () {
+                // Check if the error is due to WrongVersion, which means the feature is not supported
+                if clear_pref_result.error.contains("WrongVersion") {
+                    debug(`warn|sanitize_boot_preferences: Firmware does not support clearing pending persistent preference via -c: ${clear_pref_result.error}`);
+                } else {
+                    debug(`error|sanitize_boot_preferences: Failed to send command to clear pending preference: ${clear_pref_result.error}`);
+                    return false;
+                }
+            }
+        }
+
+        // Final verification
+        let final_rbi = util::rot_boot_info();
+        if final_rbi?.error != () || final_rbi.pending_persistent_boot_preference != () {
+             debug(`error|sanitize_boot_preferences: Failed to verify pending pref was cleared. RBI: ${final_rbi}`);
+             return false;
+        }
+    } else {
+      debug("info|No pending persistent preference");
+    }
+
+    debug("info|Boot preferences sanitized successfully.");
+    return true;
+}
+
+/// Checks for the specific case of an an SWD debugger attached to the SP and
+/// the SP having a pending update.
+/// Returns:
+///   bool: `true` if no debugger and pending update detected, `false` otherwise.
+//
+/// Fixing Hubris issue 2066 will give us more definitive information to use in
+/// testing.
+fn check_for_sp_debugger_and_sp_pending_update() {
+    debug("info|Performing pre-flight check for attached SP debugger...");
+
+    // We call faux_mgs directly here instead of util::reset_component
+    // so we can inspect the specific error message.
+    let result = faux_mgs(["reset-component", "sp"]);
+
+    if result?.ack == "reset" {
+        debug("info|SP reset successful. No debugger detected.");
+        // A reset here is fine and helps ensure a clean state.
+        sleep(5);
+        return true;
+    }
+
+    if result?.error != () {
+        // Use the 'message' key to get the detailed error string
+        let error_string = `${result.message}`;
+        if "the SP programming dongle is connected" in error_string {
+            debug("error|FATAL: SP Debugger Detected.");
+            debug("error|A JTAG/SWD debugger probe appears to be attached to the SP.");
+            debug("error|Please disconnect or power-off the debugger and restart the test.");
+            return false;
+        } else {
+            debug(`error|An unexpected error occurred while trying to reset the SP: ${result}`);
+            return false;
+        }
+    }
+
+    // Should not be reached if the command returns a well-formed map.
+    debug(`warn|Unexpected result from SP reset command: ${result}`);
+    return false;
+}
+
+/// Injects a fault by setting a conflicting pending persistent preference.
+/// This sets up a state that should cause the next update attempt to fail.
+///
+/// Returns: bool - true on success
+fn inject_conflicting_pending_preference() {
+    debug("info|FAULT INJECTION: Setting a conflicting pending persistent preference.");
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () { return false; }
+    let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
+    // Set persistent preference for the INACTIVE slot.
+    // This creates a pending preference that conflicts with any update to that slot.
+    let set_pref_result = util::rot_boot_preference(inactive_slot, util::PREF_SET, false, "inject_pending_fault");
+    return set_pref_result?.ok == true;
+}
+
+/// Injects a fault by setting a conflicting transient preference.
+fn inject_conflicting_transient_preference() {
+    debug("info|FAULT INJECTION: Setting a conflicting transient preference.");
+    let rbi = util::rot_boot_info();
+    if rbi?.error != () { return false; }
+    let inactive_slot = if rbi.active == 0 { 1 } else { 0 };
+    // Set transient preference for the INACTIVE slot.
+    let set_pref_result = util::rot_boot_preference(inactive_slot, util::PREF_SET, true, "inject_transient_fault");
+    return set_pref_result?.ok == true;
+}
+
+/// Checks if a specific fault injection test is enabled in the config.
+///
+/// Args:
+///   conf (map): The configuration map.
+///   fault_name (string): The name of the fault to check (e.g., "pending").
+///
+/// Returns:
+///   bool: `true` if the fault is in the list of tests to run.
+fn is_fault_enabled(conf, fault_name) {
+    if conf?.faults_to_inject == () {
+        return false;
+    }
+    return fault_name in conf.faults_to_inject;
 }

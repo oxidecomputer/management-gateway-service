@@ -9,7 +9,7 @@
 set -u -e
 
 fatal() {
-  printf "Fatal: %s" "$*" 1>&2
+  printf "Fatal: %s\n" "$*" 1>&2
   exit 1
 }
 
@@ -24,8 +24,10 @@ fi
 export HASS_SERVER
 export HASS_TOKEN
 
+ACTION="${1:-}"
+
 STATE=$(
-  case ${1^^} in
+  case "${ACTION^^}" in
   ON)
     hass-cli -o json service call switch.turn_on --arguments entity_id="${ENTITY_ID}" | jq -r '.[].state'
     ;;

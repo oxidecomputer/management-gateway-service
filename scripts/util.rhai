@@ -650,38 +650,70 @@ fn update_rot_image_file(slot, image_path, label) {
     }
 }
 
-/// Sets the RoT boot preference (transient or persistent).
-/// Wraps `faux_mgs component-active-slot <duration> -s <slot> rot`.
+
+// Argument to rot_boot_preference()
+export const PREF_CLEAR = false;
+export const PREF_SET = true;
+
+/// Sets or clears the RoT boot preference (transient or persistent).
+/// Wraps `faux_mgs component-active-slot <duration> -s <slot> rot` (for set)
+/// or `faux_mgs component-active-slot <duration> -c <slot> rot` (for clear).
 ///
 /// Args:
 ///   target_slot (int): The RoT slot to set preference for.
+///   action (util::PREF_SET or util::PREF_CLEAR): Set or Clear the preference.
 ///   use_transient_flag (bool): If true, sets transient ('-t') preference;
 ///                              otherwise, persistent ('-p').
 ///   target_label (string): Descriptive label for logging.
 ///
 /// Returns:
-///   true if command acknowledged as "set" for correct slot, false otherwise.
-fn set_rot_boot_preference(target_slot, use_transient_flag, target_label) {
+///   Map: On success, returns `#{ "ok": true, "ack": "set" | "cancel_pending", "slot": int }`.
+///        - `ack`: "set" if setting a preference, "cancel_pending" if clearing.
+///        - `slot`: The slot number (0 or 1) that was acted upon.
+///   Map: On failure, returns `#{ "error": string }` with a descriptive error message.
+///        Examples: "Error response from SP: ...", "Unexpected 'ack' status: ...",
+///                  "Unrecognized response structure: ...".
+fn rot_boot_preference(target_slot, action, use_transient_flag, target_label) {
     let duration_param = if use_transient_flag { "-t" } else { "-p" };
+    let arg_action = "-s";
+    let pr_action = "Set";
+    if action == util::PREF_CLEAR {
+        arg_action = "-c";
+        pr_action = "Clear";
+    }
+
     debug(
-        `info|util::set_rot_boot_preference: Setting RoT pref: `+
+        `info|util::rot_boot_preference: ${pr_action} RoT pref: `+
         `slot ${target_slot}, type ${duration_param} (target '${target_label}').`
     );
-    let r_set_slot = faux_mgs([
-        "component-active-slot", duration_param, "-s", `${target_slot}`, "rot"
+    let r = faux_mgs([
+        "component-active-slot", duration_param, arg_action, `${target_slot}`, "rot"
     ]);
     debug(
-        `info|util::set_rot_boot_preference: Result for '${target_label}': `+
-        `${r_set_slot}`
+        `info|util::rot_boot_preference: Result for ${pr_action} '${target_label}': `+
+        `${r}`
     );
-    if r_set_slot?.ack == "set" && r_set_slot?.slot == target_slot {
-        return true;
+
+    if r?.Err != () {
+        // An error occurred
+        let err_msg = `Error response from SP: ${r.Err}`;
+        debug(`error|${err_msg}`);
+        return #{ "error": err_msg };
+    } else if r?.ack != () {
+        // Success, 'ack' is directly at top level
+        let ack_status = r.ack;
+        if ack_status == "set" || ack_status == "cancel_pending" {
+            debug(`info|Preference ${ack_status} successfully.`);
+            return #{ "ok": true, "ack": ack_status, "slot": r?.slot };
+        } else {
+            let err_msg = `Unexpected 'ack' status: ${ack_status}`;
+            debug(`error|${err_msg}`);
+            return #{ "error": err_msg };
+        }
     } else {
-        debug(
-            `error|util::set_rot_boot_preference: Failed for '${target_label}' `+
-            `(slot ${target_slot}, type ${duration_param}). Result: ${r_set_slot}`
-        );
-        return false;
+        let err_msg = `Unrecognized response structure: ${r}`;
+        debug(`error|${err_msg}`);
+        return #{ "error": err_msg };
     }
 }
 
