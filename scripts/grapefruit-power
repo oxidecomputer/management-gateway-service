@@ -1,0 +1,44 @@
+#!/usr/bin/bash
+
+# This script uses Home Assistant and a Zigbee controlled power outlet to
+# control the power to the Grapefruit development board. This is analagous to
+# the sled power control feature of "Ignition" on a compute sled or other
+# device.
+# See [hass-cli](https://github.com/home-assistant-ecosystem/home-assistant-cli)
+
+set -u -e
+
+fatal() {
+  printf "Fatal: %s" "$*" 1>&2
+  exit 1
+}
+
+CONF="$HOME/.config/$(basename $0)/config.sh"
+ls -l "${CONF}"
+[[ -r "${CONF}" ]] || fatal "Cannot source config file $CONF"
+source "${CONF}"
+if [[ -z "${HASS_TOKEN}" || -z "${HASS_SERVER}" || -z "${ENTITY_ID}" ]]; then
+  fatal "HASS_SERVER, HASS_TOKEN, or ENTITY_ID not set after sourcing $CONF"
+fi
+# Ensure that HASS_* vars are exported.
+export HASS_SERVER
+export HASS_TOKEN
+
+STATE=$(
+  case ${1^^} in
+  ON)
+    hass-cli -o json service call switch.turn_on --arguments entity_id="${ENTITY_ID}" | jq -r '.[].state'
+    ;;
+  OFF)
+    hass-cli -o json service call switch.turn_off --arguments entity_id="${ENTITY_ID}" | jq -r '.[].state'
+    ;;
+  STATE)
+    hass-cli -o json state get "${ENTITY_ID}" | jq -r '.[].state'
+    ;;
+  *)
+    fatal 'Invalid request. Use ON|OFF|STATE'
+    ;;
+  esac
+)
+echo ${STATE^^}
+exit $?
