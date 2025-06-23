@@ -144,7 +144,7 @@ fn get_image_info(conf) {
             debug(`warn|failed to verify: ${path_str}`);
          }
     }
-    debug("debug|Image Info Map (get_image_info):\n" + images);
+    debug("debug|Image Info Map (get_image_info):" + images);
     if error_found {
         return 1;
     } else {
@@ -403,7 +403,7 @@ fn update_sp(sp_zip) {
             `error|SP did not become ready and clean after reset and `+
             `${max_poll_attempts} attempts.`
         );
-        debug(`error|SP did not successfully reset and clear update status.\n`);
+        debug(`error|SP did not successfully reset and clear update status.`);
         return false;
     }
     debug("info|SP readiness and clean status confirmed.");

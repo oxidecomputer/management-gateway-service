@@ -167,7 +167,7 @@ fn run_standard_test_flow(conf, images) {
         }
     ] {
         debug(
-            `info|\n--- Starting ${v_params.up_down} to ${v_params.label} ` +
+            `info|--- Starting ${v_params.up_down} to ${v_params.label} ` +
             `(${v_params.branch} branch versions) ---`
         );
 
@@ -234,7 +234,7 @@ fn run_standard_test_flow(conf, images) {
         );
     }
 
-    debug(`info|\nElapsed time total: ${start_ts.elapsed}`);
+    debug(`info|Elapsed time total: ${start_ts.elapsed}`);
     debug(`info|Current time: ${datetime_local()}`);
     debug("info|Done.");
     return 0;
@@ -258,7 +258,7 @@ fn main() {
         let passed_tests = [];
 
         if (helper::is_fault_enabled(conf, "pending")) {
-            debug("info|\n--- FAULT INJECTION: PENDING PREFERENCE ---");
+            debug("info|--- FAULT INJECTION: PENDING PREFERENCE ---");
             if (!helper::ensure_initial_baseline_state(conf, images)) { return 1; }
             if (!helper::inject_conflicting_pending_preference()) {
                 debug("error|Failed to inject pending preference fault.");
@@ -276,7 +276,7 @@ fn main() {
         }
 
         if (helper::is_fault_enabled(conf, "transient")) {
-            debug("info|\n--- FAULT INJECTION: TRANSIENT PREFERENCE ---");
+            debug("info|--- FAULT INJECTION: TRANSIENT PREFERENCE ---");
             if (!helper::ensure_initial_baseline_state(conf, images)) { return 1; }
             if (!helper::inject_conflicting_transient_preference()) {
                 debug("error|Failed to inject transient preference fault.");
@@ -293,7 +293,7 @@ fn main() {
             }
         }
 
-        debug("info|\n--- FAULT INJECTION SUMMARY ---");
+        debug("info|--- FAULT INJECTION SUMMARY ---");
         if (passed_tests.len() > 0) {
             debug(`info|PASSED: ${passed_tests}`);
         }
