@@ -724,8 +724,8 @@ async fn main() -> Result<()> {
         per_attempt_timeout: Duration::from_millis(
             args.per_attempt_timeout_millis,
         ),
-        max_attempts_reset: args.max_attempts,
-        max_attempts_general: args.max_attempts_reset,
+        max_attempts_reset: args.max_attempts_reset,
+        max_attempts_general: args.max_attempts,
     };
 
     let listen_port =
