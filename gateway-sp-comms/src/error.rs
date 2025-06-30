@@ -116,6 +116,8 @@ pub enum UpdateError {
     InvalidComponent,
     #[error("an image was not found")]
     ImageNotFound,
+    #[error("cannot update preferred boot image")]
+    InvalidPreferredSlotId,
 }
 
 #[derive(Debug, thiserror::Error, SlogInlineError)]
