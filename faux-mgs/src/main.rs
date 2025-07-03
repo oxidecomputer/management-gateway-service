@@ -454,6 +454,26 @@ enum Command {
         #[clap(subcommand)]
         cmd: DumpCommand,
     },
+
+    /// Read ereports
+    ///
+    Ereports {
+        /// Starting ENA to read from.
+        #[clap(long, short, default_value_t = 0)]
+        start_ena: u64,
+
+        /// ENA to commit (flush ereports prior to).
+        #[clap(long, short)]
+        committed_ena: Option<u64>,
+
+        /// Expected SP restart ID.
+        #[clap(long, short, default_value_t = Uuid::nil())]
+        restart_id: Uuid,
+
+        /// Maximum number of ereports to request.
+        #[clap(long, short)]
+        limit: Option<std::num::NonZeroU8>,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1690,6 +1710,31 @@ async fn run_command(
                 }
             }
         },
+        Command::Ereports { start_ena, committed_ena, restart_id, limit } => {
+            let tranche = sp
+                .ereports(
+                    restart_id,
+                    ereport::Ena::new(start_ena),
+                    limit,
+                    committed_ena.map(ereport::Ena::new),
+                )
+                .await?;
+            let mut lines = vec![
+                format!("restart ID: {}", tranche.restart_id),
+                format!("count: {}", tranche.ereports.len()),
+                String::new(),
+            ];
+
+            for ereport in tranche.ereports {
+                lines.push(format!(
+                    "{:x}: {:#?}\n",
+                    ereport.ena.into_u64(),
+                    ereport.data
+                ));
+            }
+
+            Ok(Output::Lines(lines))
+        }
     }
 }
 
