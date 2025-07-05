@@ -458,6 +458,27 @@ enum Command {
         #[clap(subcommand)]
         cmd: DumpCommand,
     },
+
+    /// Read ereports
+    ///
+    Ereports {
+        /// Starting ENA to read from.
+        #[clap(long, short, default_value_t = 0)]
+        start_ena: u64,
+
+        /// ENA to commit (flush ereports prior to).
+        #[clap(long, short)]
+        committed_ena: Option<u64>,
+
+        /// Expected SP restart ID.
+        #[clap(long, short, default_value_t = Uuid::nil())]
+        restart_id: Uuid,
+
+        /// Maximum number of ereports to request.
+        #[clap(long, short)]
+        limit: Option<std::num::NonZeroU8>,
+    },
+
     /// Read Host flash at address
     ReadHostFlash {
         slot: u16,
@@ -1720,6 +1741,51 @@ async fn run_command(
                 }
             }
         },
+        Command::Ereports { start_ena, committed_ena, restart_id, limit } => {
+            let tranche = sp
+                .ereports(
+                    restart_id,
+                    ereport::Ena::new(start_ena),
+                    limit,
+                    committed_ena.map(ereport::Ena::new),
+                )
+                .await?;
+
+            if json {
+                let ereports = tranche
+                    .ereports
+                    .into_iter()
+                    .map(|mut ereport| {
+                        ereport.data.insert(
+                            "ena".to_string(),
+                            serde_json::Value::from(ereport.ena.into_u64()),
+                        );
+                        ereport.data
+                    })
+                    .collect::<Vec<_>>();
+
+                return Ok(Output::Json(json!({
+                    "restart_id": tranche.restart_id.to_string(),
+                    "ereports": ereports,
+                })));
+            }
+
+            let mut lines = vec![
+                format!("restart ID: {}", tranche.restart_id),
+                format!("count: {}", tranche.ereports.len()),
+                String::new(),
+            ];
+
+            for ereport in tranche.ereports {
+                lines.push(format!(
+                    "{:x}: {:#?}\n",
+                    ereport.ena.into_u64(),
+                    ereport.data
+                ));
+            }
+
+            Ok(Output::Lines(lines))
+        }
         Command::ReadHostFlash { slot, addr } => {
             let result = sp.read_host_flash(slot, addr).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))

@@ -230,6 +230,15 @@ where
                 )
                 .await
                 {
+                    trace!(
+                        self.log(),
+                        "received, response packet to ereport request";
+                        "request_id" => ?self.request_id,
+                        "restart_id" => ?restart_id,
+                        "request" => ?req,
+                        "attempt" => attempt,
+                        "packet_len" => msg.len(),
+                    );
                     // Decode the header and the body in separate steps, so that we
                     // don't waste time decoding the bodies of packets that don't
                     // match the current request ID.
