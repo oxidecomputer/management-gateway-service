@@ -1719,6 +1719,26 @@ async fn run_command(
                     committed_ena.map(ereport::Ena::new),
                 )
                 .await?;
+
+            if json {
+                let ereports = tranche
+                    .ereports
+                    .into_iter()
+                    .map(|mut ereport| {
+                        ereport.data.insert(
+                            "ena".to_string(),
+                            serde_json::Value::from(ereport.ena.into_u64()),
+                        );
+                        ereport.data
+                    })
+                    .collect::<Vec<_>>();
+
+                return Ok(Output::Json(json!({
+                    "restart_id": tranche.restart_id.to_string(),
+                    "ereports": ereports,
+                })));
+            }
+
             let mut lines = vec![
                 format!("restart ID: {}", tranche.restart_id),
                 format!("count: {}", tranche.ereports.len()),
