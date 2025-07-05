@@ -247,7 +247,9 @@ enum Command {
     },
 
     /// Get or set startup options on an SP.
-    StartupOptions { options: Option<u64> },
+    StartupOptions {
+        options: Option<u64>,
+    },
 
     /// Ask SP for its inventory.
     Inventory,
@@ -305,7 +307,9 @@ enum Command {
     UsartDetach,
 
     /// Serve host phase 2 images.
-    ServeHostPhase2 { directory: PathBuf },
+    ServeHostPhase2 {
+        directory: PathBuf,
+    },
 
     /// Upload a new image to the SP or one of its components.
     ///
@@ -473,6 +477,21 @@ enum Command {
         /// Maximum number of ereports to request.
         #[clap(long, short)]
         limit: Option<std::num::NonZeroU8>,
+    },
+
+    /// Read Host flash at address
+    ReadHostFlash {
+        slot: u16,
+        // Giving addresses in hex is nice and the default clap parser
+        // does not support that
+        #[clap(value_parser = parse_int::parse::<u32>)]
+        addr: u32,
+    },
+    StartHostFlashHash {
+        slot: u16,
+    },
+    GetHostFlashHash {
+        slot: u16,
     },
 }
 
@@ -726,8 +745,8 @@ async fn main() -> Result<()> {
         per_attempt_timeout: Duration::from_millis(
             args.per_attempt_timeout_millis,
         ),
-        max_attempts_reset: args.max_attempts,
-        max_attempts_general: args.max_attempts_reset,
+        max_attempts_reset: args.max_attempts_reset,
+        max_attempts_general: args.max_attempts,
     };
 
     let listen_port =
@@ -1416,15 +1435,27 @@ async fn run_command(
         }
         Command::PowerState { new_power_state } => {
             if let Some(state) = new_power_state {
-                sp.set_power_state(state).await.with_context(|| {
-                    format!("failed to set power state to {state:?}")
-                })?;
-                info!(log, "successfully set SP power state to {state:?}");
+                let transition =
+                    sp.set_power_state(state).await.with_context(|| {
+                        format!("failed to set power state to {state:?}")
+                    })?;
+                info!(
+                    log,
+                    "successfully set SP power state to {state:?} \
+                     ({transition:?})"
+                );
                 if json {
-                    Ok(Output::Json(json!({ "ack": "set", "state": state })))
+                    let changed = transition
+                        == gateway_messages::PowerStateTransition::Changed;
+                    Ok(Output::Json(json!({
+                        "ack": "set",
+                        "state": state,
+                        "changed": changed,
+                    })))
                 } else {
                     Ok(Output::Lines(vec![format!(
-                        "successfully set SP power state to {state:?}"
+                        "successfully set SP power state to {state:?}\
+                         ({transition:?})"
                     )]))
                 }
             } else {
@@ -1754,6 +1785,18 @@ async fn run_command(
             }
 
             Ok(Output::Lines(lines))
+        }
+        Command::ReadHostFlash { slot, addr } => {
+            let result = sp.read_host_flash(slot, addr).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+        Command::StartHostFlashHash { slot } => {
+            sp.start_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec!["hash started".to_string()]))
+        }
+        Command::GetHostFlashHash { slot } => {
+            let result = sp.get_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
     }
 }

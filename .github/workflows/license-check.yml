@@ -1,0 +1,19 @@
+name: License Check
+
+on: [ push, pull_request ]
+
+jobs:
+  check-license:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@2541b1294d2704b0964813337f33b291d3f8596b
+
+      - name: Set up Deno
+        uses: denoland/setup-deno@v2
+        with:
+          deno-version: v2.x
+
+      - name: Run license check
+        run: deno run --allow-read jsr:@kt3k/license-checker@3.3.1/main

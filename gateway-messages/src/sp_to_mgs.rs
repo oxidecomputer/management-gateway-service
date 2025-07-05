@@ -36,8 +36,17 @@ use monorail_port_status::{PortStatus, PortStatusError};
 use ignition::LinkEvents;
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum SpRequest {
     /// Data traveling from an SP-attached component (in practice, a CPU) on the
     /// component's serial console.
@@ -66,6 +75,7 @@ pub enum SpRequest {
     Serialize,
     Deserialize,
     strum_macros::IntoStaticStr,
+    strum_macros::VariantNames,
 )]
 #[strum(serialize_all = "snake_case")]
 pub enum SpResponse {
@@ -158,6 +168,15 @@ pub enum SpResponse {
     /// Response to a `SetPowerState` request indicating that the system was
     /// already in the desired power state and no transition occurred.
     PowerStateUnchanged,
+
+    /// Packet contains the host flash data
+    ReadHostFlash,
+
+    /// Started a hash of a flash bank
+    StartHostFlashHashAck,
+
+    /// sha2-256 hash of a flash bank
+    HostFlashHash([u8; 32]),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -961,7 +980,7 @@ pub struct UpdateInProgressStatus {
 
 /// Represents the result of a successful [`SetPowerState`] request.
 /// [`SetPowerState`]: crate::MgsRequest::SetPowerState
-#[derive(Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub enum PowerStateTransition {
     Changed,
     Unchanged,
@@ -977,8 +996,16 @@ impl From<PowerStateTransition> for SpResponse {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum SpError {
     /// The SP is busy; retry the request mometarily.
     ///
@@ -1075,6 +1102,7 @@ pub enum SpError {
     Watchdog(WatchdogError),
     Monorail(MonorailError),
     Dump(DumpError),
+    Hf(HfError),
 }
 
 impl fmt::Display for SpError {
@@ -1189,6 +1217,7 @@ impl fmt::Display for SpError {
             Self::Watchdog(e) => write!(f, "watchdog: {}", e),
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
+            Self::Hf(e) => write!(f, "hf: {}", e),
         }
     }
 }
@@ -1265,6 +1294,7 @@ pub enum UpdateError {
     ImageMismatch,
     SignatureNotValidated,
     VersionNotSupported,
+    InvalidPreferredSlotId,
 }
 
 impl fmt::Display for UpdateError {
@@ -1323,6 +1353,12 @@ impl fmt::Display for UpdateError {
             }
             Self::InvalidComponent => {
                 write!(f, "invalid component for operation")
+            }
+            Self::InvalidPreferredSlotId => {
+                write!(
+                    f,
+                    "updating a bootloader preferred slot is not permitted"
+                )
             }
         }
     }
@@ -1686,6 +1722,40 @@ impl fmt::Display for DumpError {
             Self::NoLongerValid => "the dump region has been cleared",
             Self::SegmentTooLong => "data segment cannot fit in packet data",
             Self::BadSequenceNumber => "sequence number is invalid",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Errors encountered when reading host flash. This isn't all the possible
+/// host flash errors but enough of the ones we should see commonly
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum HfError {
+    NotMuxedToSp,
+    BadAddress,
+    QspiTimeout,
+    QspiTransferError,
+    HashUncalculated,
+    RecalculateHash,
+    HashInProgress,
+}
+
+impl fmt::Display for HfError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::NotMuxedToSp => "Host flash not muxed to SP",
+            Self::BadAddress => "Bad host flash address",
+            Self::QspiTimeout => "Host QSPI timeout",
+            Self::QspiTransferError => {
+                "Host QSPI Transfer Error (check address)"
+            }
+            Self::HashUncalculated => "No hash calculated for slot",
+            Self::RecalculateHash => "Slot requires hash recalculation",
+            Self::HashInProgress => "Hash calcuation in progress",
         };
         write!(f, "{s}")
     }

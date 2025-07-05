@@ -19,8 +19,17 @@ use serde::Serialize;
 use serde_big_array::BigArray;
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MgsRequest {
     Discover,
     IgnitionState {
@@ -212,11 +221,35 @@ pub enum MgsRequest {
     },
 
     Dump(DumpRequest),
+
+    /// Read the host flash at the specified address for the current
+    /// persistent slot. Always returns one (host) page size
+    ReadHostFlash {
+        slot: u16,
+        addr: u32,
+    },
+    /// Start a hash of the specified flash bank
+    StartHostFlashHash {
+        slot: u16,
+    },
+    /// sha2-256 sum of the slot
+    GetHostFlashHash {
+        slot: u16,
+    },
 }
 
 #[derive(
-    Debug, Clone, Copy, SerializedSize, Serialize, Deserialize, PartialEq, Eq,
+    Debug,
+    Clone,
+    Copy,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    PartialEq,
+    Eq,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MgsResponse {
     Error(MgsError),
     /// Sent in response to an `SpRequest::HostPhase2Data` request. Followed by
@@ -229,8 +262,17 @@ pub enum MgsResponse {
 }
 
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    SerializedSize,
+    Serialize,
+    Deserialize,
+    strum_macros::VariantNames,
 )]
+#[strum(serialize_all = "snake_case")]
 pub enum MgsError {
     /// The request from the SP was invalid.
     BadRequest(BadRequestReason),
