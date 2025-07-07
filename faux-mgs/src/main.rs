@@ -461,6 +461,11 @@ enum Command {
 
     /// Read ereports
     ///
+    /// This command sends an ereport request to the service processor for the
+    /// provided `--restart-id`, starting at the requested `--start-ena`. If
+    /// the `--committed-ena` argument is provided, the SP will be asked to
+    /// flush (discard from memory) ereports up to that ENA. provided that
+    /// the requested `--restart-id` matches the SP's current restart ID.
     Ereports {
         /// Starting ENA to read from.
         ///
@@ -478,6 +483,10 @@ enum Command {
         ///
         /// If this value has a leading '0x' prefix, it will be parsed as
         /// hexadecimal, otherwise, it will be parsed as a decimal number.
+        ///
+        /// Note that if this value is provided, this command becomes a
+        /// destructive operation! Ereports prior to this ENA will be
+        /// permanently discarded by the service processor!
         #[clap(long, short, value_parser = parse_int::parse::<u64>)]
         committed_ena: Option<u64>,
 
