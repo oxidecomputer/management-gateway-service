@@ -458,6 +458,50 @@ enum Command {
         #[clap(subcommand)]
         cmd: DumpCommand,
     },
+
+    /// Read ereports
+    ///
+    /// This command sends an ereport request to the service processor for the
+    /// provided `--restart-id`, starting at the requested `--start-ena`.
+    ///
+    /// If the `--committed-ena` argument is provided, the SP will be asked to
+    /// flush (discard from memory) ereports up to that ENA. provided that
+    /// the requested `--restart-id` matches the SP's current restart ID.
+    Ereports {
+        /// Starting ENA to read from.
+        ///
+        /// If this value has a leading '0x' prefix, it will be parsed as
+        /// hexadecimal, otherwise, it will be parsed as a decimal number.
+        #[clap(
+            long,
+            short,
+            default_value_t = 0,
+            value_parser = parse_int::parse::<u64>
+        )]
+        start_ena: u64,
+
+        /// ENA to commit (flush ereports prior to).
+        ///
+        /// If this value has a leading '0x' prefix, it will be parsed as
+        /// hexadecimal, otherwise, it will be parsed as a decimal number.
+        ///
+        /// Note that if this value is provided, this command becomes a
+        /// destructive operation! Ereports prior to this ENA will be
+        /// permanently discarded by the service processor!
+        #[clap(long, short, value_parser = parse_int::parse::<u64>)]
+        committed_ena: Option<u64>,
+
+        /// Expected SP restart ID.
+        ///
+        /// This should be formatted as a UUID.
+        #[clap(long, short, default_value_t = Uuid::nil())]
+        restart_id: Uuid,
+
+        /// Maximum number of ereports to request.
+        #[clap(long, short)]
+        limit: Option<std::num::NonZeroU8>,
+    },
+
     /// Read Host flash at address
     ReadHostFlash {
         slot: u16,
@@ -1720,6 +1764,56 @@ async fn run_command(
                 }
             }
         },
+        Command::Ereports {
+            start_ena,
+            committed_ena,
+            restart_id: req_restart_id,
+            limit,
+        } => {
+            anyhow::ensure!(
+                committed_ena <= Some(start_ena),
+                "`--committed-ena` argument must be less than or equal to \
+                 `--start-ena`",
+            );
+
+            let tranche = sp
+                .ereports(
+                    req_restart_id,
+                    ereport::Ena::new(start_ena),
+                    limit,
+                    committed_ena.map(ereport::Ena::new),
+                )
+                .await?;
+
+            if json {
+                return Ok(Output::Json(json!(tranche)));
+            }
+
+            let gateway_sp_comms::ereport::EreportTranche {
+                ereports,
+                restart_id,
+            } = tranche;
+
+            let mut lines = vec![format!("restart ID: {restart_id}")];
+            if req_restart_id != restart_id {
+                lines.push(format!(
+                    "restart IDs did not match (requested {req_restart_id})",
+                ));
+            }
+            lines.push(format!("count: {}", ereports.len()));
+            lines.push(String::new());
+            lines.push("ereports:".to_string());
+
+            for ereport in ereports {
+                lines.push(format!(
+                    "{:#x}: {:#?}\n",
+                    ereport.ena.into_u64(),
+                    ereport.data
+                ));
+            }
+
+            Ok(Output::Lines(lines))
+        }
         Command::ReadHostFlash { slot, addr } => {
             let result = sp.read_host_flash(slot, addr).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
