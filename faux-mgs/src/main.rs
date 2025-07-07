@@ -1769,6 +1769,12 @@ async fn run_command(
             restart_id: req_restart_id,
             limit,
         } => {
+            anyhow::ensure!(
+                committed_ena <= Some(start_ena),
+                "`--committed-ena` argument must be less than or equal to \
+                 `--start-ena`",
+            );
+
             let gateway_sp_comms::ereport::EreportTranche {
                 ereports,
                 restart_id,
