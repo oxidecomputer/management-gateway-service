@@ -462,8 +462,9 @@ enum Command {
     /// Read ereports
     ///
     /// This command sends an ereport request to the service processor for the
-    /// provided `--restart-id`, starting at the requested `--start-ena`. If
-    /// the `--committed-ena` argument is provided, the SP will be asked to
+    /// provided `--restart-id`, starting at the requested `--start-ena`.
+    ///
+    /// If the `--committed-ena` argument is provided, the SP will be asked to
     /// flush (discard from memory) ereports up to that ENA. provided that
     /// the requested `--restart-id` matches the SP's current restart ID.
     Ereports {
