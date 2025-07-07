@@ -235,20 +235,33 @@ enum Command {
             long,
             value_name = "SLOT",
             requires = "switch_duration",
+            group = "action",
+            conflicts_with_all = ["cancel_pending"],
             help = "set the active slot"
         )]
         set: Option<u16>,
+        /// Cancel a pending `set` operation.
+        /// Used to avoid a reset when recoverying from a failed or abandoned update.
         #[clap(
             short,
             long,
-            requires = "set",
+            value_name = "SLOT",
+            requires = "switch_duration",
+            group = "action",
+            conflicts_with_all = ["set"]
+        )]
+        cancel_pending: Option<u16>,
+        #[clap(
+            short,
+            long,
+            requires = "action",
             group = "switch_duration",
             help = "persist the active slot to non-volatile memory"
         )]
         persist: bool,
         /// Only valid with component "rot":
         /// Prefer the specified slot on the next soft reset.
-        #[clap(short, long, requires = "set", group = "switch_duration")]
+        #[clap(short, long, requires = "action", group = "switch_duration")]
         transient: bool,
     },
 
@@ -1263,7 +1276,13 @@ async fn run_command(
                 ]))
             }
         }
-        Command::ComponentActiveSlot { component, set, persist, transient } => {
+        Command::ComponentActiveSlot {
+            component,
+            set,
+            persist,
+            transient,
+            cancel_pending,
+        } => {
             if transient && component != SpComponent::ROT {
                 bail!("The --transient (-t) flag is only allowed for the 'rot' component, not for {component}");
             } else if let Some(slot) = set {
@@ -1273,6 +1292,20 @@ async fn run_command(
                 } else {
                     Ok(Output::Lines(vec![format!(
                         "set active slot for {component:?} to {slot}"
+                    )]))
+                }
+            } else if let Some(slot) = cancel_pending {
+                sp.cancel_pending_component_active_slot(
+                    component, slot, persist,
+                )
+                .await?;
+                if json {
+                    Ok(Output::Json(
+                        json!({ "ack": "cancel_pending", "slot": slot }),
+                    ))
+                } else {
+                    Ok(Output::Lines(vec![format!(
+                        "cancel pending active slot for {component:?} as {slot}"
                     )]))
                 }
             } else {
