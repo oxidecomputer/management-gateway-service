@@ -1778,7 +1778,7 @@ async fn run_command(
 
             for ereport in tranche.ereports {
                 lines.push(format!(
-                    "{:x}: {:#?}\n",
+                    "{:#x}: {:#?}\n",
                     ereport.ena.into_u64(),
                     ereport.data
                 ));
