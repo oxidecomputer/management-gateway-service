@@ -1741,10 +1741,18 @@ async fn run_command(
                 }
             }
         },
-        Command::Ereports { start_ena, committed_ena, restart_id, limit } => {
-            let tranche = sp
+        Command::Ereports {
+            start_ena,
+            committed_ena,
+            restart_id: req_restart_id,
+            limit,
+        } => {
+            let gateway_sp_comms::ereport::EreportTranche {
+                ereports,
+                restart_id,
+            } = sp
                 .ereports(
-                    restart_id,
+                    req_restart_id,
                     ereport::Ena::new(start_ena),
                     limit,
                     committed_ena.map(ereport::Ena::new),
@@ -1752,8 +1760,7 @@ async fn run_command(
                 .await?;
 
             if json {
-                let ereports = tranche
-                    .ereports
+                let ereports = ereports
                     .into_iter()
                     .map(|mut ereport| {
                         ereport.data.insert(
@@ -1765,18 +1772,22 @@ async fn run_command(
                     .collect::<Vec<_>>();
 
                 return Ok(Output::Json(json!({
-                    "restart_id": tranche.restart_id.to_string(),
+                    "restart_id": restart_id.to_string(),
                     "ereports": ereports,
                 })));
             }
 
-            let mut lines = vec![
-                format!("restart ID: {}", tranche.restart_id),
-                format!("count: {}", tranche.ereports.len()),
-                String::new(),
-            ];
+            let mut lines = vec![format!("restart ID: {restart_id}")];
+            if req_restart_id != restart_id {
+                lines.push(format!(
+                    "restart IDs did not match (requested {req_restart_id})",
+                ));
+            }
+            lines.push(format!("count: {}", ereports.len()));
+            lines.push(String::new());
+            lines.push("ereports:".to_string());
 
-            for ereport in tranche.ereports {
+            for ereport in ereports {
                 lines.push(format!(
                     "{:#x}: {:#?}\n",
                     ereport.ena.into_u64(),
