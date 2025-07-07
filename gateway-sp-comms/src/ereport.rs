@@ -44,16 +44,17 @@ pub const MGS_PORT: u16 = 57007; // 0xDEAF
 #[derive(Debug, Default)]
 pub struct EreportHandler {}
 
-#[derive(Debug)]
+#[derive(Debug, serde::Serialize)]
 pub struct EreportTranche {
     pub restart_id: Uuid,
     pub ereports: Vec<Ereport>,
 }
 
 /// An individual ereport.
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Debug, Eq, PartialEq, serde::Serialize)]
 pub struct Ereport {
     pub ena: Ena,
+    #[serde(flatten)]
     pub data: JsonObject,
 }
 

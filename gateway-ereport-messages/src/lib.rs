@@ -46,6 +46,8 @@ use zerocopy::{
     KnownLayout,
 )]
 #[repr(transparent)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "u64", into = "u64"))]
 pub struct Ena(pub le::U64);
 
 #[cfg(any(feature = "debug-impls", test))]

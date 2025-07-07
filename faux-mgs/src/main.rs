@@ -1775,10 +1775,7 @@ async fn run_command(
                  `--start-ena`",
             );
 
-            let gateway_sp_comms::ereport::EreportTranche {
-                ereports,
-                restart_id,
-            } = sp
+            let tranche = sp
                 .ereports(
                     req_restart_id,
                     ereport::Ena::new(start_ena),
@@ -1788,22 +1785,13 @@ async fn run_command(
                 .await?;
 
             if json {
-                let ereports = ereports
-                    .into_iter()
-                    .map(|mut ereport| {
-                        ereport.data.insert(
-                            "ena".to_string(),
-                            serde_json::Value::from(ereport.ena.into_u64()),
-                        );
-                        ereport.data
-                    })
-                    .collect::<Vec<_>>();
-
-                return Ok(Output::Json(json!({
-                    "restart_id": restart_id.to_string(),
-                    "ereports": ereports,
-                })));
+                return Ok(Output::Json(json!(tranche)));
             }
+
+            let gateway_sp_comms::ereport::EreportTranche {
+                ereports,
+                restart_id,
+            } = tranche;
 
             let mut lines = vec![format!("restart ID: {restart_id}")];
             if req_restart_id != restart_id {
