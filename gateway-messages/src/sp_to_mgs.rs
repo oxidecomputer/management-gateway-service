@@ -177,6 +177,9 @@ pub enum SpResponse {
 
     /// sha2-256 hash of a flash bank
     HostFlashHash([u8; 32]),
+
+    /// Cancel a pending slot activation
+    ComponentCancelPendingActiveSlotAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
