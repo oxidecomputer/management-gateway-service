@@ -463,14 +463,27 @@ enum Command {
     ///
     Ereports {
         /// Starting ENA to read from.
-        #[clap(long, short, default_value_t = 0)]
+        ///
+        /// If this value has a leading '0x' prefix, it will be parsed as
+        /// hexadecimal, otherwise, it will be parsed as a decimal number.
+        #[clap(
+            long,
+            short,
+            default_value_t = 0,
+            value_parser = parse_int::parse::<u64>
+        )]
         start_ena: u64,
 
         /// ENA to commit (flush ereports prior to).
-        #[clap(long, short)]
+        ///
+        /// If this value has a leading '0x' prefix, it will be parsed as
+        /// hexadecimal, otherwise, it will be parsed as a decimal number.
+        #[clap(long, short, value_parser = parse_int::parse::<u64>)]
         committed_ena: Option<u64>,
 
         /// Expected SP restart ID.
+        ///
+        /// This should be formatted as a UUID.
         #[clap(long, short, default_value_t = Uuid::nil())]
         restart_id: Uuid,
 
