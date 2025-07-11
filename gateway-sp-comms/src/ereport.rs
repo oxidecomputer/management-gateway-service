@@ -78,9 +78,9 @@ pub(crate) struct Worker<S> {
     socket: S,
     /// The current map of metadata added to all received ereports.
     ///
-    /// When MGS starts up, this is initially `None`, and we must ask the SP for
+    /// When MGS starts up, this is initially empty, and we must ask the SP for
     /// metadata before we can start processing ereports.
-    metadata: Option<JsonObject>,
+    metadata: JsonObject,
 }
 
 type JsonObject = serde_json::Map<String, JsonValue>;
@@ -99,17 +99,20 @@ where
             request_id: RequestIdV0(0),
             retry_config,
             socket,
-            metadata: None,
+            metadata: JsonObject::default(),
         };
         (this, tx)
     }
 
     pub(crate) async fn run(mut self) {
         while let Some(req) = self.req_rx.recv().await {
-            // If we have just started up, or we were previously unable to
-            // refresh the SP's metadata, try to do so now.
-            if self.metadata.is_none() {
-                trace!(self.log(), "requesting initial SP metadata...");
+            // If we have just started up, or the SP hasn't yet sent us its
+            // metadata, try to do so now. SPs may send empty metadata maps if
+            // we try to read ereports in the window of time between when the
+            // restart ID is generated and when VPD is read and loaded to
+            // Packrat, to indicate that we should keep refreshing.
+            if self.metadata.is_empty() {
+                trace!(self.log(), "SP metadata is empty; refreshing...");
                 match self
                     .request_ereports(Uuid::nil(), Ena::new(0), 0, None)
                     .await
@@ -130,7 +133,7 @@ where
                         }
                         debug!(
                             self.log(),
-                            "received initial SP metadata";
+                            "refreshed SP metadata";
                             "metadata" => ?self.metadata,
                             "restart_id" => ?restart_id
                         );
@@ -314,7 +317,7 @@ fn decode_body_v0(
     log: &slog::Logger,
     requested_restart_id: Uuid,
     header: &ResponseHeaderV0,
-    metadata: &mut Option<JsonObject>,
+    metadata: &mut JsonObject,
     packet: &[u8],
 ) -> Result<EreportTranche, DecodeError> {
     // Deserialize a CBOR-encoded value from a byte slice, returning the
@@ -356,7 +359,7 @@ fn decode_body_v0(
             "requested_restart_id" => ?requested_restart_id,
             "metadata" => ?new_metadata,
         );
-        *metadata = Some(new_metadata);
+        *metadata = new_metadata;
     }
     if packet.is_empty() {
         return Ok(EreportTranche { restart_id, ereports: Vec::new() });
@@ -380,8 +383,6 @@ fn decode_body_v0(
         #[serde(with = "serde_bytes")] &'a [u8],
     );
 
-    let metadata = metadata.as_ref();
-    let meta_len = metadata.map(JsonObject::len).unwrap_or(0);
     let cbor_ereports = serde_cbor::from_slice::<Vec<EreportEntry>>(packet)
         .map_err(DecodeError::EreportsDeserialize)?;
     let mut ereports = Vec::with_capacity(cbor_ereports.len());
@@ -423,7 +424,7 @@ fn decode_body_v0(
         let mut data = serde_json::Map::with_capacity(
             // Let's just do One Big Allocation with enough space for
             // the whole thing! We'll need:
-            cbor_body.len() + meta_len + EXTRA_FIELDS,
+            cbor_body.len() + metadata.len() + EXTRA_FIELDS,
         );
         convert_cbor_object_into(cbor_body, &mut data)?;
         Ok((task_name, data))
@@ -469,7 +470,7 @@ fn decode_body_v0(
                     "error" => &error,
                 );
                 let mut data = serde_json::Map::with_capacity(
-                    meta_len
+                    metadata.len()
                     + EXTRA_FIELDS
                     + 1  // error message
                     + 1, // body bytes
@@ -501,12 +502,9 @@ fn decode_body_v0(
         // If the ereport was decoded by this function, the protocol version is
         // always 0 --- this is `decode_body_v0` :)
         data.insert(KEY_PROTO_VERSION.to_string(), 0.into());
-        data.extend(
-            metadata
-                .into_iter()
-                .flat_map(JsonObject::iter)
-                .map(|(k, v)| (k.clone(), v.clone())),
-        );
+        // XXX(eliza): it would be nice if these key-value pairs could be
+        // refcounted or something...
+        data.extend(metadata.iter().map(|(k, v)| (k.clone(), v.clone())));
 
         ereports.push(Ereport { ena, data });
 
@@ -846,7 +844,7 @@ mod test {
     fn decode_packet(
         log: &slog::Logger,
         restart_id: Uuid,
-        metadata: &mut Option<JsonObject>,
+        metadata: &mut JsonObject,
         packet: &[u8],
     ) -> (Uuid, RequestIdV0, Vec<Ereport>) {
         dump_packet(packet);
@@ -934,18 +932,14 @@ mod test {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
         };
-        let mut meta = Some(initial_meta.clone());
+        let mut meta = initial_meta.clone();
 
         let (decoded_restart_id, decoded_request_id, ereports) =
             decode_packet(&log, restart_id, &mut meta, packet);
 
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
-        assert_eq!(
-            meta.as_ref(),
-            Some(&initial_meta),
-            "metadata should be unchanged"
-        );
+        assert_eq!(meta, initial_meta, "metadata should be unchanged");
 
         assert_eq!(
             ereports.len(),
@@ -1061,18 +1055,14 @@ mod test {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
         };
-        let mut meta = Some(initial_meta.clone());
+        let mut meta = initial_meta.clone();
 
         let (decoded_restart_id, decoded_request_id, ereports) =
             decode_packet(&log, restart_id, &mut meta, packet);
 
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
-        assert_eq!(
-            meta.as_ref(),
-            Some(&initial_meta),
-            "metadata should be unchanged"
-        );
+        assert_eq!(meta, initial_meta, "metadata should be unchanged");
 
         assert_eq!(
             ereports.len(),
@@ -1195,17 +1185,13 @@ mod test {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
         };
-        let mut meta = Some(initial_meta.clone());
+        let mut meta = initial_meta.clone();
 
         let (decoded_restart_id, decoded_request_id, ereports) =
             decode_packet(&log, Uuid::new_v4(), &mut meta, packet);
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
-        assert_eq!(
-            dbg!(meta.as_ref()),
-            Some(&new_meta),
-            "expected metadata to be updated"
-        );
+        assert_eq!(meta, new_meta, "expected metadata to be updated");
 
         assert_eq!(
             ereports.len(),
@@ -1294,13 +1280,13 @@ mod test {
 
         let packet = &packet[..end];
 
-        let mut found_meta = None;
+        let mut found_meta = JsonObject::new();
 
         let (decoded_restart_id, decoded_request_id, ereports) =
             decode_packet(&log, restart_id, &mut found_meta, packet);
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
-        assert_eq!(dbg!(found_meta.as_ref()), Some(&meta),);
+        assert_eq!(dbg!(found_meta), meta);
 
         assert_eq!(
             dbg!(&ereports).len(),
@@ -1342,23 +1328,257 @@ mod test {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
         };
-        let mut meta = Some(initial_meta.clone());
+        let mut meta = initial_meta.clone();
 
         let (decoded_restart_id, decoded_request_id, ereports) =
             decode_packet(&log, restart_id, &mut meta, packet);
 
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
-        assert_eq!(
-            dbg!(meta.as_ref()),
-            Some(&initial_meta),
-            "metadata should be unchanged"
-        );
+        assert_eq!(meta, initial_meta, "metadata should be unchanged");
 
         assert_eq!(
             dbg!(&ereports).len(),
             0,
             "expected 0 ereports, but got: {ereports:#?}"
+        );
+    }
+
+    // Tests that receiving an empty metadata map from the SP clears the current
+    // metadata, if and only if restart IDs no longer match.
+    #[test]
+    fn empty_meta_clobbers_iff_mismatched_restart_ids() {
+        let log = logger("empty_meta_clobbers_iff_mismatched_restart_ids");
+        let mut packet = [0u8; 1024];
+        let restart_id = Uuid::new_v4();
+        let request_id = RequestIdV0(1);
+
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: restart_id.as_u128().into(),
+            start_ena: Ena::new(0x1),
+            request_id,
+        });
+        let end = {
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
+
+            // Metadata map
+            len += serialize_metadata(&mut packet[len..], &JsonObject::new());
+
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[mk_ereport_list(
+                    TaskNameV0::Name(TASK_NAME_THINGY),
+                    1,
+                    569,
+                    cbor_map! {
+                        "class": "flagrant system error".to_string(),
+                        "badness": 10000,
+                    },
+                )],
+            );
+            len
+        };
+
+        let mut meta = json_map! {
+            KEY_ARCHIVE: "decadefaced".to_string(),
+            KEY_SERIAL: "BRM69000555".to_string(),
+        };
+
+        // When decoding the packet, pretend we expected a different restart ID.
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(&log, Uuid::new_v4(), &mut meta, &packet[..end]);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
+        assert_eq!(
+            &meta,
+            &JsonObject::new(),
+            "empty metadata should clobber previous metadata, since restart \
+             IDs do not match",
+        );
+
+        assert_eq!(
+            ereports.len(),
+            1,
+            "expected 1 ereport, but got: {ereports:#?}"
+        );
+
+        assert_ereport_matches(
+            &ereports[0],
+            Ena::new(0x1),
+            json_map! {
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
+                KEY_UPTIME: 569,
+                KEY_PROTO_VERSION: 0,
+                "class": "flagrant system error",
+                "badness": 10000,
+            },
+        );
+
+        // Now, the SP will respond with metadata.
+        let new_meta = json_map! {
+            KEY_ARCHIVE: "cafebeef".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+        };
+        let request_id = RequestIdV0(2);
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: restart_id.as_u128().into(),
+            start_ena: Ena::new(0x2),
+            request_id,
+        });
+        let end = {
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
+
+            // Metadata map
+            len += serialize_metadata(&mut packet[len..], &new_meta);
+
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[mk_ereport_list(
+                    TaskNameV0::Name(TASK_NAME_APOLLO_13),
+                    13,
+                    572,
+                    cbor_map! {
+                        "msg": "houston, we have a problem".to_string(),
+                        "crew": vec![
+                            CborValue::from("Lovell".to_string()),
+                            CborValue::from("Swigert".to_string()),
+                            CborValue::from("Hayes".to_string()),
+                        ],
+                    },
+                )],
+            );
+            len
+        };
+
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(&log, restart_id, &mut meta, &packet[..end]);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
+        assert_eq!(
+            &meta, &new_meta,
+            "non-empty metadata should clobber empty metadata",
+        );
+
+        assert_eq!(
+            ereports.len(),
+            1,
+            "expected 1 ereport, but got: {ereports:#?}"
+        );
+
+        assert_ereport_matches(
+            &ereports[0],
+            Ena::new(0x2),
+            json_map! {
+                KEY_ARCHIVE: "cafebeef".to_string(),
+                KEY_SERIAL: "BRM69000420".to_string(),
+                KEY_TASK_NAME: TASK_NAME_APOLLO_13,
+                KEY_TASK_GEN: 13,
+                KEY_UPTIME: 572,
+                KEY_PROTO_VERSION: 0,
+                "msg": "houston, we have a problem",
+                "crew": ["Lovell", "Swigert", "Hayes"],
+            },
+        );
+
+        // Now, the SP will respond with an empty metadata map, but the SAME
+        // restart ID. This should *not* change the previously observed
+        // metadata.
+        let new_meta = json_map! {
+            KEY_ARCHIVE: "cafebeef".to_string(),
+            KEY_SERIAL: "BRM69000420".to_string(),
+        };
+        let request_id = RequestIdV0(3);
+        let header = ResponseHeader::V0(ResponseHeaderV0 {
+            restart_id: restart_id.as_u128().into(),
+            start_ena: Ena::new(0x2),
+            request_id,
+        });
+        let end = {
+            header
+                .write_to_prefix(&mut packet)
+                .expect("there should be room for the response header");
+            let mut len = std::mem::size_of::<ResponseHeader>();
+
+            // Metadata map
+            len += serialize_metadata(&mut packet[len..], &JsonObject::new());
+
+            len += serialize_ereport_list(
+                &mut packet[len..],
+                &[
+                    mk_ereport_list(
+                        TaskNameV0::Name(TASK_NAME_APOLLO_13),
+                        13,
+                        572,
+                        cbor_map! {
+                            "msg": "houston, we have a problem".to_string(),
+                            "crew": vec![
+                                CborValue::from("Lovell".to_string()),
+                                CborValue::from("Swigert".to_string()),
+                                CborValue::from("Hayes".to_string()),
+                            ],
+                        },
+                    ),
+                    mk_ereport_list(
+                        TaskNameV0::Name(TASK_NAME_THINGY),
+                        1,
+                        575,
+                        cbor_map! {
+                           "class": "problem changed".to_string(),
+                           "bonus_stuff": cbor_map!{ "foo": 1, "bar": 2, },
+                        },
+                    ),
+                ],
+            );
+            len
+        };
+
+        let (decoded_restart_id, decoded_request_id, ereports) =
+            decode_packet(&log, restart_id, &mut meta, &packet[..end]);
+        assert_eq!(decoded_restart_id, restart_id);
+        assert_eq!(decoded_request_id, request_id);
+
+        assert_eq!(&meta, &new_meta, "metadata should not have changed",);
+
+        assert_eq!(
+            ereports.len(),
+            2,
+            "expected 2 ereport, but got: {ereports:#?}"
+        );
+
+        assert_ereport_matches(
+            &ereports[0],
+            Ena::new(0x2),
+            json_map! {
+                KEY_ARCHIVE: "cafebeef".to_string(),
+                KEY_SERIAL: "BRM69000420".to_string(),
+                KEY_TASK_NAME: TASK_NAME_APOLLO_13,
+                KEY_TASK_GEN: 13,
+                KEY_UPTIME: 572,
+                KEY_PROTO_VERSION: 0,
+                "msg": "houston, we have a problem",
+                "crew": ["Lovell", "Swigert", "Hayes"],
+            },
+        );
+        assert_ereport_matches(
+            &ereports[1],
+            Ena::new(0x3),
+            json_map! {
+                KEY_ARCHIVE: "cafebeef".to_string(),
+                KEY_SERIAL: "BRM69000420".to_string(),
+                KEY_TASK_NAME: TASK_NAME_THINGY,
+                KEY_TASK_GEN: 1,
+                KEY_UPTIME: 575,
+                KEY_PROTO_VERSION: 0,
+                "class": "problem changed",
+                "bonus_stuff": { "foo": 1, "bar": 2, },
+            },
         );
     }
 
@@ -1428,18 +1648,14 @@ mod test {
             KEY_ARCHIVE: "decadefaced".to_string(),
             KEY_SERIAL: "BRM69000420".to_string(),
         };
-        let mut meta = Some(initial_meta.clone());
+        let mut meta = initial_meta.clone();
 
         let (decoded_restart_id, decoded_request_id, ereports) =
             decode_packet(&log, restart_id, &mut meta, packet);
 
         assert_eq!(decoded_restart_id, restart_id);
         assert_eq!(decoded_request_id, request_id);
-        assert_eq!(
-            meta.as_ref(),
-            Some(&initial_meta),
-            "metadata should be unchanged"
-        );
+        assert_eq!(meta, initial_meta, "metadata should be unchanged");
 
         assert_eq!(
             ereports.len(),
