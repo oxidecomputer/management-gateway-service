@@ -16,20 +16,21 @@
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
 use gateway_messages::SpResponse;
+use gateway_messages::UpdateError;
 
 use super::assert_serialized;
 
 #[test]
 fn mgs_request() {
     let request = MgsRequest::ComponentCancelPendingActiveSlot {
-        component: SpComponent::SP_ITSELF,
+        component: SpComponent::ROT,
         slot: 0x0102,
         persist: true,
     };
     #[rustfmt::skip]
     let expected = &[
         50, // ComponentCancelPendingActiveSlot
-        b's', b'p', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // SP_ITSELF
+        b'r', b'o', b't', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, // ROT
         2, 1, // slot
         1, // persist = true
     ];
@@ -41,4 +42,12 @@ fn sp_response() {
     let response = SpResponse::ComponentCancelPendingActiveSlotAck;
     let expected = &[52];
     assert_serialized(expected, &response);
+}
+
+#[test]
+fn error_enums() {
+    let response: [UpdateError; 2] =
+        [UpdateError::AlreadyPending, UpdateError::NonePending];
+    let expected = vec![35, 36];
+    assert_serialized(&expected, &response);
 }
