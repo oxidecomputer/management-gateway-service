@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -52,7 +53,9 @@ use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
+use std::io::Write;
 use std::mem;
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
@@ -60,6 +63,7 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
+use std::time::Instant;
 use tokio::net::UdpSocket;
 use uuid::Uuid;
 use zerocopy::IntoBytes;
@@ -509,6 +513,13 @@ enum Command {
         // does not support that
         #[clap(value_parser = parse_int::parse::<u32>)]
         addr: u32,
+    },
+    /// Dump the entire contents of the host flash, up to a specified size
+    DumpHostFlash {
+        slot: u16,
+        #[clap(value_parser = parse_int::parse::<u32>)]
+        size: u32,
+        output: Utf8PathBuf,
     },
     StartHostFlashHash {
         slot: u16,
@@ -1817,6 +1828,40 @@ async fn run_command(
         Command::ReadHostFlash { slot, addr } => {
             let result = sp.read_host_flash(slot, addr).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+        Command::DumpHostFlash { slot, size, output } => {
+            let mut fh = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output)
+                .with_context(|| format!("failed to create `{output}`"))?;
+
+            let log_every = Duration::from_secs(5);
+            let mut last_log = Instant::now();
+            info!(log, "starting to dump host flash");
+
+            let mut addr = 0;
+            while addr < size {
+                if last_log.elapsed() > log_every {
+                    info!(
+                        log, "continuing to dump host flash";
+                        "offset" => addr,
+                    );
+                    last_log = Instant::now();
+                }
+                let data = sp.read_host_flash(slot, addr).await.with_context(
+                    || format!("failed to read data at offset {addr}"),
+                )?;
+                let to_write = usize::min(data.len(), (size - addr) as usize);
+                fh.write_all(&data[..to_write])
+                    .with_context(|| format!("failed writing to `{output}`"))?;
+                addr += to_write as u32;
+            }
+            if json {
+                Ok(Output::Json(json!({"file-written": output.to_string()})))
+            } else {
+                Ok(Output::Lines(vec![format!("wrote {output}")]))
+            }
         }
         Command::StartHostFlashHash { slot } => {
             sp.start_host_flash_hash(slot).await?;

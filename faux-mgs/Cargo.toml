@@ -7,6 +7,7 @@ license = "MPL-2.0"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+camino.workspace = true
 clap.workspace = true
 futures.workspace = true
 glob.workspace = true

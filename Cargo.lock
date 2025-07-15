@@ -793,6 +793,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "camino",
  "clap",
  "futures",
  "gateway-messages",
