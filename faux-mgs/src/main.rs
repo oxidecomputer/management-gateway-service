@@ -522,6 +522,12 @@ enum Command {
         #[clap(value_parser = parse_int::parse::<u32>)]
         size: u32,
         output: Utf8PathBuf,
+        #[clap(
+            long,
+            default_value_t = 0,
+            value_parser = parse_int::parse::<u32>,
+        )]
+        start_address: u32,
     },
     StartHostFlashHash {
         slot: u16,
@@ -1831,7 +1837,7 @@ async fn run_command(
             let result = sp.read_host_flash(slot, addr).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
-        Command::DumpHostFlash { slot, size, output } => {
+        Command::DumpHostFlash { slot, size, output, start_address } => {
             let mut fh = OpenOptions::new()
                 .write(true)
                 .create_new(true)
@@ -1852,17 +1858,24 @@ async fn run_command(
                 None
             };
 
-            let mut addr = 0;
-            while addr < size {
+            let mut addr = start_address;
+            let mut bytes_dumped = 0;
+
+            while bytes_dumped < size {
                 let data = sp.read_host_flash(slot, addr).await.with_context(
                     || format!("failed to read data at offset {addr}"),
                 )?;
-                let to_write = usize::min(data.len(), (size - addr) as usize);
+
+                let to_write =
+                    usize::min(data.len(), (size - bytes_dumped) as usize);
                 fh.write_all(&data[..to_write])
                     .with_context(|| format!("failed writing to `{output}`"))?;
-                addr += to_write as u32;
+
+                let to_write = to_write as u32;
+                addr += to_write;
+                bytes_dumped += to_write;
                 if let Some(bar) = &progress_bar {
-                    bar.inc(to_write as u64);
+                    bar.inc(u64::from(to_write));
                 }
             }
             if json {
