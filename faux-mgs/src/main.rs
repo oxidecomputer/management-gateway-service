@@ -41,6 +41,8 @@ use gateway_sp_comms::SpRetryConfig;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use serde_json::json;
 use slog::debug;
 use slog::info;
@@ -55,6 +57,7 @@ use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
 use std::io;
+use std::io::IsTerminal;
 use std::io::Write;
 use std::mem;
 use std::net::Ipv6Addr;
@@ -63,7 +66,6 @@ use std::path::Path;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
-use std::time::Instant;
 use tokio::net::UdpSocket;
 use uuid::Uuid;
 use zerocopy::IntoBytes;
@@ -1835,20 +1837,23 @@ async fn run_command(
                 .create_new(true)
                 .open(&output)
                 .with_context(|| format!("failed to create `{output}`"))?;
-
-            let log_every = Duration::from_secs(5);
-            let mut last_log = Instant::now();
-            info!(log, "starting to dump host flash");
+            let progress_bar = if std::io::stderr().is_terminal() {
+                Some(
+                    ProgressBar::new(u64::from(size)).with_style(
+                        ProgressStyle::default_bar()
+                            .template(
+                                "dumping [{bar:30}] \
+                                 {bytes}/{total_bytes} ({bytes_per_sec})",
+                            )
+                            .expect("template should be valid"),
+                    ),
+                )
+            } else {
+                None
+            };
 
             let mut addr = 0;
             while addr < size {
-                if last_log.elapsed() > log_every {
-                    info!(
-                        log, "continuing to dump host flash";
-                        "offset" => addr,
-                    );
-                    last_log = Instant::now();
-                }
                 let data = sp.read_host_flash(slot, addr).await.with_context(
                     || format!("failed to read data at offset {addr}"),
                 )?;
@@ -1856,6 +1861,9 @@ async fn run_command(
                 fh.write_all(&data[..to_write])
                     .with_context(|| format!("failed writing to `{output}`"))?;
                 addr += to_write as u32;
+                if let Some(bar) = &progress_bar {
+                    bar.inc(to_write as u64);
+                }
             }
             if json {
                 Ok(Output::Json(json!({"file-written": output.to_string()})))
