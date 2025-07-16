@@ -7,11 +7,13 @@ license = "MPL-2.0"
 [dependencies]
 anyhow.workspace = true
 async-trait.workspace = true
+camino.workspace = true
 clap.workspace = true
 futures.workspace = true
 glob.workspace = true
 hex.workspace = true
 humantime.workspace = true
+indicatif.workspace = true
 nix.workspace = true
 rand.workspace = true
 parse_int.workspace = true

@@ -8,6 +8,7 @@ use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
@@ -40,6 +41,8 @@ use gateway_sp_comms::SpRetryConfig;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
 use gateway_sp_comms::MGS_PORT;
+use indicatif::ProgressBar;
+use indicatif::ProgressStyle;
 use serde_json::json;
 use slog::debug;
 use slog::info;
@@ -52,7 +55,10 @@ use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
 use std::fs;
 use std::fs::File;
+use std::fs::OpenOptions;
 use std::io;
+use std::io::IsTerminal;
+use std::io::Write;
 use std::mem;
 use std::net::Ipv6Addr;
 use std::net::SocketAddrV6;
@@ -509,6 +515,19 @@ enum Command {
         // does not support that
         #[clap(value_parser = parse_int::parse::<u32>)]
         addr: u32,
+    },
+    /// Dump the entire contents of the host flash, up to a specified size
+    DumpHostFlash {
+        slot: u16,
+        #[clap(value_parser = parse_int::parse::<u32>)]
+        size: u32,
+        output: Utf8PathBuf,
+        #[clap(
+            long,
+            default_value_t = 0,
+            value_parser = parse_int::parse::<u32>,
+        )]
+        start_address: u32,
     },
     StartHostFlashHash {
         slot: u16,
@@ -1817,6 +1836,53 @@ async fn run_command(
         Command::ReadHostFlash { slot, addr } => {
             let result = sp.read_host_flash(slot, addr).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+        Command::DumpHostFlash { slot, size, output, start_address } => {
+            let mut fh = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&output)
+                .with_context(|| format!("failed to create `{output}`"))?;
+            let progress_bar = if std::io::stderr().is_terminal() {
+                Some(
+                    ProgressBar::new(u64::from(size)).with_style(
+                        ProgressStyle::default_bar()
+                            .template(
+                                "dumping [{bar:30}] \
+                                 {bytes}/{total_bytes} ({bytes_per_sec})",
+                            )
+                            .expect("template should be valid"),
+                    ),
+                )
+            } else {
+                None
+            };
+
+            let mut addr = start_address;
+            let mut bytes_dumped = 0;
+
+            while bytes_dumped < size {
+                let data = sp.read_host_flash(slot, addr).await.with_context(
+                    || format!("failed to read data at offset {addr}"),
+                )?;
+
+                let to_write =
+                    usize::min(data.len(), (size - bytes_dumped) as usize);
+                fh.write_all(&data[..to_write])
+                    .with_context(|| format!("failed writing to `{output}`"))?;
+
+                let to_write = to_write as u32;
+                addr += to_write;
+                bytes_dumped += to_write;
+                if let Some(bar) = &progress_bar {
+                    bar.inc(u64::from(to_write));
+                }
+            }
+            if json {
+                Ok(Output::Json(json!({"file-written": output.to_string()})))
+            } else {
+                Ok(Output::Lines(vec![format!("wrote {output}")]))
+            }
         }
         Command::StartHostFlashHash { slot } => {
             sp.start_host_flash_hash(slot).await?;
