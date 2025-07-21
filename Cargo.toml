@@ -62,7 +62,7 @@ socket2 = "0.5.10"
 ssh-agent-client-rs = "0.9.1"
 ssh-key = { version = "0.6.7", features = ["p256"] }
 static_assertions = "1.1.0"
-strum = { version = "0.27.1", default-features = false }
+strum = { version = "0.27.2", default-features = false }
 strum_macros = "0.27.1"
 string_cache = "0.8.9"
 termios = "0.3"
