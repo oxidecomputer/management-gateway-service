@@ -71,6 +71,7 @@ use uuid::Uuid;
 use zerocopy::IntoBytes;
 
 mod picocom_map;
+mod rhai;
 mod usart;
 
 /// Command line program that can send MGS messages to a single SP.
@@ -534,6 +535,11 @@ enum Command {
     },
     GetHostFlashHash {
         slot: u16,
+    },
+    /// Script
+    Rhai {
+        script: PathBuf,
+        args: Vec<String>,
     },
 }
 
@@ -1890,6 +1896,11 @@ async fn run_command(
         }
         Command::GetHostFlashHash { slot } => {
             let result = sp.get_host_flash_hash(slot).await?;
+            Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+        Command::Rhai { script, args } => {
+            let result =
+                rhai::interpreter(Arc::new(sp), log, script, args).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
         }
     }
