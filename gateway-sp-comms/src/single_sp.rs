@@ -430,6 +430,10 @@ impl SingleSp {
         &self.interface
     }
 
+    pub fn reset_watchdog_timeout_ms(&self) -> u32 {
+        self.reset_watchdog_timeout_ms
+    }
+
     /// Retrieve the [`watch::Receiver`] for notifications of discovery of an
     /// SP's address.
     pub fn sp_addr_watch(
@@ -613,6 +617,22 @@ impl SingleSp {
         } else {
             expect_component_set_active_slot_ack
         })
+    }
+
+    /// Cancel a pending slot activation for a particular component..
+    pub async fn cancel_pending_component_active_slot(
+        &self,
+        component: SpComponent,
+        slot: u16,
+        persist: bool,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ComponentCancelPendingActiveSlot {
+            component,
+            slot,
+            persist,
+        })
+        .await
+        .and_then(expect_component_cancel_pending_active_slot_ack)
     }
 
     /// Request that the status of a component be cleared (e.g., resetting
