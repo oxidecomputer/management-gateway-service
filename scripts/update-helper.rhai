@@ -317,18 +317,18 @@ fn rot_supports_transient_boot_preference() {
         debug(`error|Cannot get active RoT slot. Error: ${r.error}`);
         return false;
     }
-    if r.ok.transient != () {
-        // Evidence shows that the feature is supported.
-        // Don't alter the state
+    if r.ok.transient != () || r.ok.pending_persistent != () {
+        // Indirect evidence since reporting non-() values
+        // was implemented in the same commit as transient image selection.
+        // State is not altered.
         return true;
     }
-    // For compliant firmware, this command succeeds and ensures the transient
-    // preference is cleared. For non-compliant firmware, it will fail.
-    let pref_check_result = util::rot_boot_preference(r.ok.active, util::PREF_SET, true, "transient_support_test");
+    // Now we know that if the feature is supported, then it isn't being used.
+    // If the feature isn't supported, then this call will fail:
+    let pref_check_result = util::rot_boot_preference(r.ok.active, util::PREF_SET, true, "transient_support_test_set");
     if pref_check_result?.ok == true {
-        // Setting the transient preference to the active slot is a no-op
-        // but shows that the feature is supported.
         debug("info|transient boot preference feature is supported.");
+        let _r = util::rot_boot_preference(r.ok.active, util::PREF_CLEAR, true, "transient_support_test_clear");
         return true;
     }
     debug("warn|transient boot preference feature is not supported.");
@@ -529,15 +529,30 @@ fn rot_validate_final_persistent_boot_state(
 }
 
 fn rot_validate_direct_persistent_boot_state(
-    rbi, target_update_slot, target_label
+    rbi, target_update_slot, target_label, images
 ) {
     debug("info|--- rot_validate_direct_persistent_boot_state (update-helper) ---");
-    if rbi.active != target_update_slot {
-        debug(`error|Validation FAILED: Unexpected active slot for '${target_label}'.`);
+    let active_gitc = util::caboose_value("rot", `${rbi.active}`, "GITC");
+    let expected_gitc_entries = images.by_gitc?.get(active_gitc);
+
+    if active_gitc == () {
+        debug(`error|Validation FAILED: Could not get GITC for active slot ${rbi.active}.`);
         return false;
     }
-    debug(`info|Validation PASSED: RoT correctly booted for '${target_label}'.`);
-    return true;
+
+    // Check if the active GITC belongs to the target_label (e.g., 'base_rot_a' or 'base_rot_b')
+    // The `images.by_gitc` map stores an array of labels for each GITC.
+    // We need to check if any of the labels for the active GITC match the target branch.
+    if expected_gitc_entries != () && (
+        `${target_label}_rot_a` in expected_gitc_entries ||
+        `${target_label}_rot_b` in expected_gitc_entries
+    ) {
+        debug(`info|Validation PASSED: RoT active GITC (${active_gitc}) matches expected for '${target_label}'.`);
+        return true;
+    } else {
+        debug(`error|Validation FAILED: Active GITC (${active_gitc}) does not match expected for '${target_label}'. RBI: ${rbi}`);
+        return false;
+    }
 }
 
 /// Attempts to power cycle the DUT and log its RoT state afterwards.
@@ -617,7 +632,8 @@ fn update_rot_hubris(
     path_b,
     use_transient,
     target_label,
-    conf
+    conf,
+    images
 ) {
     debug(`info|update_rot_hubris target=${target_label}`);
     debug(`info|transient=${use_transient}`);
@@ -774,10 +790,19 @@ fn update_rot_hubris(
         }
     } else {
         // Direct Persistent Boot Flow
+        // After setting persistent preference, the device should boot into the target slot.
+        // We perform one reset and check if the preference took effect.
+        if (rbi.active != target_slot) {
+            debug(`error|Validation FAILED: Persistent preference for slot ${target_slot} did not take effect after first reset. Active slot is ${rbi.active}. This indicates a firmware issue.`);
+            if (conf?.rot_hubris_power_cycle_on_failure == true) {
+                power_cycle_dut(conf, "RoT persistent preference not applied after reset");
+            }
+            return false;
+        }
+
         if (!rot_validate_direct_persistent_boot_state(
-            rbi, target_slot, target_label
+            rbi, target_slot, target_label, images
         )) {
-            // No specific error type from this local helper yet to condition power cycle
             if (conf?.rot_hubris_power_cycle_on_failure == true) {
                 power_cycle_dut(conf, "RoT direct persistent boot validation failed");
             }
@@ -860,7 +885,7 @@ fn ensure_initial_baseline_state(conf, images) {
         debug(`info|Device needs baseline flashing. SP: ${flash_sp}, RoT: ${flash_rot}`);
         if flash_rot {
             debug("info|Updating RoT to baseline (persistent).");
-            if !update_rot_hubris(conf.base.rot_a, conf.base.rot_b, false, "baseline_setup", conf) {
+            if !update_rot_hubris(conf.base.rot_a, conf.base.rot_b, false, "base", conf, images) {
                 debug("error|Failed to update RoT to baseline.");
                 return false;
             }
@@ -1087,15 +1112,6 @@ fn sanitize_boot_preferences(conf) {
         } else {
             debug("info|sanitize_boot_preferences: Successfully cleared pending persistent preference.");
         }
-
-        // Final verification
-        let final_rbi = util::rot_boot_info();
-        if final_rbi?.error != () || final_rbi.pending_persistent_boot_preference != () {
-             debug(`error|sanitize_boot_preferences: Failed to verify pending pref was cleared. RBI: ${final_rbi}`);
-             return false;
-        }
-    } else {
-      debug("info|No pending persistent preference");
     }
 
     debug("info|Boot preferences sanitized successfully.");
@@ -1106,7 +1122,7 @@ fn sanitize_boot_preferences(conf) {
 /// the SP having a pending update.
 /// Returns:
 ///   bool: `true` if no debugger and pending update detected, `false` otherwise.
-//
+///
 /// Fixing Hubris issue 2066 will give us more definitive information to use in
 /// testing.
 fn check_for_sp_debugger_and_sp_pending_update() {

@@ -57,6 +57,8 @@ and personal workflows.
     `faux-mgs` Rust integration:
     * `faux_mgs(["arg0", .., "argN"]) -> map`: Runs any `faux-mgs` command
         internally (using `--json=pretty`) and returns the result as a Rhai map.
+        This map will contain either an `Ok` or `Err` field, reflecting the
+        command's success or failure.
         *Do not call this directly in test scripts; use wrappers from `util.rhai`.*
     * `new_archive(path) -> ArchiveInspector`: Loads a Hubris archive (.zip).
     * `ArchiveInspector[<zip_path>]`: Access files within the archive (returns
@@ -90,7 +92,7 @@ import `${script_dir}/util` as util;
     -   `rot_boot_info()`: Gets formatted RoT Boot Info.
     -   `check_update_in_progress(component)`: Checks SP/RoT update status.
     -   `update_rot_image_file(slot, path, label)`: Updates RoT image.
-    -   `set_rot_boot_preference(slot, use_transient, label)`: Sets RoT pref.
+    -   `rot_boot_preference(slot, action, use_transient, label)`: Sets or clears RoT preference. When clearing (`action = util::PREF_CLEAR`), uses the `component-active-slot -c` command if supported by the firmware, with automatic fallback to reset workaround for version compatibility.
     -   `reset_rot_and_get_rbi(desc, label)`: Resets RoT and gets RBI.
     -   `update_sp_image(path)`: Updates SP image.
     -   `reset_sp()`: Resets SP.

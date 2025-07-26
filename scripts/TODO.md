@@ -4,10 +4,9 @@ This document tracks known issues, planned features, and refactoring opportuniti
 
 ## High Priority / Bugs & Workarounds
 
-* **Remove `--hubris-2093` Workaround**
-    * **Issue**: The `lpc55-update-server` firmware has a bug where setting a persistent preference does not correctly clear a pre-existing pending preference. This is tracked as "Hubris issue #2093".
-    * **Workaround**: The `sanitize_boot_preferences` function in `update-helper.rhai` uses a reset to reliably clear a pending preference when the `--hubris-2093` flag is active.
-    * **Action**: Once the firmware bug is fixed, the workaround logic should be removed from `sanitize_boot_preferences` and the `--hubris-2093` flag should be removed from `upgrade-rollback.rhai`. The "ideal" logic path should become the only path.
+*   **Hubris #2093 Workaround Status**
+    *   **Issue**: The `lpc55-update-server` firmware had a bug where setting a persistent preference did not correctly clear a pre-existing pending preference. This was tracked as "Hubris issue #2093".
+    *   **Current Status**: The `faux-mgs component-active-slot -c` command is now implemented and provides the preferred solution. However, the workaround logic is retained in `sanitize_boot_preferences` to handle version compatibility - when the SP firmware doesn't support the new `-c` command (version mismatch), the system gracefully falls back to the RoT reset workaround. This ensures compatibility across firmware versions during the transition period.
 
 * **Fix `faux-mgs` Error Reporting for `reset-component`**
     * **Issue**: When the SP debugger is attached, the `reset-component sp` command fails. However, the `faux-mgs` Rust code does not gracefully package the detailed error message (`watchdog: RoT error: the SP programming dongle is connected`) into the JSON passed to Rhai. It returns a generic error.
