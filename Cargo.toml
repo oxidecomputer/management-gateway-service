@@ -34,7 +34,7 @@ convert_case = "0.8"
 expectorate = "=1.1.0" # 1.2 requires rust 1.75; bump eventually
 futures = "0.3.31"
 fxhash = "0.2.1"
-glob = "0.3.2"
+glob = "0.3.3"
 hex = "0.4.3"
 hubpack = "0.1.2"
 humantime = "2.2.0"
