@@ -10,6 +10,7 @@ use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
+use omicron_zone_package::config::PackageName;
 use omicron_zone_package::package::BuildConfig;
 use tokio::fs;
 
@@ -75,7 +76,11 @@ async fn build_zone_package(output_dir: &Utf8Path) -> anyhow::Result<()> {
 
     for package in config.packages.values() {
         package
-            .create("omicron-faux-mgs", output_dir, &BuildConfig::default())
+            .create(
+                &PackageName::new_const("omicron-faux-mgs"),
+                output_dir,
+                &BuildConfig::default(),
+            )
             .await
             .context("failed to create faux-mgs omicron-zone-package")?;
     }

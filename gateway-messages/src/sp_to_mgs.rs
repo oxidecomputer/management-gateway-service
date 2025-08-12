@@ -299,7 +299,7 @@ type Digest256 = [u8; 32];
 
 trait HexDisplayableArray {
     // fn display(&self) -> fmt::Display;
-    fn display(&self) -> HexStringDisplay;
+    fn display(&self) -> HexStringDisplay<'_>;
 }
 
 impl HexDisplayableArray for Digest256 {
