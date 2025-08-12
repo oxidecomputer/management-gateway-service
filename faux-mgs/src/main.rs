@@ -163,6 +163,7 @@ fn json_pretty_from_str(s: &str) -> Result<JsonPretty> {
 }
 
 #[derive(Subcommand, Debug, Clone)]
+#[allow(clippy::enum_variant_names)]
 enum Command {
     /// Discover a connected SP.
     Discover,
@@ -2083,7 +2084,7 @@ async fn update(
     let sp_update_id = UpdateId::from(update_id);
     loop {
         // Bail if the update driver task has failed.
-        if update_driver.as_ref().map_or(false, |driver| driver.is_finished()) {
+        if update_driver.as_ref().is_some_and(|driver| driver.is_finished()) {
             let update_driver = update_driver.take().unwrap();
             update_driver
                 .await
