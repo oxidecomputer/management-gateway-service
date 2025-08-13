@@ -96,7 +96,6 @@ use self::update::start_sp_update;
 use self::update::update_status;
 
 pub use self::update::UpdateDriverTask;
-pub use self::update::UpdateDriverTaskError;
 
 // Once we've discovered an SP, continue to send discovery packets on this
 // interval to detect changes.
