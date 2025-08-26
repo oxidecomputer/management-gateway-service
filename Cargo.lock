@@ -1037,7 +1037,7 @@ dependencies = [
  "slog-term",
  "socket2 0.5.10",
  "string_cache",
- "thiserror 1.0.69",
+ "thiserror 2.0.14",
  "tlvc 0.3.1 (git+https://github.com/oxidecomputer/tlvc.git?branch=main)",
  "tokio",
  "usdt",
