@@ -1035,7 +1035,7 @@ dependencies = [
  "slog",
  "slog-error-chain",
  "slog-term",
- "socket2 0.5.10",
+ "socket2 0.6.0",
  "string_cache",
  "thiserror 2.0.14",
  "tlvc 0.3.1 (git+https://github.com/oxidecomputer/tlvc.git?branch=main)",
