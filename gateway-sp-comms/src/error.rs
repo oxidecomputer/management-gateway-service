@@ -116,6 +116,12 @@ pub enum UpdateError {
     InvalidComponent,
     #[error("an image was not found")]
     ImageNotFound,
+    #[error("cannot update preferred boot image")]
+    InvalidPreferredSlotId,
+    #[error("pending preference must be canceled first")]
+    AlreadyPending,
+    #[error("no pending preference to cancel")]
+    NonePending,
 }
 
 #[derive(Debug, thiserror::Error, SlogInlineError)]

@@ -177,6 +177,9 @@ pub enum SpResponse {
 
     /// sha2-256 hash of a flash bank
     HostFlashHash([u8; 32]),
+
+    /// Cancel a pending slot activation
+    ComponentCancelPendingActiveSlotAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -1295,6 +1298,8 @@ pub enum UpdateError {
     SignatureNotValidated,
     VersionNotSupported,
     InvalidPreferredSlotId,
+    AlreadyPending,
+    NonePending,
 }
 
 impl fmt::Display for UpdateError {
@@ -1355,10 +1360,13 @@ impl fmt::Display for UpdateError {
                 write!(f, "invalid component for operation")
             }
             Self::InvalidPreferredSlotId => {
-                write!(
-                    f,
-                    "updating a bootloader preferred slot is not permitted"
-                )
+                write!(f, "specified slot ID is not valid for this operation")
+            }
+            Self::AlreadyPending => {
+                write!(f, "pending preference must be canceled first")
+            }
+            Self::NonePending => {
+                write!(f, "no pending preference to cancel")
             }
         }
     }

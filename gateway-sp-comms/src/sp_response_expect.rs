@@ -129,6 +129,7 @@ expect_data_fn!(BulkIgnitionState(page) -> TlvPage);
 expect_data_fn!(ComponentDetails(page) -> TlvPage);
 expect_data_fn!(Inventory(page) -> TlvPage);
 expect_data_fn!(BulkIgnitionLinkEvents(page) -> TlvPage);
+expect_fn!(ComponentCancelPendingActiveSlotAck);
 
 pub(crate) fn expect_caboose_value(
     r: (SocketAddrV6, SpResponse, Vec<u8>),
