@@ -25,6 +25,7 @@ use serde_repr::Serialize_repr;
 pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
+pub mod vpd;
 
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
@@ -711,20 +712,22 @@ pub struct TlvPage {
 /// possible types contained in a component details message. Each TLV-encoded
 /// struct corresponds to one of these cases.
 #[derive(Debug, Clone)]
-pub enum ComponentDetails {
+pub enum ComponentDetails<'a> {
     PortStatus(Result<PortStatus, PortStatusError>),
     Measurement(Measurement),
+    Vpd(vpd::Vpd<'a>),
 }
 
-impl ComponentDetails {
+impl ComponentDetails<'_> {
     pub fn tag(&self) -> tlv::Tag {
         match self {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
+            ComponentDetails::Vpd(vpd) => vpd.tag(),
         }
     }
 
-    pub fn serialize(&self, buf: &mut [u8]) -> hubpack::error::Result<usize> {
+    pub fn serialize(&self, buf: &mut [u8]) -> hubpack::Result<usize> {
         match self {
             ComponentDetails::PortStatus(p) => hubpack::serialize(buf, p),
             ComponentDetails::Measurement(m) => {
@@ -742,6 +745,18 @@ impl ComponentDetails {
                     Ok(n + m.name.len())
                 }
             }
+            ComponentDetails::Vpd(vpd) => tlv::encode(buf, vpd.tag(), |buf| {
+                let bytes = vpd.value_bytes();
+                if bytes.len() > buf.len() {
+                    return Err(hubpack::Error::Overrun);
+                }
+                buf[..bytes.len()].copy_from_slice(bytes);
+                Ok(bytes.len())
+            })
+            .map_err(|e| match e {
+                tlv::EncodeError::BufferTooSmall => hubpack::Error::Overrun,
+                tlv::EncodeError::Custom(e) => e,
+            }),
         }
     }
 }
@@ -868,6 +883,10 @@ bitflags! {
         const HAS_MEASUREMENT_CHANNELS = 1 << 1;
         const HAS_SERIAL_CONSOLE = 1 << 2;
         const IS_LED = 1 << 3;
+        /// Indicates that this device has its own vital product data (e.g. part
+        /// number/serial number) which can be read by requesting the device's
+        /// details.
+        const HAS_VPD = 1 << 4;
         // MGS has a placeholder API for powering off an individual component;
         // do we want to keep that? If so, add a bit for "can be powered on and
         // off".
