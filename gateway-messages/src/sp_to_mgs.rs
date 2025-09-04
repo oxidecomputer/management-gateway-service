@@ -718,6 +718,14 @@ pub enum ComponentDetails<'a> {
     Vpd(vpd::Vpd<'a>),
 }
 
+#[derive(Debug, Clone)]
+#[cfg(feature = "std")]
+pub enum OwnedComponentDetails {
+    PortStatus(Result<PortStatus, PortStatusError>),
+    Measurement(Measurement),
+    Vpd(vpd::OwnedVpd),
+}
+
 impl ComponentDetails<'_> {
     pub fn tag(&self) -> tlv::Tag {
         match self {
@@ -757,6 +765,21 @@ impl ComponentDetails<'_> {
                 tlv::EncodeError::BufferTooSmall => hubpack::Error::Overrun,
                 tlv::EncodeError::Custom(e) => e,
             }),
+        }
+    }
+
+    #[cfg(feature = "std")]
+    pub fn into_owned(self) -> OwnedComponentDetails {
+        match self {
+            ComponentDetails::PortStatus(status) => {
+                OwnedComponentDetails::PortStatus(status)
+            }
+            ComponentDetails::Measurement(measurement) => {
+                OwnedComponentDetails::Measurement(measurement)
+            }
+            ComponentDetails::Vpd(vpd) => {
+                OwnedComponentDetails::Vpd(vpd.into_owned())
+            }
         }
     }
 }

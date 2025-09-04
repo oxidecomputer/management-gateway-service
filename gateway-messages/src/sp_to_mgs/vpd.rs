@@ -17,6 +17,17 @@ pub enum Vpd<'buf> {
     MfgRev(&'buf str),
 }
 
+#[cfg(feature = "std")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum OwnedVpd {
+    Cpn(String),
+    Serial(String),
+    OxideRev(u32),
+    Mpn(String),
+    MfgName(String),
+    MfgRev(String),
+}
+
 impl Vpd<'_> {
     // TLV tags for FRUID VPD.
     // See: https://rfd.shared.oxide.computer/rfd/308#_fruid_data
@@ -53,6 +64,18 @@ impl Vpd<'_> {
             Self::Mpn(mpn) => mpn.as_bytes(),
             Self::MfgName(name) => name.as_bytes(),
             Self::MfgRev(rev) => rev.as_bytes(),
+        }
+    }
+
+    #[cfg(feature = "std")]
+    pub fn into_owned(self) -> OwnedVpd {
+        match self {
+            Self::Cpn(cpn) => OwnedVpd::Cpn(cpn.to_string()),
+            Self::Serial(serial) => OwnedVpd::Serial(serial.to_string()),
+            Self::OxideRev(rev) => OwnedVpd::OxideRev(rev.get()),
+            Self::Mpn(mpn) => OwnedVpd::Mpn(mpn.to_string()),
+            Self::MfgName(mfg_name) => OwnedVpd::MfgName(mfg_name.to_string()),
+            Self::MfgRev(mfg_rev) => OwnedVpd::MfgRev(mfg_rev.to_string()),
         }
     }
 }
