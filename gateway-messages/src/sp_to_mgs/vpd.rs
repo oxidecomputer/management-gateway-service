@@ -5,119 +5,236 @@
 use crate::tlv;
 use core::fmt;
 use core::str;
-use zerocopy::{little_endian, IntoBytes};
+#[cfg(feature = "std")]
+use std::borrow::Borrow;
+
+pub const MAX_STR_LEN: usize = 32;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Vpd<'buf> {
-    Cpn(&'buf str),
-    Serial(&'buf str),
-    OxideRev(little_endian::U32),
-    Mpn(&'buf str),
-    MfgName(&'buf str),
-    MfgRev(&'buf str),
+    Oxide(OxideVpd<'buf>),
+    Mfg(MfgVpd<'buf>),
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct OxideVpd<'buf> {
+    pub serial: &'buf str,
+    pub rev: u32,
+    pub part_number: &'buf str,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
+pub struct MfgVpd<'buf> {
+    pub mfg: &'buf str,
+    pub serial: &'buf str,
+    pub mfg_rev: &'buf str,
+    pub mpn: &'buf str,
+}
+
+#[cfg(feature = "std")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedOxideVpd {
+    pub serial: String,
+    pub rev: u32,
+    pub part_number: String,
+}
+
+#[cfg(feature = "std")]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct OwnedMfgVpd {
+    pub mfg: String,
+    pub serial: String,
+    pub mfg_rev: String,
+    pub mpn: String,
 }
 
 #[cfg(feature = "std")]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum OwnedVpd {
-    Cpn(String),
-    Serial(String),
-    OxideRev(u32),
-    Mpn(String),
-    MfgName(String),
-    MfgRev(String),
+    Oxide(OwnedOxideVpd),
+    Mfg(OwnedMfgVpd),
 }
 
-impl Vpd<'_> {
-    // TLV tags for FRUID VPD.
-    // See: https://rfd.shared.oxide.computer/rfd/308#_fruid_data
+// TLV tags for FRUID VPD.
+// See: https://rfd.shared.oxide.computer/rfd/308#_fruid_data
 
-    pub const SERIAL_TAG: tlv::Tag = tlv::Tag(*b"SER0");
-    /// Tag for Oxide part numbers. The value of this tag is a UTF-8-encoded string.
-    pub const CPN_TAG: tlv::Tag = tlv::Tag(*b"CPN0");
-    /// Tag for Oxide revisions. The value of this tag is always a little-endian `u32`.
-    pub const OXIDE_REV_TAG: tlv::Tag = tlv::Tag(*b"REV0");
+const SERIAL_TAG: tlv::Tag = tlv::Tag(*b"SER0");
+/// Tag for Oxide part numbers. The value of this tag is a UTF-8-encoded string.
+const CPN_TAG: tlv::Tag = tlv::Tag(*b"CPN0");
+/// Tag for Oxide revisions. The value of this tag is always a little-endian `u32`.
+const OXIDE_REV_TAG: tlv::Tag = tlv::Tag(*b"REV0");
 
-    /// Tag for manufacturer names. The value of this tag is a UTF-8-encoded string.
-    pub const MFG_TAG: tlv::Tag = tlv::Tag(*b"MFG0");
-    /// Tag for manufacturer part numbers. The value of this tag is a UTF-8-encoded string.
-    pub const MPN_TAG: tlv::Tag = tlv::Tag(*b"MPN0");
-    /// Manufacturer revision tag. Unlike `OXIDE_REV_TAG`, this is a byte array rather than a `u32`.
-    pub const MFG_REV_TAG: tlv::Tag = tlv::Tag(*b"MRV0");
+/// Tag for manufacturer names. The value of this tag is a UTF-8-encoded string.
+const MFG_TAG: tlv::Tag = tlv::Tag(*b"MFG0");
+/// Tag for manufacturer part numbers. The value of this tag is a UTF-8-encoded string.
+const MPN_TAG: tlv::Tag = tlv::Tag(*b"MPN0");
+/// Manufacturer revision tag. Unlike `OXIDE_REV_TAG`, this is a byte array rather than a `u32`.
+const MFG_REV_TAG: tlv::Tag = tlv::Tag(*b"MRV0");
 
-    pub fn tag(&self) -> tlv::Tag {
+impl<'buf> Vpd<'buf> {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"FRU0");
+
+    pub fn tlv_len(&self) -> usize {
         match self {
-            Self::Cpn(_) => Self::CPN_TAG,
-            Self::Serial(_) => Self::SERIAL_TAG,
-            Self::OxideRev(_) => Self::OXIDE_REV_TAG,
-            Self::Mpn(_) => Self::MPN_TAG,
-            Self::MfgName(_) => Self::MFG_TAG,
-            Self::MfgRev(_) => Self::MFG_REV_TAG,
+            Vpd::Oxide(vpd) => tlv::tlv_len(vpd.tlv_len()),
+            Vpd::Mfg(vpd) => tlv::tlv_len(vpd.tlv_len()),
         }
     }
 
-    pub fn value_bytes(&self) -> &[u8] {
+    pub fn encode(&self, out: &mut [u8]) -> Result<usize, hubpack::Error> {
+        if out.len() < self.tlv_len() {
+            return Err(hubpack::Error::Overrun);
+        }
         match self {
-            Self::Cpn(cpn) => cpn.as_bytes(),
-            Self::Serial(serial) => serial.as_bytes(),
-            Self::OxideRev(rev) => rev.as_bytes(),
-            Self::Mpn(mpn) => mpn.as_bytes(),
-            Self::MfgName(name) => name.as_bytes(),
-            Self::MfgRev(rev) => rev.as_bytes(),
+            Vpd::Oxide(vpd) => vpd.encode(out),
+            Vpd::Mfg(vpd) => vpd.encode(out),
+        }
+        .map_err(|e| match e {
+            tlv::EncodeError::BufferTooSmall => hubpack::Error::Overrun,
+            tlv::EncodeError::Custom(e) => e,
+        })
+    }
+
+    pub fn decode_body(buf: &'buf [u8]) -> Result<Self, DecodeError> {
+        let mut tags = tlv::decode_iter(buf);
+
+        fn expect_tag<'a, T>(
+            tags: &mut impl Iterator<
+                Item = Result<(tlv::Tag, &'a [u8]), tlv::DecodeError>,
+            >,
+            expected_tag: tlv::Tag,
+            decode: impl Fn(&'a [u8]) -> Result<T, DecodeError>,
+        ) -> Result<T, DecodeError> {
+            match tags.next() {
+                Some(Ok((tag, value))) if tag == expected_tag => decode(value),
+                Some(Ok((tag, _))) => Err(DecodeError::UnexpectedTag(tag)),
+                Some(Err(err)) => Err(DecodeError::Tlv(expected_tag, err)),
+                None => Err(DecodeError::MissingTag(expected_tag)),
+            }
+        }
+
+        fn expect_str_tag<'a>(
+            tags: &mut impl Iterator<
+                Item = Result<(tlv::Tag, &'a [u8]), tlv::DecodeError>,
+            >,
+            expected_tag: tlv::Tag,
+        ) -> Result<&'a str, DecodeError> {
+            expect_tag(tags, expected_tag, |value| {
+                core::str::from_utf8(value)
+                    .map_err(DecodeError::invalid_str(expected_tag))
+            })
+        }
+
+        let serial = expect_str_tag(&mut tags, SERIAL_TAG)?;
+        match tags.next() {
+            Some(Ok((MFG_TAG, mfg))) => {
+                let mfg = core::str::from_utf8(mfg)
+                    .map_err(DecodeError::invalid_str(MFG_TAG))?;
+                let mpn = expect_str_tag(&mut tags, MPN_TAG)?;
+                let mfg_rev = expect_str_tag(&mut tags, MFG_REV_TAG)?;
+                Ok(Self::Mfg(MfgVpd { mfg, mpn, mfg_rev, serial }))
+            }
+            Some(Ok((CPN_TAG, cpn))) => {
+                let part_number = core::str::from_utf8(cpn)
+                    .map_err(DecodeError::invalid_str(MFG_TAG))?;
+                let rev = expect_tag(&mut tags, OXIDE_REV_TAG, |value| {
+                    let rev_bytes: [u8; 4] = value
+                        .try_into()
+                        .map_err(|_| DecodeError::InvalidU32(OXIDE_REV_TAG))?;
+                    Ok(u32::from_le_bytes(rev_bytes))
+                })?;
+                Ok(Self::Oxide(OxideVpd { part_number, rev, serial }))
+            }
+            Some(Ok((tag, _))) => Err(DecodeError::UnexpectedTag(tag)),
+            Some(Err(e)) => Err(DecodeError::TlvUntyped(e)),
+            None => Err(DecodeError::UnexpectedEnd),
         }
     }
 
     #[cfg(feature = "std")]
     pub fn into_owned(self) -> OwnedVpd {
         match self {
-            Self::Cpn(cpn) => OwnedVpd::Cpn(cpn.to_string()),
-            Self::Serial(serial) => OwnedVpd::Serial(serial.to_string()),
-            Self::OxideRev(rev) => OwnedVpd::OxideRev(rev.get()),
-            Self::Mpn(mpn) => OwnedVpd::Mpn(mpn.to_string()),
-            Self::MfgName(mfg_name) => OwnedVpd::MfgName(mfg_name.to_string()),
-            Self::MfgRev(mfg_rev) => OwnedVpd::MfgRev(mfg_rev.to_string()),
+            Self::Oxide(vpd) => OwnedVpd::Oxide(vpd.into_owned()),
+            Self::Mfg(vpd) => OwnedVpd::Mfg(vpd.into_owned()),
         }
     }
 }
 
-/// Intended for use with [`tlv::decode_iter`] and friends.
-impl<'buf> TryFrom<(tlv::Tag, &'buf [u8])> for Vpd<'buf> {
-    type Error = DecodeError;
-    fn try_from(
-        (tag, value): (tlv::Tag, &'buf [u8]),
-    ) -> Result<Self, Self::Error> {
-        match tag {
-            Self::CPN_TAG => std::str::from_utf8(value)
-                .map_err(DecodeError::invalid_str(tag))
-                .map(Self::Cpn),
-            Self::SERIAL_TAG => std::str::from_utf8(value)
-                .map_err(DecodeError::invalid_str(tag))
-                .map(Self::Serial),
-            Self::OXIDE_REV_TAG => {
-                let bytes: [u8; 4] = value
-                    .try_into()
-                    .map_err(|_| DecodeError::InvalidU32(tag))?;
-                Ok(Self::OxideRev(u32::from_le_bytes(bytes).into()))
-            }
-            Self::MPN_TAG => std::str::from_utf8(value)
-                .map_err(DecodeError::invalid_str(tag))
-                .map(Self::Mpn),
-            Self::MFG_TAG => std::str::from_utf8(value)
-                .map_err(DecodeError::invalid_str(tag))
-                .map(Self::MfgName),
-            Self::MFG_REV_TAG => std::str::from_utf8(value)
-                .map_err(DecodeError::invalid_str(tag))
-                .map(Self::MfgRev),
-            _ => Err(DecodeError::UnexpectedTag(tag)),
-        }
+impl OxideVpd<'_> {
+    pub fn tlv_len(&self) -> usize {
+        tlv::tlv_len(self.part_number.len())
+            + tlv::tlv_len(self.serial.len())
+            + tlv::tlv_len(4) // revision number (u32)
     }
+
+    pub fn encode(
+        &self,
+        out: &mut [u8],
+    ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+        if out.len() < self.tlv_len() {
+            return Err(tlv::EncodeError::Custom(hubpack::Error::Overrun));
+        }
+        let mut total = 0;
+        total += encode_str(&mut out[total..], SERIAL_TAG, self.serial)?;
+        total += encode_str(&mut out[total..], CPN_TAG, self.part_number)?;
+        total += tlv::encode(&mut out[total..], OXIDE_REV_TAG, |out| {
+            if out.len() < 4 {
+                return Err(hubpack::Error::Overrun);
+            }
+            out.copy_from_slice(&self.rev.to_le_bytes()[..]);
+            Ok(4)
+        })?;
+        Ok(total)
+    }
+}
+
+impl MfgVpd<'_> {
+    pub fn tlv_len(&self) -> usize {
+        tlv::tlv_len(self.mfg.len())
+            + tlv::tlv_len(self.mpn.len())
+            + tlv::tlv_len(self.mfg_rev.len())
+            + tlv::tlv_len(self.serial.len())
+    }
+
+    pub fn encode(
+        &self,
+        out: &mut [u8],
+    ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+        if out.len() < self.tlv_len() {
+            return Err(tlv::EncodeError::Custom(hubpack::Error::Overrun));
+        }
+        let mut total = 0;
+        total += encode_str(&mut out[total..], SERIAL_TAG, self.serial)?;
+        total += encode_str(&mut out[total..], MFG_TAG, self.mfg)?;
+        total += encode_str(&mut out[total..], MPN_TAG, self.mpn)?;
+        total += encode_str(&mut out[total..], MFG_REV_TAG, self.mfg_rev)?;
+        Ok(total)
+    }
+}
+
+fn encode_str(
+    out: &mut [u8],
+    tag: tlv::Tag,
+    value: &str,
+) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+    tlv::encode(out, tag, |out| {
+        if out.len() < value.len() {
+            return Err(hubpack::Error::Overrun);
+        }
+        out[..value.len()].copy_from_slice(value.as_bytes());
+        Ok(value.len())
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DecodeError {
+    UnexpectedEnd,
+    MissingTag(tlv::Tag),
     UnexpectedTag(tlv::Tag),
     InvalidUtf8(tlv::Tag, str::Utf8Error),
     InvalidU32(tlv::Tag),
+    Tlv(tlv::Tag, tlv::DecodeError),
+    TlvUntyped(tlv::DecodeError),
 }
 
 impl DecodeError {
@@ -129,14 +246,27 @@ impl DecodeError {
 impl fmt::Display for DecodeError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            DecodeError::UnexpectedTag(tag) => {
+            Self::MissingTag(tag) => write!(
+                f,
+                "unexpected end of input while expecting TLV tag {tag:?}"
+            ),
+            Self::UnexpectedTag(tag) => {
                 write!(f, "unexpected TLV tag {tag:?}")
             }
-            DecodeError::InvalidUtf8(tag, err) => {
+            Self::InvalidUtf8(tag, err) => {
                 write!(f, "value for tag {tag:?} was not UTF-8: {err}")
             }
-            DecodeError::InvalidU32(tag) => {
+            Self::InvalidU32(tag) => {
                 write!(f, "value for tag {tag:?} was not a u32")
+            }
+            Self::Tlv(tag, error) => {
+                write!(f, "TLV decode error while decoding {tag:?}: {error}")
+            }
+            Self::TlvUntyped(error) => {
+                write!(f, "TLV decode error while expecting {MFG_TAG:?} or {CPN_TAG:?}: {error}")
+            }
+            Self::UnexpectedEnd => {
+                write!(f, "unexpected end of input")
             }
         }
     }

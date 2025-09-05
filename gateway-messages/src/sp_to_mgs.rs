@@ -29,6 +29,7 @@ pub mod vpd;
 
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
+pub use vpd::Vpd;
 
 use ignition::IgnitionError;
 use measurement::MeasurementHeader;
@@ -718,20 +719,20 @@ pub enum ComponentDetails<'a> {
     Vpd(vpd::Vpd<'a>),
 }
 
-#[derive(Debug, Clone)]
-#[cfg(feature = "std")]
-pub enum OwnedComponentDetails {
-    PortStatus(Result<PortStatus, PortStatusError>),
-    Measurement(Measurement),
-    Vpd(vpd::OwnedVpd),
-}
+// #[derive(Debug, Clone)]
+// #[cfg(feature = "std")]
+// pub enum OwnedComponentDetails {
+//     PortStatus(Result<PortStatus, PortStatusError>),
+//     Measurement(Measurement),
+//     Vpd(vpd::OwnedVpd),
+// }
 
 impl ComponentDetails<'_> {
     pub fn tag(&self) -> tlv::Tag {
         match self {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
-            ComponentDetails::Vpd(vpd) => vpd.tag(),
+            ComponentDetails::Vpd(_) => Vpd::TAG,
         }
     }
 
@@ -753,35 +754,24 @@ impl ComponentDetails<'_> {
                     Ok(n + m.name.len())
                 }
             }
-            ComponentDetails::Vpd(vpd) => tlv::encode(buf, vpd.tag(), |buf| {
-                let bytes = vpd.value_bytes();
-                if bytes.len() > buf.len() {
-                    return Err(hubpack::Error::Overrun);
-                }
-                buf[..bytes.len()].copy_from_slice(bytes);
-                Ok(bytes.len())
-            })
-            .map_err(|e| match e {
-                tlv::EncodeError::BufferTooSmall => hubpack::Error::Overrun,
-                tlv::EncodeError::Custom(e) => e,
-            }),
+            ComponentDetails::Vpd(vpd) => vpd.encode(buf),
         }
     }
 
-    #[cfg(feature = "std")]
-    pub fn into_owned(self) -> OwnedComponentDetails {
-        match self {
-            ComponentDetails::PortStatus(status) => {
-                OwnedComponentDetails::PortStatus(status)
-            }
-            ComponentDetails::Measurement(measurement) => {
-                OwnedComponentDetails::Measurement(measurement)
-            }
-            ComponentDetails::Vpd(vpd) => {
-                OwnedComponentDetails::Vpd(vpd.into_owned())
-            }
-        }
-    }
+    // #[cfg(feature = "std")]
+    // pub fn into_owned(self) -> OwnedComponentDetails {
+    //     match self {
+    //         ComponentDetails::PortStatus(status) => {
+    //             OwnedComponentDetails::PortStatus(status)
+    //         }
+    //         ComponentDetails::Measurement(measurement) => {
+    //             OwnedComponentDetails::Measurement(measurement)
+    //         }
+    //         ComponentDetails::Vpd(vpd) => {
+    //             OwnedComponentDetails::Vpd(vpd.into_owned())
+    //         }
+    //     }
+    // }
 }
 
 #[derive(

@@ -1576,6 +1576,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         use gateway_messages::measurement::MeasurementHeader;
         use gateway_messages::monorail_port_status::PortStatus;
         use gateway_messages::monorail_port_status::PortStatusError;
+        use gateway_messages::vpd::Vpd;
 
         match tag {
             PortStatus::TAG => {
@@ -1594,7 +1595,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     );
                 }
 
-                Ok(Some(ComponentDetails::PortStatus(result)))
+                Ok(Some(OwnedComponentDetails::PortStatus(result)))
             }
             MeasurementHeader::TAG => {
                 let (header, leftover) =
@@ -1616,11 +1617,19 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     }
                 })?;
 
-                Ok(Some(ComponentDetails::Measurement(Measurement {
+                Ok(Some(OwnedComponentDetails::Measurement(Measurement {
                     name: name.to_string(),
                     kind: header.kind,
                     value: header.value,
                 })))
+            }
+            Vpd::TAG => {
+                let (vpd, leftover) = gateway_messages::Vpd::decode(value)
+                    .map_err(|err| CommunicationError::VpdDeserialize {
+                        err,
+                    })?;
+
+                Ok(Some(OwnedComponentDetails::Vpd(vpd)))
             }
             _ => {
                 info!(
