@@ -28,7 +28,6 @@ use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
-use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
@@ -42,6 +41,7 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::MonorailError;
+use gateway_messages::OwnedComponentDetails;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
 use gateway_messages::RotBootInfo;
@@ -142,7 +142,7 @@ pub struct SpDevice {
 
 #[derive(Debug, Clone)]
 pub struct SpComponentDetails {
-    pub entries: Vec<ComponentDetails>,
+    pub entries: Vec<OwnedComponentDetails>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1550,7 +1550,7 @@ struct ComponentDetailsTlvRpc<'a> {
 }
 
 impl TlvRpc for ComponentDetailsTlvRpc<'_> {
-    type Item = ComponentDetails;
+    type Item = OwnedComponentDetails;
 
     const LOG_NAME: &'static str = "component details";
 
