@@ -713,26 +713,21 @@ pub struct TlvPage {
 /// possible types contained in a component details message. Each TLV-encoded
 /// struct corresponds to one of these cases.
 #[derive(Debug, Clone)]
-pub enum ComponentDetails<'a> {
+pub enum ComponentDetails<S> {
     PortStatus(Result<PortStatus, PortStatusError>),
     Measurement(Measurement),
-    Vpd(vpd::Vpd<'a>),
+    Vpd(vpd::Vpd<S>),
 }
 
-// #[derive(Debug, Clone)]
-// #[cfg(feature = "std")]
-// pub enum OwnedComponentDetails {
-//     PortStatus(Result<PortStatus, PortStatusError>),
-//     Measurement(Measurement),
-//     Vpd(vpd::OwnedVpd),
-// }
-
-impl ComponentDetails<'_> {
+impl<S> ComponentDetails<S>
+where
+    S: AsRef<str>,
+{
     pub fn tag(&self) -> tlv::Tag {
         match self {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
-            ComponentDetails::Vpd(_) => Vpd::TAG,
+            ComponentDetails::Vpd(_) => Vpd::<S>::TAG,
         }
     }
 
@@ -757,21 +752,6 @@ impl ComponentDetails<'_> {
             ComponentDetails::Vpd(vpd) => vpd.encode(buf),
         }
     }
-
-    // #[cfg(feature = "std")]
-    // pub fn into_owned(self) -> OwnedComponentDetails {
-    //     match self {
-    //         ComponentDetails::PortStatus(status) => {
-    //             OwnedComponentDetails::PortStatus(status)
-    //         }
-    //         ComponentDetails::Measurement(measurement) => {
-    //             OwnedComponentDetails::Measurement(measurement)
-    //         }
-    //         ComponentDetails::Vpd(vpd) => {
-    //             OwnedComponentDetails::Vpd(vpd.into_owned())
-    //         }
-    //     }
-    // }
 }
 
 #[derive(

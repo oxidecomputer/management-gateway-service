@@ -5,30 +5,28 @@
 use crate::tlv;
 use core::fmt;
 use core::str;
-#[cfg(feature = "std")]
-use std::borrow::Borrow;
 
 pub const MAX_STR_LEN: usize = 32;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum Vpd<'buf> {
-    Oxide(OxideVpd<'buf>),
-    Mfg(MfgVpd<'buf>),
+pub enum Vpd<S> {
+    Oxide(OxideVpd<S>),
+    Mfg(MfgVpd<S>),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct OxideVpd<'buf> {
-    pub serial: &'buf str,
+pub struct OxideVpd<S> {
+    pub serial: S,
     pub rev: u32,
-    pub part_number: &'buf str,
+    pub part_number: S,
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct MfgVpd<'buf> {
-    pub mfg: &'buf str,
-    pub serial: &'buf str,
-    pub mfg_rev: &'buf str,
-    pub mpn: &'buf str,
+pub struct MfgVpd<S> {
+    pub mfg: S,
+    pub serial: S,
+    pub mfg_rev: S,
+    pub mpn: S,
 }
 
 #[cfg(feature = "std")]
@@ -71,7 +69,10 @@ const MPN_TAG: tlv::Tag = tlv::Tag(*b"MPN0");
 /// Manufacturer revision tag. Unlike `OXIDE_REV_TAG`, this is a byte array rather than a `u32`.
 const MFG_REV_TAG: tlv::Tag = tlv::Tag(*b"MRV0");
 
-impl<'buf> Vpd<'buf> {
+impl<S> Vpd<S>
+where
+    S: AsRef<str>,
+{
     pub const TAG: tlv::Tag = tlv::Tag(*b"FRU0");
 
     pub fn tlv_len(&self) -> usize {
@@ -94,7 +95,9 @@ impl<'buf> Vpd<'buf> {
             tlv::EncodeError::Custom(e) => e,
         })
     }
+}
 
+impl<'buf> Vpd<&'buf str> {
     pub fn decode_body(buf: &'buf [u8]) -> Result<Self, DecodeError> {
         let mut tags = tlv::decode_iter(buf);
 
@@ -152,18 +155,21 @@ impl<'buf> Vpd<'buf> {
     }
 
     #[cfg(feature = "std")]
-    pub fn into_owned(self) -> OwnedVpd {
+    pub fn into_owned(self) -> Vpd<String> {
         match self {
-            Self::Oxide(vpd) => OwnedVpd::Oxide(vpd.into_owned()),
-            Self::Mfg(vpd) => OwnedVpd::Mfg(vpd.into_owned()),
+            Self::Oxide(vpd) => Vpd::Oxide(vpd.into_owned()),
+            Self::Mfg(vpd) => Vpd::Mfg(vpd.into_owned()),
         }
     }
 }
 
-impl OxideVpd<'_> {
+impl<S> OxideVpd<S>
+where
+    S: AsRef<str>,
+{
     pub fn tlv_len(&self) -> usize {
-        tlv::tlv_len(self.part_number.len())
-            + tlv::tlv_len(self.serial.len())
+        tlv::tlv_len(self.part_number.as_ref().len())
+            + tlv::tlv_len(self.serial.as_ref().len())
             + tlv::tlv_len(4) // revision number (u32)
     }
 
@@ -175,8 +181,8 @@ impl OxideVpd<'_> {
             return Err(tlv::EncodeError::Custom(hubpack::Error::Overrun));
         }
         let mut total = 0;
-        total += encode_str(&mut out[total..], SERIAL_TAG, self.serial)?;
-        total += encode_str(&mut out[total..], CPN_TAG, self.part_number)?;
+        total += encode_str(&mut out[total..], SERIAL_TAG, &self.serial)?;
+        total += encode_str(&mut out[total..], CPN_TAG, &self.part_number)?;
         total += tlv::encode(&mut out[total..], OXIDE_REV_TAG, |out| {
             if out.len() < 4 {
                 return Err(hubpack::Error::Overrun);
@@ -186,14 +192,27 @@ impl OxideVpd<'_> {
         })?;
         Ok(total)
     }
+
+    #[cfg(feature = "std")]
+    pub fn into_owned(self) -> OxideVpd<String> {
+        let Self { serial, rev, part_number } = self;
+        OxideVpd {
+            serial: serial.as_ref().to_owned(),
+            rev,
+            part_number: part_number.as_ref().to_owned(),
+        }
+    }
 }
 
-impl MfgVpd<'_> {
+impl<S> MfgVpd<S>
+where
+    S: AsRef<str>,
+{
     pub fn tlv_len(&self) -> usize {
-        tlv::tlv_len(self.mfg.len())
-            + tlv::tlv_len(self.mpn.len())
-            + tlv::tlv_len(self.mfg_rev.len())
-            + tlv::tlv_len(self.serial.len())
+        tlv::tlv_len(self.mfg.as_ref().len())
+            + tlv::tlv_len(self.mpn.as_ref().len())
+            + tlv::tlv_len(self.mfg_rev.as_ref().len())
+            + tlv::tlv_len(self.serial.as_ref().len())
     }
 
     pub fn encode(
@@ -204,19 +223,31 @@ impl MfgVpd<'_> {
             return Err(tlv::EncodeError::Custom(hubpack::Error::Overrun));
         }
         let mut total = 0;
-        total += encode_str(&mut out[total..], SERIAL_TAG, self.serial)?;
-        total += encode_str(&mut out[total..], MFG_TAG, self.mfg)?;
-        total += encode_str(&mut out[total..], MPN_TAG, self.mpn)?;
-        total += encode_str(&mut out[total..], MFG_REV_TAG, self.mfg_rev)?;
+        total += encode_str(&mut out[total..], SERIAL_TAG, &self.serial)?;
+        total += encode_str(&mut out[total..], MFG_TAG, &self.mfg)?;
+        total += encode_str(&mut out[total..], MPN_TAG, &self.mpn)?;
+        total += encode_str(&mut out[total..], MFG_REV_TAG, &self.mfg_rev)?;
         Ok(total)
+    }
+
+    #[cfg(feature = "std")]
+    pub fn into_owned(self) -> MfgVpd<String> {
+        let Self { serial, mfg_rev, mpn, mfg } = self;
+        MfgVpd {
+            serial: serial.as_ref().to_owned(),
+            mfg_rev: mfg_rev.as_ref().to_owned(),
+            mpn: mpn.as_ref().to_owned(),
+            mfg: mfg.as_ref().to_owned(),
+        }
     }
 }
 
 fn encode_str(
     out: &mut [u8],
     tag: tlv::Tag,
-    value: &str,
+    value: &impl AsRef<str>,
 ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+    let value = value.as_ref();
     tlv::encode(out, tag, |out| {
         if out.len() < value.len() {
             return Err(hubpack::Error::Overrun);

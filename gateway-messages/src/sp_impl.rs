@@ -279,11 +279,11 @@ pub trait SpHandler {
     /// Implementors are allowed to panic if `index` is not in range (i.e., is
     /// greater than or equal to the value returned by `num_component_details()`
     /// for this component).
-    fn component_details(
-        &mut self,
+    fn component_details<'a>(
+        &'a mut self,
         component: SpComponent,
         index: BoundsChecked,
-    ) -> ComponentDetails<'_>;
+    ) -> ComponentDetails<&'a str>;
 
     fn component_clear_status(
         &mut self,
@@ -1292,11 +1292,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn component_details(
-            &mut self,
+        fn component_details<'a>(
+            &'a mut self,
             _component: SpComponent,
             _index: BoundsChecked,
-        ) -> ComponentDetails {
+        ) -> ComponentDetails<&'a str> {
             unimplemented!()
         }
 

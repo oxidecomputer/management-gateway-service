@@ -2231,6 +2231,7 @@ enum Output {
 fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     use gateway_messages::measurement::{MeasurementError, MeasurementKind};
     use gateway_messages::monorail_port_status::{PortStatus, PortStatusError};
+    use gateway_messages::vpd::{MfgVpd, OxideVpd, Vpd};
 
     // SpComponentDetails and Measurement from gateway_messages intentionally do
     // not derive `Serialize` to avoid accidental misuse in MGS / the SP, so we
@@ -2240,6 +2241,8 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     enum ComponentDetails {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
+        OxideVpd { serial: String, part_number: String, rev: u32 },
+        MfgVpd { mfg: String, part_number: String, rev: String, serial: String },
     }
 
     #[derive(serde::Serialize)]
@@ -2249,22 +2252,37 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
         pub value: Result<f32, MeasurementError>,
     }
 
-    let entries = details
-        .entries
-        .into_iter()
-        .map(|d| match d {
-            gateway_messages::ComponentDetails::PortStatus(r) => {
-                ComponentDetails::PortStatus(r)
-            }
-            gateway_messages::ComponentDetails::Measurement(m) => {
-                ComponentDetails::Measurement(Measurement {
-                    name: m.name,
-                    kind: m.kind,
-                    value: m.value,
-                })
-            }
-        })
-        .collect::<Vec<_>>();
+    let entries =
+        details
+            .entries
+            .into_iter()
+            .map(|d| match d {
+                gateway_messages::ComponentDetails::PortStatus(r) => {
+                    ComponentDetails::PortStatus(r)
+                }
+                gateway_messages::ComponentDetails::Measurement(m) => {
+                    ComponentDetails::Measurement(Measurement {
+                        name: m.name,
+                        kind: m.kind,
+                        value: m.value,
+                    })
+                }
+                gateway_messages::ComponentDetails::Vpd(Vpd::Oxide(
+                    OxideVpd { serial, part_number, rev },
+                )) => ComponentDetails::OxideVpd { serial, part_number, rev },
+                gateway_messages::ComponentDetails::Vpd(Vpd::Mfg(MfgVpd {
+                    mfg,
+                    mpn,
+                    mfg_rev,
+                    serial,
+                })) => ComponentDetails::MfgVpd {
+                    mfg,
+                    part_number: mpn,
+                    rev: mfg_rev,
+                    serial,
+                },
+            })
+            .collect::<Vec<_>>();
 
     json!({ "entries": entries })
 }

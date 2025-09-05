@@ -28,6 +28,7 @@ use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
+use gateway_messages::ComponentDetails;
 use gateway_messages::DeviceCapabilities;
 use gateway_messages::DeviceDescriptionHeader;
 use gateway_messages::DevicePresence;
@@ -41,7 +42,6 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::MonorailError;
-use gateway_messages::OwnedComponentDetails;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
 use gateway_messages::RotBootInfo;
@@ -142,7 +142,7 @@ pub struct SpDevice {
 
 #[derive(Debug, Clone)]
 pub struct SpComponentDetails {
-    pub entries: Vec<OwnedComponentDetails>,
+    pub entries: Vec<ComponentDetails<String>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1550,7 +1550,7 @@ struct ComponentDetailsTlvRpc<'a> {
 }
 
 impl TlvRpc for ComponentDetailsTlvRpc<'_> {
-    type Item = OwnedComponentDetails;
+    type Item = ComponentDetails<String>;
 
     const LOG_NAME: &'static str = "component details";
 
@@ -1595,7 +1595,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     );
                 }
 
-                Ok(Some(OwnedComponentDetails::PortStatus(result)))
+                Ok(Some(ComponentDetails::PortStatus(result)))
             }
             MeasurementHeader::TAG => {
                 let (header, leftover) =
@@ -1617,19 +1617,18 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     }
                 })?;
 
-                Ok(Some(OwnedComponentDetails::Measurement(Measurement {
+                Ok(Some(ComponentDetails::Measurement(Measurement {
                     name: name.to_string(),
                     kind: header.kind,
                     value: header.value,
                 })))
             }
-            Vpd::TAG => {
-                let (vpd, leftover) = gateway_messages::Vpd::decode(value)
-                    .map_err(|err| CommunicationError::VpdDeserialize {
-                        err,
-                    })?;
+            Vpd::<String>::TAG => {
+                let vpd = gateway_messages::Vpd::decode_body(value).map_err(
+                    |err| CommunicationError::VpdDeserialize { err },
+                )?;
 
-                Ok(Some(OwnedComponentDetails::Vpd(vpd)))
+                Ok(Some(ComponentDetails::Vpd(vpd.into_owned())))
             }
             _ => {
                 info!(
