@@ -10,15 +10,15 @@ pub const MAX_STR_LEN: usize = 32;
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum Vpd<S> {
-    Oxide(OxideVpd<S>),
+    Oxide(OxideVpd),
     Mfg(MfgVpd<S>),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub struct OxideVpd<S> {
-    pub serial: S,
+pub struct OxideVpd {
+    pub serial: [u8; 11],
     pub rev: u32,
-    pub part_number: S,
+    pub part_number: [u8; 11],
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -128,18 +128,25 @@ impl<'buf> Vpd<&'buf str> {
             })
         }
 
-        let serial = expect_str_tag(&mut tags, SERIAL_TAG)?;
         match tags.next() {
             Some(Ok((MFG_TAG, mfg))) => {
                 let mfg = core::str::from_utf8(mfg)
                     .map_err(DecodeError::invalid_str(MFG_TAG))?;
                 let mpn = expect_str_tag(&mut tags, MPN_TAG)?;
+                let serial = expect_str_tag(&mut tags, SERIAL_TAG)?;
                 let mfg_rev = expect_str_tag(&mut tags, MFG_REV_TAG)?;
                 Ok(Self::Mfg(MfgVpd { mfg, mpn, mfg_rev, serial }))
             }
             Some(Ok((CPN_TAG, cpn))) => {
-                let part_number = core::str::from_utf8(cpn)
-                    .map_err(DecodeError::invalid_str(MFG_TAG))?;
+                let part_number: [u8; 11] = cpn
+                    .try_into()
+                    .map_err(|_| DecodeError::BadLength(CPN_TAG, cpn.len()))?;
+                let serial: [u8; 11] =
+                    expect_tag(&mut tags, SERIAL_TAG, |val| {
+                        val.try_into().map_err(|_| {
+                            DecodeError::BadLength(CPN_TAG, cpn.len())
+                        })
+                    })?;
                 let rev = expect_tag(&mut tags, OXIDE_REV_TAG, |value| {
                     let rev_bytes: [u8; 4] = value
                         .try_into()
@@ -157,19 +164,16 @@ impl<'buf> Vpd<&'buf str> {
     #[cfg(feature = "std")]
     pub fn into_owned(self) -> Vpd<String> {
         match self {
-            Self::Oxide(vpd) => Vpd::Oxide(vpd.into_owned()),
+            Self::Oxide(vpd) => Vpd::Oxide(vpd),
             Self::Mfg(vpd) => Vpd::Mfg(vpd.into_owned()),
         }
     }
 }
 
-impl<S> OxideVpd<S>
-where
-    S: AsRef<str>,
-{
+impl OxideVpd {
     pub fn tlv_len(&self) -> usize {
-        tlv::tlv_len(self.part_number.as_ref().len())
-            + tlv::tlv_len(self.serial.as_ref().len())
+        tlv::tlv_len(self.part_number.len())
+            + tlv::tlv_len(self.serial.len())
             + tlv::tlv_len(4) // revision number (u32)
     }
 
@@ -181,26 +185,14 @@ where
             return Err(tlv::EncodeError::Custom(hubpack::Error::Overrun));
         }
         let mut total = 0;
-        total += encode_str(&mut out[total..], SERIAL_TAG, &self.serial)?;
-        total += encode_str(&mut out[total..], CPN_TAG, &self.part_number)?;
-        total += tlv::encode(&mut out[total..], OXIDE_REV_TAG, |out| {
-            if out.len() < 4 {
-                return Err(hubpack::Error::Overrun);
-            }
-            out.copy_from_slice(&self.rev.to_le_bytes()[..]);
-            Ok(4)
-        })?;
+        total += encode_bytes(&mut out[total..], CPN_TAG, &self.part_number)?;
+        total += encode_bytes(&mut out[total..], SERIAL_TAG, &self.serial)?;
+        total += encode_bytes(
+            &mut out[total..],
+            OXIDE_REV_TAG,
+            &self.rev.to_le_bytes()[..],
+        )?;
         Ok(total)
-    }
-
-    #[cfg(feature = "std")]
-    pub fn into_owned(self) -> OxideVpd<String> {
-        let Self { serial, rev, part_number } = self;
-        OxideVpd {
-            serial: serial.as_ref().to_owned(),
-            rev,
-            part_number: part_number.as_ref().to_owned(),
-        }
     }
 }
 
@@ -223,9 +215,9 @@ where
             return Err(tlv::EncodeError::Custom(hubpack::Error::Overrun));
         }
         let mut total = 0;
-        total += encode_str(&mut out[total..], SERIAL_TAG, &self.serial)?;
         total += encode_str(&mut out[total..], MFG_TAG, &self.mfg)?;
         total += encode_str(&mut out[total..], MPN_TAG, &self.mpn)?;
+        total += encode_str(&mut out[total..], SERIAL_TAG, &self.serial)?;
         total += encode_str(&mut out[total..], MFG_REV_TAG, &self.mfg_rev)?;
         Ok(total)
     }
@@ -247,12 +239,20 @@ fn encode_str(
     tag: tlv::Tag,
     value: &impl AsRef<str>,
 ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+    encode_bytes(out, tag, value.as_ref().as_bytes())
+}
+
+fn encode_bytes(
+    out: &mut [u8],
+    tag: tlv::Tag,
+    value: &[u8],
+) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
     let value = value.as_ref();
     tlv::encode(out, tag, |out| {
         if out.len() < value.len() {
             return Err(hubpack::Error::Overrun);
         }
-        out[..value.len()].copy_from_slice(value.as_bytes());
+        out[..value.len()].copy_from_slice(value);
         Ok(value.len())
     })
 }
@@ -266,6 +266,7 @@ pub enum DecodeError {
     InvalidU32(tlv::Tag),
     Tlv(tlv::Tag, tlv::DecodeError),
     TlvUntyped(tlv::DecodeError),
+    BadLength(tlv::Tag, usize),
 }
 
 impl DecodeError {
@@ -298,6 +299,9 @@ impl fmt::Display for DecodeError {
             }
             Self::UnexpectedEnd => {
                 write!(f, "unexpected end of input")
+            }
+            Self::BadLength(tag, size) => {
+                write!(f, "expected value for tag {tag:?} to be 11 bytes, but got {size} bytes")
             }
         }
     }
