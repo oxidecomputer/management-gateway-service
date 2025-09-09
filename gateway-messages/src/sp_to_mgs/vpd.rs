@@ -247,7 +247,6 @@ fn encode_bytes(
     tag: tlv::Tag,
     value: &[u8],
 ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
-    let value = value.as_ref();
     tlv::encode(out, tag, |out| {
         if out.len() < value.len() {
             return Err(hubpack::Error::Overrun);
