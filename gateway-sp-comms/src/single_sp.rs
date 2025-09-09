@@ -614,6 +614,22 @@ impl SingleSp {
         })
     }
 
+    /// Cancel a pending slot activation for a particular component..
+    pub async fn cancel_pending_component_active_slot(
+        &self,
+        component: SpComponent,
+        slot: u16,
+        persist: bool,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ComponentCancelPendingActiveSlot {
+            component,
+            slot,
+            persist,
+        })
+        .await
+        .and_then(expect_component_cancel_pending_active_slot_ack)
+    }
+
     /// Request that the status of a component be cleared (e.g., resetting
     /// counters).
     pub async fn component_clear_status(

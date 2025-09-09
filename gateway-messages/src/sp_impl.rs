@@ -417,6 +417,13 @@ pub trait SpHandler {
     fn start_host_flash_hash(&mut self, slot: u16) -> Result<(), SpError>;
 
     fn get_host_flash_hash(&mut self, slot: u16) -> Result<[u8; 32], SpError>;
+
+    fn component_cancel_pending_active_slot(
+        &mut self,
+        component: SpComponent,
+        slot: u16,
+        persist: bool,
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -1032,6 +1039,13 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::GetHostFlashHash { slot } => {
             handler.get_host_flash_hash(slot).map(SpResponse::HostFlashHash)
         }
+        MgsRequest::ComponentCancelPendingActiveSlot {
+            component,
+            slot,
+            persist,
+        } => handler
+            .component_cancel_pending_active_slot(component, slot, persist)
+            .map(|()| SpResponse::ComponentCancelPendingActiveSlotAck),
     };
 
     let response = match result {
@@ -1455,6 +1469,15 @@ mod tests {
             &mut self,
             _slot: u16,
         ) -> Result<[u8; 32], SpError> {
+            unimplemented!()
+        }
+
+        fn component_cancel_pending_active_slot(
+            &mut self,
+            _component: SpComponent,
+            _slot: u16,
+            _persist: bool,
+        ) -> Result<(), SpError> {
             unimplemented!()
         }
     }
