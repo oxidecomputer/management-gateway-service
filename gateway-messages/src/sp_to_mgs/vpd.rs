@@ -5,6 +5,9 @@
 use crate::tlv;
 use core::fmt;
 use core::str;
+use hubpack::SerializedSize;
+use serde::Deserialize;
+use serde::Serialize;
 
 pub const MAX_STR_LEN: usize = 32;
 
@@ -12,6 +15,7 @@ pub const MAX_STR_LEN: usize = 32;
 pub enum Vpd<S> {
     Oxide(OxideVpd),
     Mfg(MfgVpd<S>),
+    Tmp117(Tmp117Vpd),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -27,6 +31,18 @@ pub struct MfgVpd<S> {
     pub serial: S,
     pub mfg_rev: S,
     pub mpn: S,
+}
+
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct Tmp117Vpd {
+    /// Device ID (register 0x0F)
+    pub id: u16,
+    /// 48-bit NIST traceability data
+    pub eeprom1: u16,
+    pub eeprom2: u16,
+    pub eeprom3: u16,
 }
 
 #[cfg(feature = "std")]
@@ -79,6 +95,7 @@ where
         match self {
             Vpd::Oxide(vpd) => tlv::tlv_len(vpd.tlv_len()),
             Vpd::Mfg(vpd) => tlv::tlv_len(vpd.tlv_len()),
+            Vpd::Tmp117(_) => tlv::tlv_len(Tmp117Vpd::MAX_SIZE),
         }
     }
 
@@ -89,6 +106,7 @@ where
         match self {
             Vpd::Oxide(vpd) => vpd.encode(out),
             Vpd::Mfg(vpd) => vpd.encode(out),
+            Vpd::Tmp117(vpd) => vpd.encode(out),
         }
         .map_err(|e| match e {
             tlv::EncodeError::BufferTooSmall => hubpack::Error::Overrun,
@@ -129,6 +147,13 @@ impl<'buf> Vpd<&'buf str> {
         }
 
         match tags.next() {
+            Some(Ok((Tmp117Vpd::TAG, value))) => {
+                let (vpd, _rest) =
+                    hubpack::deserialize(value).map_err(|error| {
+                        DecodeError::Tmp117(Tmp117Vpd::TAG, error)
+                    })?;
+                Ok(Self::Tmp117(vpd))
+            }
             Some(Ok((MFG_TAG, mfg))) => {
                 let mfg = core::str::from_utf8(mfg)
                     .map_err(DecodeError::invalid_str(MFG_TAG))?;
@@ -165,6 +190,7 @@ impl<'buf> Vpd<&'buf str> {
     pub fn into_owned(self) -> Vpd<String> {
         match self {
             Self::Oxide(vpd) => Vpd::Oxide(vpd),
+            Self::Tmp117(vpd) => Vpd::Tmp117(vpd),
             Self::Mfg(vpd) => Vpd::Mfg(vpd.into_owned()),
         }
     }
@@ -234,6 +260,18 @@ where
     }
 }
 
+impl Tmp117Vpd {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"TMP1");
+    pub const TLV_LEN: usize = tlv::tlv_len(Self::MAX_SIZE);
+
+    pub fn encode(
+        &self,
+        out: &mut [u8],
+    ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+        tlv::encode(out, Self::TAG, |out| hubpack::serialize(out, self))
+    }
+}
+
 fn encode_str(
     out: &mut [u8],
     tag: tlv::Tag,
@@ -266,6 +304,7 @@ pub enum DecodeError {
     Tlv(tlv::Tag, tlv::DecodeError),
     TlvUntyped(tlv::DecodeError),
     BadLength(tlv::Tag, usize),
+    Tmp117(tlv::Tag, hubpack::Error),
 }
 
 impl DecodeError {
@@ -301,6 +340,9 @@ impl fmt::Display for DecodeError {
             }
             Self::BadLength(tag, size) => {
                 write!(f, "expected value for tag {tag:?} to be 11 bytes, but got {size} bytes")
+            }
+            Self::Tmp117(tag, error) => {
+                write!(f, "failed to decode TMP117 VPD tag {tag:?}: {error}")
             }
         }
     }
