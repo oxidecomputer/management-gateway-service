@@ -2269,7 +2269,23 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
                 }
                 gateway_messages::ComponentDetails::Vpd(Vpd::Oxide(
                     OxideVpd { serial, part_number, rev },
-                )) => ComponentDetails::OxideVpd { serial, part_number, rev },
+                )) => {
+                    let serial = str::from_utf8(&serial)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|e| {
+                            format!(
+                            "error: serial number {serial:?} not UTF-8: {e}"
+                        )
+                        });
+                    let part_number = str::from_utf8(&part_number)
+                        .map(str::to_owned)
+                        .unwrap_or_else(|e| {
+                            format!(
+                            "error: part number {part_number:?} not UTF-8: {e}"
+                        )
+                        });
+                    ComponentDetails::OxideVpd { serial, part_number, rev }
+                }
                 gateway_messages::ComponentDetails::Vpd(Vpd::Mfg(MfgVpd {
                     mfg,
                     mpn,
