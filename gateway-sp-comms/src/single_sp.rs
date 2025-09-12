@@ -142,7 +142,7 @@ pub struct SpDevice {
 
 #[derive(Debug, Clone)]
 pub struct SpComponentDetails {
-    pub entries: Vec<ComponentDetails>,
+    pub entries: Vec<ComponentDetails<String>>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1550,7 +1550,7 @@ struct ComponentDetailsTlvRpc<'a> {
 }
 
 impl TlvRpc for ComponentDetailsTlvRpc<'_> {
-    type Item = ComponentDetails;
+    type Item = ComponentDetails<String>;
 
     const LOG_NAME: &'static str = "component details";
 
@@ -1576,6 +1576,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         use gateway_messages::measurement::MeasurementHeader;
         use gateway_messages::monorail_port_status::PortStatus;
         use gateway_messages::monorail_port_status::PortStatusError;
+        use gateway_messages::vpd::Vpd;
 
         match tag {
             PortStatus::TAG => {
@@ -1621,6 +1622,13 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     kind: header.kind,
                     value: header.value,
                 })))
+            }
+            Vpd::<String>::TAG => {
+                let vpd = gateway_messages::Vpd::decode_body(value).map_err(
+                    |err| CommunicationError::VpdDeserialize { err },
+                )?;
+
+                Ok(Some(ComponentDetails::Vpd(vpd.into_owned())))
             }
             _ => {
                 info!(
