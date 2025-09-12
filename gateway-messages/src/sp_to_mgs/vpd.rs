@@ -16,6 +16,7 @@ pub enum Vpd<S> {
     Oxide(OxideVpd),
     Mfg(MfgVpd<S>),
     Tmp117(Tmp117Vpd),
+    Err(VpdReadError),
 }
 
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
@@ -43,6 +44,15 @@ pub struct Tmp117Vpd {
     pub eeprom1: u16,
     pub eeprom2: u16,
     pub eeprom3: u16,
+}
+
+#[derive(
+    Copy, Clone, Debug, Eq, PartialEq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum VpdReadError {
+    DeviceNotPresent,
+    DeviceOff,
+    InvalidContents,
 }
 
 #[cfg(feature = "std")]
@@ -96,6 +106,7 @@ where
             Vpd::Oxide(vpd) => tlv::tlv_len(vpd.tlv_len()),
             Vpd::Mfg(vpd) => tlv::tlv_len(vpd.tlv_len()),
             Vpd::Tmp117(_) => tlv::tlv_len(Tmp117Vpd::MAX_SIZE),
+            Vpd::Err(_) => tlv::tlv_len(VpdReadError::MAX_SIZE),
         }
     }
 
@@ -107,6 +118,7 @@ where
             Vpd::Oxide(vpd) => vpd.encode(out),
             Vpd::Mfg(vpd) => vpd.encode(out),
             Vpd::Tmp117(vpd) => vpd.encode(out),
+            Vpd::Err(err) => err.encode(out),
         }
         .map_err(|e| match e {
             tlv::EncodeError::BufferTooSmall => hubpack::Error::Overrun,
@@ -147,10 +159,17 @@ impl<'buf> Vpd<&'buf str> {
         }
 
         match tags.next() {
+            Some(Ok((VpdReadError::TAG, value))) => {
+                let (vpd, _rest) =
+                    hubpack::deserialize(value).map_err(|error| {
+                        DecodeError::Hubpack(VpdReadError::TAG, error)
+                    })?;
+                Ok(Self::Err(vpd))
+            }
             Some(Ok((Tmp117Vpd::TAG, value))) => {
                 let (vpd, _rest) =
                     hubpack::deserialize(value).map_err(|error| {
-                        DecodeError::Tmp117(Tmp117Vpd::TAG, error)
+                        DecodeError::Hubpack(Tmp117Vpd::TAG, error)
                     })?;
                 Ok(Self::Tmp117(vpd))
             }
@@ -192,6 +211,7 @@ impl<'buf> Vpd<&'buf str> {
             Self::Oxide(vpd) => Vpd::Oxide(vpd),
             Self::Tmp117(vpd) => Vpd::Tmp117(vpd),
             Self::Mfg(vpd) => Vpd::Mfg(vpd.into_owned()),
+            Self::Err(err) => Vpd::Err(err),
         }
     }
 }
@@ -272,6 +292,18 @@ impl Tmp117Vpd {
     }
 }
 
+impl VpdReadError {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"ERR0");
+    pub const TLV_LEN: usize = tlv::tlv_len(Self::MAX_SIZE);
+
+    pub fn encode(
+        &self,
+        out: &mut [u8],
+    ) -> Result<usize, tlv::EncodeError<hubpack::Error>> {
+        tlv::encode(out, Self::TAG, |out| hubpack::serialize(out, self))
+    }
+}
+
 fn encode_str(
     out: &mut [u8],
     tag: tlv::Tag,
@@ -304,7 +336,7 @@ pub enum DecodeError {
     Tlv(tlv::Tag, tlv::DecodeError),
     TlvUntyped(tlv::DecodeError),
     BadLength(tlv::Tag, usize),
-    Tmp117(tlv::Tag, hubpack::Error),
+    Hubpack(tlv::Tag, hubpack::Error),
 }
 
 impl DecodeError {
@@ -333,16 +365,27 @@ impl fmt::Display for DecodeError {
                 write!(f, "TLV decode error while decoding {tag:?}: {error}")
             }
             Self::TlvUntyped(error) => {
-                write!(f, "TLV decode error while expecting {MFG_TAG:?} or {CPN_TAG:?}: {error}")
+                write!(
+                    f,
+                    "TLV decode error while expecting {MFG_TAG:?} or \
+                     {CPN_TAG:?}: {error}"
+                )
             }
             Self::UnexpectedEnd => {
                 write!(f, "unexpected end of input")
             }
             Self::BadLength(tag, size) => {
-                write!(f, "expected value for tag {tag:?} to be 11 bytes, but got {size} bytes")
+                write!(
+                    f,
+                    "expected value for tag {tag:?} to be 11 bytes, but got \
+                     {size} bytes"
+                )
             }
-            Self::Tmp117(tag, error) => {
-                write!(f, "failed to decode TMP117 VPD tag {tag:?}: {error}")
+            Self::Hubpack(tag, error) => {
+                write!(
+                    f,
+                    "failed to decode hubpack-encoded VPD tag {tag:?}: {error}"
+                )
             }
         }
     }

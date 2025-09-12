@@ -2231,7 +2231,7 @@ enum Output {
 fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     use gateway_messages::measurement::{MeasurementError, MeasurementKind};
     use gateway_messages::monorail_port_status::{PortStatus, PortStatusError};
-    use gateway_messages::vpd::{MfgVpd, OxideVpd, Vpd};
+    use gateway_messages::vpd::{self, MfgVpd, OxideVpd, Vpd, VpdReadError};
 
     // SpComponentDetails and Measurement from gateway_messages intentionally do
     // not derive `Serialize` to avoid accidental misuse in MGS / the SP, so we
@@ -2241,8 +2241,22 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     enum ComponentDetails {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
-        OxideVpd { serial: String, part_number: String, rev: u32 },
-        MfgVpd { mfg: String, part_number: String, rev: String, serial: String },
+        Vpd(Result<VpdDetails, VpdError>),
+    }
+
+    #[derive(serde::Serialize)]
+    #[serde(tag = "kind")]
+    enum VpdDetails {
+        Oxide { serial: String, part_number: String, rev: u32 },
+        Mfg { mfg: String, part_number: String, rev: String, serial: String },
+        Tmp117(vpd::Tmp117Vpd),
+    }
+
+    #[derive(serde::Serialize)]
+    #[serde(tag = "kind", rename = "snake_case")]
+    enum VpdError {
+        Read(VpdReadError),
+        InvalidString(String),
     }
 
     #[derive(serde::Serialize)]
@@ -2270,32 +2284,41 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
                 gateway_messages::ComponentDetails::Vpd(Vpd::Oxide(
                     OxideVpd { serial, part_number, rev },
                 )) => {
-                    let serial = str::from_utf8(&serial)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|e| {
-                            format!(
-                            "error: serial number {serial:?} not UTF-8: {e}"
-                        )
+
+                    let res = str::from_utf8(&serial)
+                        .map(str::to_owned).map_err(|e| {
+                            VpdError::InvalidString(
+                                format!("serial number {serial:?} not UTF-8: {e}")
+                            )
+                        }).and_then(|serial| {
+                            let part_number = str::from_utf8(&part_number)
+                                .map(str::to_owned)
+                                .map_err(|e| {
+                                    VpdError::InvalidString(
+                                        format!("part number {part_number:?} not UTF-8: {e}")
+                                    )
+                                })?;
+                            Ok(VpdDetails::Oxide { serial, part_number, rev })
+
                         });
-                    let part_number = str::from_utf8(&part_number)
-                        .map(str::to_owned)
-                        .unwrap_or_else(|e| {
-                            format!(
-                            "error: part number {part_number:?} not UTF-8: {e}"
-                        )
-                        });
-                    ComponentDetails::OxideVpd { serial, part_number, rev }
+                    ComponentDetails::Vpd(res)
                 }
                 gateway_messages::ComponentDetails::Vpd(Vpd::Mfg(MfgVpd {
                     mfg,
                     mpn,
                     mfg_rev,
                     serial,
-                })) => ComponentDetails::MfgVpd {
+                })) => ComponentDetails::Vpd(Ok(VpdDetails::Mfg {
                     mfg,
                     part_number: mpn,
                     rev: mfg_rev,
                     serial,
+                })),
+                gateway_messages::ComponentDetails::Vpd(Vpd::Tmp117(vpd)) => {
+                    ComponentDetails::Vpd(Ok(VpdDetails::Tmp117(vpd)))
+                },
+                gateway_messages::ComponentDetails::Vpd(Vpd::Err(err)) => {
+                    ComponentDetails::Vpd(Err(VpdError::Read(err)))
                 },
             })
             .collect::<Vec<_>>();
