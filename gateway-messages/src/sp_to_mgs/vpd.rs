@@ -53,6 +53,7 @@ pub enum VpdReadError {
     DeviceNotPresent,
     I2cError,
     InvalidContents,
+    BadRead,
 }
 
 #[cfg(feature = "std")]
