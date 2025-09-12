@@ -51,7 +51,7 @@ pub struct Tmp117Vpd {
 )]
 pub enum VpdReadError {
     DeviceNotPresent,
-    DeviceOff,
+    I2cError,
     InvalidContents,
 }
 
