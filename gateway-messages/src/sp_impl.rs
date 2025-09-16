@@ -51,6 +51,7 @@ use crate::UpdateId;
 use crate::UpdateStatus;
 use crate::HF_PAGE_SIZE;
 use crate::ROT_PAGE_SIZE;
+use core::ops::ControlFlow;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
 
@@ -282,7 +283,7 @@ pub trait SpHandler {
         &mut self,
         component: SpComponent,
         index: BoundsChecked,
-    ) -> ComponentDetails;
+    ) -> ComponentDetails<&'_ str>;
 
     fn component_clear_status(
         &mut self,
@@ -510,14 +511,20 @@ pub fn handle_message<H: SpHandler>(
             component,
             offset,
             total,
-        }) => encode_tlv_structs(
-            &mut out[n..],
-            (offset..total).map(|i| {
+        }) => {
+            let mut encoder = TlvEncoder::new(&mut out[n..]);
+            for i in offset..total {
                 let details =
                     handler.component_details(component, BoundsChecked(i));
-                (details.tag(), move |buf: &mut [u8]| details.serialize(buf))
-            }),
-        ),
+                if encoder
+                    .encode(details.tag(), move |buf| details.serialize(buf))
+                    .is_break()
+                {
+                    break;
+                }
+            }
+            encoder.total_tlv_len()
+        }
         Some(OutgoingTrailingData::BulkIgnitionState(iter)) => {
             encode_tlv_structs(
                 &mut out[n..],
@@ -554,32 +561,56 @@ pub fn handle_message<H: SpHandler>(
 /// many TLV triples from `iter` as we can into `out`.
 ///
 /// Returns the total number of bytes written into `out`.
-fn encode_tlv_structs<I, F>(mut out: &mut [u8], iter: I) -> usize
+fn encode_tlv_structs<I, F>(out: &mut [u8], iter: I) -> usize
 where
     I: Iterator<Item = (tlv::Tag, F)>,
     F: FnOnce(&mut [u8]) -> HubpackResult<usize>,
 {
-    let mut total_tlv_len = 0;
-
+    let mut encoder = TlvEncoder::new(out);
     for (tag, encode) in iter {
-        match tlv::encode(out, tag, encode) {
+        if encoder.encode(tag, encode).is_break() {
+            break;
+        }
+    }
+
+    encoder.total_tlv_len()
+}
+
+struct TlvEncoder<'out> {
+    out: &'out mut [u8],
+    total_tlv_len: usize,
+}
+
+impl<'out> TlvEncoder<'out> {
+    fn new(out: &'out mut [u8]) -> Self {
+        Self { out, total_tlv_len: 0 }
+    }
+
+    fn total_tlv_len(&self) -> usize {
+        self.total_tlv_len
+    }
+
+    fn encode(
+        &mut self,
+        tag: tlv::Tag,
+        encode: impl FnOnce(&mut [u8]) -> Result<usize, HubpackError>,
+    ) -> core::ops::ControlFlow<()> {
+        match tlv::encode(&mut self.out[self.total_tlv_len..], tag, encode) {
             Ok(n) => {
-                total_tlv_len += n;
-                out = &mut out[n..];
+                self.total_tlv_len += n;
+                ControlFlow::Continue(())
             }
 
             // If either the `encode` closure or the TLV header doesn't fit,
             // we've packed as much as we can into `out` and we're done.
             Err(tlv::EncodeError::Custom(HubpackError::Overrun))
-            | Err(tlv::EncodeError::BufferTooSmall) => break,
+            | Err(tlv::EncodeError::BufferTooSmall) => ControlFlow::Break(()),
 
             // Other hubpack errors are impossible with all serialization types
             // we use.
             Err(tlv::EncodeError::Custom(_)) => panic!(),
         }
     }
-
-    total_tlv_len
 }
 
 // We could use a combination of Option/Result/tuples to represent the results
@@ -1261,11 +1292,11 @@ mod tests {
             unimplemented!()
         }
 
-        fn component_details(
-            &mut self,
+        fn component_details<'a>(
+            &'a mut self,
             _component: SpComponent,
             _index: BoundsChecked,
-        ) -> ComponentDetails {
+        ) -> ComponentDetails<&'a str> {
             unimplemented!()
         }
 
