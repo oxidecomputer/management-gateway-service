@@ -29,6 +29,7 @@ use crate::MessageKind;
 use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
+use crate::MonorailError;
 use crate::PowerState;
 use crate::PowerStateTransition;
 use crate::RotBootInfo;
@@ -46,6 +47,8 @@ use crate::SpUpdatePrepare;
 use crate::StartupOptions;
 use crate::SwitchDuration;
 use crate::TlvPage;
+use crate::UnlockChallenge;
+use crate::UnlockResponse;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
@@ -417,6 +420,15 @@ pub trait SpHandler {
     fn start_host_flash_hash(&mut self, slot: u16) -> Result<(), SpError>;
 
     fn get_host_flash_hash(&mut self, slot: u16) -> Result<[u8; 32], SpError>;
+
+    /// Unlocks the tech port if the challenge and response are compatible
+    fn unlock(
+        &mut self,
+        vid: Self::VLanId,
+        challenge: UnlockChallenge,
+        response: UnlockResponse,
+        time_sec: u32,
+    ) -> Result<(), MonorailError>;
 }
 
 /// Handle a single incoming message.
@@ -1455,6 +1467,16 @@ mod tests {
             &mut self,
             _slot: u16,
         ) -> Result<[u8; 32], SpError> {
+            unimplemented!()
+        }
+
+        fn unlock(
+            &mut self,
+            _vid: Self::VLanId,
+            _challenge: UnlockChallenge,
+            _response: UnlockResponse,
+            _time_sec: u32,
+        ) -> Result<(), MonorailError> {
             unimplemented!()
         }
     }
