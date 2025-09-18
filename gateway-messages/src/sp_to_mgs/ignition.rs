@@ -113,6 +113,7 @@ pub enum SystemType {
     Sidecar,
     Psc,
     Unknown(u16),
+    Cosmo,
 }
 
 impl From<u16> for SystemType {
@@ -121,6 +122,7 @@ impl From<u16> for SystemType {
             raw_system_type::GIMLET => Self::Gimlet,
             raw_system_type::SIDECAR => Self::Sidecar,
             raw_system_type::PSC => Self::Psc,
+            raw_system_type::COSMO => Self::Cosmo,
             _ => Self::Unknown(val),
         }
     }
@@ -131,6 +133,7 @@ mod raw_system_type {
     pub(super) const GIMLET: u16 = 0b0000_0000_0001_0001;
     pub(super) const SIDECAR: u16 = 0b0000_0000_0001_0010;
     pub(super) const PSC: u16 = 0b0000_0000_0001_0011;
+    pub(super) const COSMO: u16 = 0b0000_0000_0000_0100;
 }
 
 #[derive(
