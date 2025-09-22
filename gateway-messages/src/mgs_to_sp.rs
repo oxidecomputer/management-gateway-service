@@ -236,6 +236,16 @@ pub enum MgsRequest {
     GetHostFlashHash {
         slot: u16,
     },
+
+    /// Cancel a pending slot activation for components with multiple slots that
+    /// have separate `pending` and `active` states.
+    /// This is useful when recovering from a failed or abandoned update without incurring an
+    /// additional reset or other activation step.
+    ComponentCancelPendingActiveSlot {
+        component: SpComponent,
+        slot: u16,
+        persist: bool,
+    },
 }
 
 #[derive(
