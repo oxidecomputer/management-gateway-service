@@ -25,9 +25,11 @@ use serde_repr::Serialize_repr;
 pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
+pub mod sp5_details;
 
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
+pub use sp5_details::LastPostCode;
 
 use ignition::IgnitionError;
 use measurement::MeasurementHeader;
@@ -710,10 +712,13 @@ pub struct TlvPage {
 /// serialization traits; it only serves as an organizing collection of the
 /// possible types contained in a component details message. Each TLV-encoded
 /// struct corresponds to one of these cases.
+///
+/// As such, it is not part of the explicit message versioning scheme
 #[derive(Debug, Clone)]
 pub enum ComponentDetails {
     PortStatus(Result<PortStatus, PortStatusError>),
     Measurement(Measurement),
+    LastPostCode(LastPostCode),
 }
 
 impl ComponentDetails {
@@ -721,6 +726,7 @@ impl ComponentDetails {
         match self {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
+            ComponentDetails::LastPostCode(_) => LastPostCode::TAG,
         }
     }
 
@@ -741,6 +747,9 @@ impl ComponentDetails {
                     buf[..m.name.len()].copy_from_slice(m.name.as_bytes());
                     Ok(n + m.name.len())
                 }
+            }
+            ComponentDetails::LastPostCode(code) => {
+                hubpack::serialize(buf, code)
             }
         }
     }
