@@ -2240,6 +2240,7 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     enum ComponentDetails {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
+        LastPostCode(u32),
     }
 
     #[derive(serde::Serialize)]
@@ -2262,6 +2263,9 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
                     kind: m.kind,
                     value: m.value,
                 })
+            }
+            gateway_messages::ComponentDetails::LastPostCode(code) => {
+                ComponentDetails::LastPostCode(code.0)
             }
         })
         .collect::<Vec<_>>();
