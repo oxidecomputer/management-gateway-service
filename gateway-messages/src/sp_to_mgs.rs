@@ -25,10 +25,12 @@ use serde_repr::Serialize_repr;
 pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
+pub mod sp3_details;
 pub mod sp5_details;
 
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
+pub use sp3_details::GpioToggleCount;
 pub use sp5_details::LastPostCode;
 
 use ignition::IgnitionError;
@@ -719,6 +721,7 @@ pub enum ComponentDetails {
     PortStatus(Result<PortStatus, PortStatusError>),
     Measurement(Measurement),
     LastPostCode(LastPostCode),
+    GpioToggleCount(GpioToggleCount),
 }
 
 impl ComponentDetails {
@@ -727,6 +730,7 @@ impl ComponentDetails {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
             ComponentDetails::LastPostCode(_) => LastPostCode::TAG,
+            ComponentDetails::GpioToggleCount(_) => GpioToggleCount::TAG,
         }
     }
 
@@ -749,6 +753,9 @@ impl ComponentDetails {
                 }
             }
             ComponentDetails::LastPostCode(code) => {
+                hubpack::serialize(buf, code)
+            }
+            ComponentDetails::GpioToggleCount(code) => {
                 hubpack::serialize(buf, code)
             }
         }

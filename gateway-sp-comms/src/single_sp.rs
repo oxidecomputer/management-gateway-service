@@ -1576,6 +1576,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         use gateway_messages::measurement::MeasurementHeader;
         use gateway_messages::monorail_port_status::PortStatus;
         use gateway_messages::monorail_port_status::PortStatusError;
+        use gateway_messages::sp3_details::GpioToggleCount;
         use gateway_messages::sp5_details::LastPostCode;
 
         match tag {
@@ -1639,6 +1640,23 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                 }
 
                 Ok(Some(ComponentDetails::LastPostCode(result)))
+            }
+            GpioToggleCount::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<GpioToggleCount>(value)
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in GpioToggleCount TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::GpioToggleCount(result)))
             }
             _ => {
                 info!(
