@@ -2263,6 +2263,7 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
         LastPostCode(u32),
+        GpioToggleCount { edge_count: u32, cycles_since_last_edge: u32 },
     }
 
     #[derive(serde::Serialize)]
@@ -2288,6 +2289,12 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
             }
             gateway_messages::ComponentDetails::LastPostCode(code) => {
                 ComponentDetails::LastPostCode(code.0)
+            }
+            gateway_messages::ComponentDetails::GpioToggleCount(n) => {
+                ComponentDetails::GpioToggleCount {
+                    edge_count: n.edge_count,
+                    cycles_since_last_edge: n.cycles_since_last_edge,
+                }
             }
         })
         .collect::<Vec<_>>();
