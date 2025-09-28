@@ -55,6 +55,8 @@ pub enum CommunicationError {
     VersionMismatch { sp: u32, mgs: u32 },
     #[error("failed to deserialize TLV value for tag {tag:?}: {err}")]
     TlvDeserialize { tag: tlv::Tag, err: gateway_messages::HubpackError },
+    #[error("failed to deserialize TLV-encoded VPD: {err}")]
+    VpdDeserialize { err: gateway_messages::vpd::DecodeError },
     #[error("failed to decode TLV triple")]
     TlvDecode(#[from] tlv::DecodeError),
     #[error("invalid pagination: {reason}")]
