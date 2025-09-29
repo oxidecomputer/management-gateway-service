@@ -1967,20 +1967,26 @@ fn unlock_permslip(
     key_name: String,
     challenge: UnlockChallenge,
 ) -> Result<UnlockResponse> {
+    use std::env;
     use std::process::{Command, Stdio};
 
-    let mut permslip = Command::new("permslip")
-        .arg("sign")
-        .arg(key_name)
-        .arg("--sshauth")
-        .arg("--kind=tech-port-unlock-challenge")
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .spawn()
-        .context(
-            "unable to execute `permslip`, is it in your PATH and executable?",
-        )?;
+    let mut permslip = Command::new(
+        env::var("PERMSLIP").unwrap_or_else(|_| String::from("permslip")),
+    )
+    .arg("sign")
+    .arg(key_name)
+    .arg("--sshauth")
+    .arg("--kind=tech-port-unlock-challenge")
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .map_err(|_| {
+        anyhow!(
+            "Unable to execute `permslip`, is it in your PATH and executable? \
+             You may also override it with the PERMSLIP environment variable."
+        )
+    })?;
 
     let mut input =
         permslip.stdin.take().context("can't get permslip input")?;
