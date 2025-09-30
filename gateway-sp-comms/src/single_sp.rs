@@ -1576,6 +1576,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         use gateway_messages::measurement::MeasurementHeader;
         use gateway_messages::monorail_port_status::PortStatus;
         use gateway_messages::monorail_port_status::PortStatusError;
+        use gateway_messages::sp5_details::LastPostCode;
 
         match tag {
             PortStatus::TAG => {
@@ -1621,6 +1622,23 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     kind: header.kind,
                     value: header.value,
                 })))
+            }
+            LastPostCode::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<LastPostCode>(value)
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in LastPostCode TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::LastPostCode(result)))
             }
             _ => {
                 info!(
