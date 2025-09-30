@@ -1356,9 +1356,31 @@ async fn run_command(
             if json {
                 return Ok(Output::Json(component_details_to_json(details)));
             }
+
+            /// Helper `struct` to pretty-print component details
+            ///
+            /// This normally delegates to `Debug`, but prints `LastPostCode` as
+            /// a hex value for convenience.
+            struct ComponentDetailPrinter(gateway_messages::ComponentDetails);
+            impl std::fmt::Display for ComponentDetailPrinter {
+                fn fmt(
+                    &self,
+                    f: &mut std::fmt::Formatter<'_>,
+                ) -> std::fmt::Result {
+                    use gateway_messages::ComponentDetails;
+                    match &self.0 {
+                        ComponentDetails::LastPostCode(p) => {
+                            write!(f, "LastPostCode({:#x})", p.0)
+                        }
+                        d => write!(f, "{d:?}"),
+                    }
+                }
+            }
+
             let mut lines = Vec::new();
             for entry in details.entries {
-                lines.push(format!("{entry:?}"));
+                let d = ComponentDetailPrinter(entry);
+                lines.push(format!("{d}"));
             }
             Ok(Output::Lines(lines))
         }
@@ -2310,6 +2332,7 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     enum ComponentDetails {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
+        LastPostCode(u32),
     }
 
     #[derive(serde::Serialize)]
@@ -2332,6 +2355,9 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
                     kind: m.kind,
                     value: m.value,
                 })
+            }
+            gateway_messages::ComponentDetails::LastPostCode(code) => {
+                ComponentDetails::LastPostCode(code.0)
             }
         })
         .collect::<Vec<_>>();
