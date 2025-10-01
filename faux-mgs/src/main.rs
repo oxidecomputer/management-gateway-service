@@ -18,6 +18,7 @@ use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
+use gateway_messages::EcdsaSha2Nistp256Challenge;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::MonorailComponentAction;
@@ -555,17 +556,29 @@ enum MonorailCommand {
         #[clap(flatten)]
         cmd: UnlockGroup,
 
-        /// Public key for SSH signing challenge
+        /// Name of the signing key for producing unlock challenge responses
         ///
-        /// This is either a path to a public key (ending in `.pub`), or a
-        /// substring to match against known keys (which can be printed with
-        /// `faux-mgs monorail unlock --list`).
+        /// This is either a path to an SSH public key file (ending in `.pub`),
+        /// or a substring to match against known SSH keys (which can be printed
+        /// with `faux-mgs monorail unlock --list`), or a permslip key name (see
+        /// `permslip list-keys -t`).
         #[clap(short, long, conflicts_with = "list")]
         key: Option<String>,
 
         /// Path to the SSH agent socket
         #[clap(long, env)]
         ssh_auth_sock: Option<PathBuf>,
+
+        /// Use the Online Signing Service with `permslip`
+        #[clap(
+            short,
+            long,
+            alias = "online",
+            conflicts_with = "list",
+            conflicts_with = "ssh_auth_sock",
+            requires = "key"
+        )]
+        permslip: bool,
     },
 
     /// Lock the technician port
@@ -1627,6 +1640,7 @@ async fn run_command(
                     cmd: UnlockGroup { time, list },
                     key,
                     ssh_auth_sock,
+                    permslip,
                 } => {
                     if list {
                         let Some(ssh_auth_sock) = ssh_auth_sock else {
@@ -1646,6 +1660,7 @@ async fn run_command(
                             time_sec,
                             ssh_auth_sock,
                             key,
+                            permslip,
                         )
                         .await?;
                     }
@@ -1922,8 +1937,9 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
-    socket: Option<PathBuf>,
+    ssh_sock: Option<PathBuf>,
     pub_key: Option<String>,
+    permslip: bool,
 ) -> Result<()> {
     let r = sp
         .component_action_with_response(
@@ -1946,82 +1962,14 @@ async fn monorail_unlock(
         UnlockChallenge::Trivial { timestamp } => {
             UnlockResponse::Trivial { timestamp }
         }
-        UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            let Some(socket) = socket else {
-                bail!("must provide --ssh-auth-sock");
-            };
-            let keys = ssh_list_keys(&socket)?;
-            let pub_key = if keys.len() == 1 && pub_key.is_none() {
-                keys[0].clone()
+        UnlockChallenge::EcdsaSha2Nistp256(ecdsa_challenge) => {
+            if pub_key.is_some() && permslip {
+                unlock_permslip(log, pub_key.unwrap(), challenge)?
+            } else if let Some(socket) = ssh_sock {
+                unlock_ssh(log, socket, pub_key, ecdsa_challenge)?
             } else {
-                let Some(pub_key) = pub_key else {
-                    bail!(
-                        "need --key for ECDSA challenge; \
-                         multiple keys are available"
-                    );
-                };
-                if pub_key.ends_with(".pub") {
-                    ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
-                        .with_context(|| {
-                        format!("could not read key from {pub_key:?}")
-                    })?
-                } else {
-                    let mut found = None;
-                    for k in keys.iter() {
-                        if k.to_openssh()?.contains(&pub_key) {
-                            if found.is_some() {
-                                bail!("multiple keys contain '{pub_key}'");
-                            }
-                            found = Some(k);
-                        }
-                    }
-                    let Some(found) = found else {
-                        bail!(
-                            "could not match '{pub_key}'; \
-                             use `faux-mgs monorail unlock --list` \
-                             to print keys"
-                        );
-                    };
-                    found.clone()
-                }
-            };
-
-            let mut data = data.as_bytes().to_vec();
-            let signer_nonce: [u8; 8] = rand::random();
-            data.extend(signer_nonce);
-
-            let signed = ssh_keygen_sign(socket, pub_key, &data)?;
-            debug!(log, "got signature {signed:?}");
-
-            let key_bytes =
-                signed.public_key().ecdsa().unwrap().as_sec1_bytes();
-            assert_eq!(key_bytes.len(), 65, "invalid key length");
-            let mut key = [0u8; 65];
-            key.copy_from_slice(key_bytes);
-
-            // Signature bytes are encoded per
-            // https://datatracker.ietf.org/doc/html/rfc5656#section-3.1.2
-            //
-            // They are a pair of `mpint` values, per
-            // https://datatracker.ietf.org/doc/html/rfc4251
-            //
-            // Each one is either 32 bytes or 33 bytes with a leading zero, so
-            // we'll awkwardly allow for both cases.
-            let mut r = std::io::Cursor::new(signed.signature_bytes());
-            use std::io::Read;
-            let mut signature = [0u8; 64];
-            for i in 0..2 {
-                let mut size = [0u8; 4];
-                r.read_exact(&mut size)?;
-                match u32::from_be_bytes(size) {
-                    32 => (),
-                    33 => r.read_exact(&mut [0u8])?, // eat the leading byte
-                    _ => bail!("invalid length {i}"),
-                }
-                r.read_exact(&mut signature[i * 32..][..32])?;
+                bail!("don't know how to unlock tech port without ssh or permslip")
             }
-
-            UnlockResponse::EcdsaSha2Nistp256 { key, signer_nonce, signature }
         }
     };
     sp.component_action(
@@ -2035,6 +1983,129 @@ async fn monorail_unlock(
     .await?;
 
     Ok(())
+}
+
+fn unlock_permslip(
+    log: &Logger,
+    key_name: String,
+    challenge: UnlockChallenge,
+) -> Result<UnlockResponse> {
+    use std::env;
+    use std::process::{Command, Stdio};
+
+    let mut permslip = Command::new(
+        env::var("PERMSLIP").unwrap_or_else(|_| String::from("permslip")),
+    )
+    .arg("sign")
+    .arg(key_name)
+    .arg("--sshauth")
+    .arg("--kind=tech-port-unlock-challenge")
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .map_err(|_| {
+        anyhow!(
+            "Unable to execute `permslip`, is it in your PATH and executable? \
+             You may also override it with the PERMSLIP environment variable."
+        )
+    })?;
+
+    let mut input =
+        permslip.stdin.take().context("can't get permslip input")?;
+    input.write_all(serde_json::to_string(&challenge)?.as_bytes())?;
+    input.flush()?;
+    drop(input);
+
+    let output =
+        permslip.wait_with_output().context("can't read permslip output")?;
+    if output.status.success() {
+        let response =
+            serde_json::from_slice::<UnlockResponse>(&output.stdout)?;
+        debug!(log, "got response from permslip"; "response" => ?response);
+        Ok(response)
+    } else {
+        bail!("online signing with permslip failed");
+    }
+}
+
+fn unlock_ssh(
+    log: &Logger,
+    socket: PathBuf,
+    pub_key: Option<String>,
+    challenge: EcdsaSha2Nistp256Challenge,
+) -> Result<UnlockResponse> {
+    let keys = ssh_list_keys(&socket)?;
+    let pub_key = if keys.len() == 1 && pub_key.is_none() {
+        keys[0].clone()
+    } else {
+        let Some(pub_key) = pub_key else {
+            bail!(
+                "need --key for ECDSA challenge; \
+                 multiple keys are available"
+            );
+        };
+        if pub_key.ends_with(".pub") {
+            ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
+                .with_context(|| {
+                    format!("could not read key from {pub_key:?}")
+                })?
+        } else {
+            let mut found = None;
+            for k in keys.iter() {
+                if k.to_openssh()?.contains(&pub_key) {
+                    if found.is_some() {
+                        bail!("multiple keys contain '{pub_key}'");
+                    }
+                    found = Some(k);
+                }
+            }
+            let Some(found) = found else {
+                bail!(
+                    "could not match '{pub_key}'; \
+                     use `faux-mgs monorail unlock --list` \
+                     to print keys"
+                );
+            };
+            found.clone()
+        }
+    };
+
+    let mut data = challenge.as_bytes().to_vec();
+    let signer_nonce: [u8; 8] = rand::random();
+    data.extend(signer_nonce);
+
+    let signed = ssh_keygen_sign(socket, pub_key, &data)?;
+    debug!(log, "got signature {signed:?}");
+
+    let key_bytes = signed.public_key().ecdsa().unwrap().as_sec1_bytes();
+    assert_eq!(key_bytes.len(), 65, "invalid key length");
+    let mut key = [0u8; 65];
+    key.copy_from_slice(key_bytes);
+
+    // Signature bytes are encoded per
+    // https://datatracker.ietf.org/doc/html/rfc5656#section-3.1.2
+    //
+    // They are a pair of `mpint` values, per
+    // https://datatracker.ietf.org/doc/html/rfc4251
+    //
+    // Each one is either 32 bytes or 33 bytes with a leading zero, so
+    // we'll awkwardly allow for both cases.
+    let mut r = std::io::Cursor::new(signed.signature_bytes());
+    use std::io::Read;
+    let mut signature = [0u8; 64];
+    for i in 0..2 {
+        let mut size = [0u8; 4];
+        r.read_exact(&mut size)?;
+        match u32::from_be_bytes(size) {
+            32 => (),
+            33 => r.read_exact(&mut [0u8])?, // eat the leading byte
+            _ => bail!("invalid length {i}"),
+        }
+        r.read_exact(&mut signature[i * 32..][..32])?;
+    }
+
+    Ok(UnlockResponse::EcdsaSha2Nistp256 { key, signer_nonce, signature })
 }
 
 fn ssh_keygen_sign(
