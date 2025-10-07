@@ -764,14 +764,17 @@ fn handle_mgs_request<H: SpHandler>(
         }
         MgsRequest::BulkIgnitionState { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
-                let offset = u32::min(offset, port_count);
-                let iter = handler.bulk_ignition_state(offset)?;
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::BulkIgnitionState(iter));
-                Ok(SpResponse::BulkIgnitionState(TlvPage {
-                    offset,
-                    total: port_count,
-                }))
+                if offset >= port_count {
+                    Err(SpError::RequestUnsupportedForComponent)
+                } else {
+                    let iter = handler.bulk_ignition_state(offset)?;
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::BulkIgnitionState(iter));
+                    Ok(SpResponse::BulkIgnitionState(TlvPage {
+                        offset,
+                        total: port_count,
+                    }))
+                }
             })
         }
         MgsRequest::IgnitionLinkEvents { target } => handler
@@ -779,14 +782,18 @@ fn handle_mgs_request<H: SpHandler>(
             .map(SpResponse::IgnitionLinkEvents),
         MgsRequest::BulkIgnitionLinkEvents { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
-                let offset = u32::min(offset, port_count);
-                let iter = handler.bulk_ignition_link_events(offset)?;
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter));
-                Ok(SpResponse::BulkIgnitionLinkEvents(TlvPage {
-                    offset,
-                    total: port_count,
-                }))
+                if offset >= port_count {
+                    Err(SpError::RequestUnsupportedForComponent)
+                } else {
+                    let iter = handler.bulk_ignition_link_events(offset)?;
+                    outgoing_trailing_data = Some(
+                        OutgoingTrailingData::BulkIgnitionLinkEvents(iter),
+                    );
+                    Ok(SpResponse::BulkIgnitionLinkEvents(TlvPage {
+                        offset,
+                        total: port_count,
+                    }))
+                }
             })
         }
         MgsRequest::ClearIgnitionLinkEvents { target, transceiver_select } => {
@@ -843,20 +850,23 @@ fn handle_mgs_request<H: SpHandler>(
             .reset_component_trigger(SpComponent::SP_ITSELF)
             .map(|()| SpResponse::ResetComponentTriggerAck),
         MgsRequest::Inventory { device_index } => {
+            // If a caller asks for an index past our end, return an error
             let total_devices = handler.num_devices();
-            // If a caller asks for an index past our end, clamp it.
-            let device_index = u32::min(device_index, total_devices);
-            // We need to pack TLV-encoded device descriptions as our outgoing
-            // trailing data.
-            outgoing_trailing_data =
-                Some(OutgoingTrailingData::DeviceInventory {
-                    device_index,
-                    total_devices,
-                });
-            Ok(SpResponse::Inventory(TlvPage {
-                offset: device_index,
-                total: total_devices,
-            }))
+            if device_index >= total_devices {
+                Err(SpError::RequestUnsupportedForComponent)
+            } else {
+                // We need to pack TLV-encoded device descriptions as our outgoing
+                // trailing data.
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::DeviceInventory {
+                        device_index,
+                        total_devices,
+                    });
+                Ok(SpResponse::Inventory(TlvPage {
+                    offset: device_index,
+                    total: total_devices,
+                }))
+            }
         }
         MgsRequest::GetStartupOptions => {
             handler.get_startup_options().map(SpResponse::StartupOptions)
@@ -865,21 +875,24 @@ fn handle_mgs_request<H: SpHandler>(
             .set_startup_options(startup_options)
             .map(|()| SpResponse::SetStartupOptionsAck),
         MgsRequest::ComponentDetails { component, offset } => {
-            handler.num_component_details(component).map(|total_items| {
-                // If a caller asks for an index past our end, clamp it.
-                let offset = u32::min(offset, total_items);
-                // We need to pack TLV-encoded component details as our
-                // outgoing trailing data.
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::ComponentDetails {
-                        component,
+            handler.num_component_details(component).and_then(|total_items| {
+                // If a caller asks for an index past our end, return an error
+                if offset >= total_items {
+                    Err(SpError::RequestUnsupportedForComponent)
+                } else {
+                    // We need to pack TLV-encoded component details as our
+                    // outgoing trailing data.
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::ComponentDetails {
+                            component,
+                            offset,
+                            total: total_items,
+                        });
+                    Ok(SpResponse::ComponentDetails(TlvPage {
                         offset,
                         total: total_items,
-                    });
-                SpResponse::ComponentDetails(TlvPage {
-                    offset,
-                    total: total_items,
-                })
+                    }))
+                }
             })
         }
         MgsRequest::ComponentClearStatus(component) => handler
