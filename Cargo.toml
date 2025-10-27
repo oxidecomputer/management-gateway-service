@@ -59,7 +59,7 @@ slog-async = "2.8"
 slog-term = "2.9"
 smoltcp = { version = "0.9", default-features = false, features = ["proto-ipv6"] }
 socket2 = "0.6.1"
-ssh-agent-client-rs = "0.9.1"
+ssh-agent-client-rs = "1.1.2"
 ssh-key = { version = "0.6.7", features = ["p256"] }
 static_assertions = "1.1.0"
 strum = { version = "0.27.2", default-features = false }
