@@ -755,8 +755,8 @@ pub struct IgnitionBulkSelector {
     all: bool,
 
     /// 'all' or a target number (backwards-compatibility shim)
-    #[clap(value_parser = IgnitionSelectorCompatibilityShim::parse)]
-    compat: Option<IgnitionSelectorCompatibilityShim>,
+    #[clap(value_parser = parse_bulk_targets_shim)]
+    compat: Option<IgnitionBulkTargets>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -780,13 +780,7 @@ impl IgnitionBulkSelector {
             (Some(target), false, None) => {
                 Ok(IgnitionBulkTargets::Single(target))
             }
-            (None, false, Some(t)) => {
-                if let Some(t) = t.0 {
-                    Ok(IgnitionBulkTargets::Single(t))
-                } else {
-                    Ok(IgnitionBulkTargets::All)
-                }
-            }
+            (None, false, Some(t)) => Ok(t),
             (None, true, None) => Ok(IgnitionBulkTargets::All),
             (None, false, None) => {
                 // enforced by clap
@@ -842,19 +836,14 @@ fn parse_sp_component(component: &str) -> Result<SpComponent> {
         .map_err(|_| anyhow!("invalid component name: {component}"))
 }
 
-#[derive(Debug, Clone, Copy)]
-struct IgnitionSelectorCompatibilityShim(Option<u8>);
-
-impl IgnitionSelectorCompatibilityShim {
-    fn parse(s: &str) -> Result<Self> {
-        match s {
-            "all" | "ALL" => Ok(Self(None)),
-            _ => {
-                let target = s
-                    .parse()
-                    .with_context(|| "must be an integer (0..256) or 'all'")?;
-                Ok(Self(Some(target)))
-            }
+fn parse_bulk_targets_shim(s: &str) -> Result<IgnitionBulkTargets> {
+    match s {
+        "all" | "ALL" => Ok(IgnitionBulkTargets::All),
+        _ => {
+            let target = s
+                .parse()
+                .with_context(|| "must be an integer (0..256) or 'all'")?;
+            Ok(IgnitionBulkTargets::Single(target))
         }
     }
 }
