@@ -176,12 +176,7 @@ enum Command {
     /// controller).
     Ignition {
         #[clap(flatten)]
-        sel: IgnitionSelector,
-        #[clap(
-            help = "integer of a target, or 'all' for all targets",
-            value_parser = IgnitionLinkEventsTarget::parse,
-        )]
-        tgt: Option<IgnitionLinkEventsTarget>,
+        sel: IgnitionBulkSelector,
     },
 
     /// Send an ignition command for a single target port (only valid if the SP
@@ -199,21 +194,15 @@ enum Command {
     /// Get bulk ignition link events (only valid if the SP is an ignition
     /// controller).
     IgnitionLinkEvents {
-        #[clap(
-            help = "integer of a target, or 'all' for all targets",
-            value_parser = IgnitionLinkEventsTarget::parse,
-        )]
-        target: IgnitionLinkEventsTarget,
+        #[clap(flatten)]
+        sel: IgnitionBulkSelector,
     },
 
     /// Clear all ignition link events (only valid if the SP is an ignition
     /// controller).
     ClearIgnitionLinkEvents {
-        #[clap(
-            help = "integer of a target, or 'all' for all targets",
-            value_parser = IgnitionLinkEventsTarget::parse,
-        )]
-        target: IgnitionLinkEventsTarget,
+        #[clap(flatten)]
+        sel: IgnitionBulkSelector,
         #[clap(
             help = "'controller', 'target-link0', 'target-link1', or 'all'",
             value_parser = IgnitionLinkEventsTransceiverSelect::parse,
@@ -676,6 +665,7 @@ impl IgnitionSelector {
         let t = if let Some(t) = self.target {
             t
         } else if let Some(c) = self.cubby {
+            // See RFD 144 § 6.1 (Switch Port Map) for this mapping
             let t = match c {
                 0 => 14,
                 1 => 30,
@@ -733,6 +723,35 @@ impl IgnitionSelector {
     }
 }
 
+/// `IgnitionSelector` that also supports `--all`
+#[derive(Clone, Debug, clap::Args)]
+pub struct IgnitionBulkSelector {
+    #[clap(flatten)]
+    sel: IgnitionSelector,
+    /// All targets
+    #[clap(short, long)]
+    all: bool,
+}
+
+#[derive(Copy, Clone, Debug)]
+enum IgnitionBulkTargets {
+    Single(u8),
+    All,
+}
+
+impl IgnitionBulkSelector {
+    fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
+        match (self.sel.get_target(log)?, self.all) {
+            (Some(_), true) => {
+                bail!("cannot specify a target and `--all`")
+            }
+            (Some(target), false) => Ok(IgnitionBulkTargets::Single(target)),
+            (None, true) => Ok(IgnitionBulkTargets::All),
+            (None, false) => bail!("must specify either a target or `--all`"),
+        }
+    }
+}
+
 #[derive(Copy, Clone, Debug)]
 enum SidecarSelector {
     Local,
@@ -777,23 +796,6 @@ fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
 fn parse_sp_component(component: &str) -> Result<SpComponent> {
     SpComponent::try_from(component)
         .map_err(|_| anyhow!("invalid component name: {component}"))
-}
-
-#[derive(Debug, Clone, Copy)]
-struct IgnitionLinkEventsTarget(Option<u8>);
-
-impl IgnitionLinkEventsTarget {
-    fn parse(s: &str) -> Result<Self> {
-        match s {
-            "all" | "ALL" => Ok(Self(None)),
-            _ => {
-                let target = s
-                    .parse()
-                    .with_context(|| "must be an integer (0..256) or 'all'")?;
-                Ok(Self(Some(target)))
-            }
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1317,30 +1319,19 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::Ignition { sel, tgt } => {
+        Command::Ignition { sel } => {
             let mut by_target = BTreeMap::new();
-            match (sel.get_target(&log)?, tgt) {
-                (Some(_), Some(IgnitionLinkEventsTarget(None))) => {
-                    bail!("cannot specify a target and `all`")
-                }
-                (Some(_), Some(IgnitionLinkEventsTarget(Some(..)))) => {
-                    bail!(
-                        "cannot specify target with both flag and \
-                         standalone argument"
-                    )
-                }
-                (Some(target), None)
-                | (None, Some(IgnitionLinkEventsTarget(Some(target)))) => {
+            match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(target) => {
                     let state = sp.ignition_state(target).await?;
                     by_target.insert(usize::from(target), state);
                 }
-                (None, Some(IgnitionLinkEventsTarget(None))) => {
+                IgnitionBulkTargets::All => {
                     let states = sp.bulk_ignition_state().await?;
                     for (i, state) in states.into_iter().enumerate() {
                         by_target.insert(i, state);
                     }
                 }
-                (None, None) => (),
             };
             if json {
                 Ok(Output::Json(serde_json::to_value(by_target).unwrap()))
@@ -1366,15 +1357,18 @@ async fn run_command(
                 )]))
             }
         }
-        Command::IgnitionLinkEvents { target } => {
+        Command::IgnitionLinkEvents { sel } => {
             let mut by_target = BTreeMap::new();
-            if let Some(target) = target.0 {
-                let events = sp.ignition_link_events(target).await?;
-                by_target.insert(usize::from(target), events);
-            } else {
-                let events = sp.bulk_ignition_link_events().await?;
-                for (i, events) in events.into_iter().enumerate() {
-                    by_target.insert(i, events);
+            match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(target) => {
+                    let events = sp.ignition_link_events(target).await?;
+                    by_target.insert(usize::from(target), events);
+                }
+                IgnitionBulkTargets::All => {
+                    let events = sp.bulk_ignition_link_events().await?;
+                    for (i, events) in events.into_iter().enumerate() {
+                        by_target.insert(i, events);
+                    }
                 }
             }
             if json {
@@ -1387,9 +1381,12 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::ClearIgnitionLinkEvents { target, transceiver_select } => {
-            sp.clear_ignition_link_events(target.0, transceiver_select.0)
-                .await?;
+        Command::ClearIgnitionLinkEvents { sel, transceiver_select } => {
+            let target = match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(t) => Some(t),
+                IgnitionBulkTargets::All => None,
+            };
+            sp.clear_ignition_link_events(target, transceiver_select.0).await?;
             info!(log, "ignition link events cleared");
             if json {
                 Ok(Output::Json(json!({ "ack": "cleared" })))
