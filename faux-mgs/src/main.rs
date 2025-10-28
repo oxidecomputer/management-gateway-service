@@ -183,7 +183,7 @@ enum Command {
     /// is an ignition controller).
     IgnitionCommand {
         #[clap(flatten)]
-        sel: IgnitionSelector,
+        sel: IgnitionSingleSelector,
         #[clap(
             help = "'power-on', 'power-off', or 'power-reset'",
             value_parser = ignition_command_from_str,
@@ -657,6 +657,23 @@ pub struct IgnitionSelector {
     psc: Option<u8>,
 }
 
+#[derive(Clone, Debug, clap::Args)]
+#[clap(group(clap::ArgGroup::new("select")
+    .required(true)
+    .args(&["target", "cubby", "sidecar", "psc"]))
+)]
+pub struct IgnitionSingleSelector {
+    #[clap(flatten)]
+    sel: IgnitionSelector,
+}
+
+impl IgnitionSingleSelector {
+    fn get_target(&self, log: &Logger) -> Result<u8> {
+        // presence of at least one is enforced by clap
+        Ok(self.sel.get_target(log)?.unwrap())
+    }
+}
+
 impl IgnitionSelector {
     /// Decodes CLI arguments to an ignition target
     fn get_target(&self, log: &Logger) -> Result<Option<u8>> {
@@ -725,12 +742,21 @@ impl IgnitionSelector {
 
 /// `IgnitionSelector` that also supports `--all`
 #[derive(Clone, Debug, clap::Args)]
+#[clap(group(clap::ArgGroup::new("select")
+    .required(true)
+    .args(&["target", "cubby", "sidecar", "psc", "all", "compat"]))
+)]
 pub struct IgnitionBulkSelector {
     #[clap(flatten)]
     sel: IgnitionSelector,
+
     /// All targets
     #[clap(short, long)]
     all: bool,
+
+    /// 'all' or a target number (backwards-compatibility shim)
+    #[clap(value_parser = IgnitionSelectorCompatibilityShim::parse)]
+    compat: Option<IgnitionSelectorCompatibilityShim>,
 }
 
 #[derive(Copy, Clone, Debug)]
@@ -741,13 +767,31 @@ enum IgnitionBulkTargets {
 
 impl IgnitionBulkSelector {
     fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
-        match (self.sel.get_target(log)?, self.all) {
-            (Some(_), true) => {
+        match (self.sel.get_target(log)?, self.all, self.compat) {
+            (Some(_), true, _) | (_, true, Some(_)) => {
                 bail!("cannot specify a target and `--all`")
             }
-            (Some(target), false) => Ok(IgnitionBulkTargets::Single(target)),
-            (None, true) => Ok(IgnitionBulkTargets::All),
-            (None, false) => bail!("must specify either a target or `--all`"),
+            (Some(_), _, Some(_)) => {
+                bail!(
+                    "cannot specify a target with both flags \
+                     and positional arguments"
+                )
+            }
+            (Some(target), false, None) => {
+                Ok(IgnitionBulkTargets::Single(target))
+            }
+            (None, false, Some(t)) => {
+                if let Some(t) = t.0 {
+                    Ok(IgnitionBulkTargets::Single(t))
+                } else {
+                    Ok(IgnitionBulkTargets::All)
+                }
+            }
+            (None, true, None) => Ok(IgnitionBulkTargets::All),
+            (None, false, None) => {
+                // enforced by clap
+                panic!("must specify either a target or `--all`")
+            }
         }
     }
 }
@@ -796,6 +840,23 @@ fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
 fn parse_sp_component(component: &str) -> Result<SpComponent> {
     SpComponent::try_from(component)
         .map_err(|_| anyhow!("invalid component name: {component}"))
+}
+
+#[derive(Debug, Clone, Copy)]
+struct IgnitionSelectorCompatibilityShim(Option<u8>);
+
+impl IgnitionSelectorCompatibilityShim {
+    fn parse(s: &str) -> Result<Self> {
+        match s {
+            "all" | "ALL" => Ok(Self(None)),
+            _ => {
+                let target = s
+                    .parse()
+                    .with_context(|| "must be an integer (0..256) or 'all'")?;
+                Ok(Self(Some(target)))
+            }
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -1344,9 +1405,7 @@ async fn run_command(
             }
         }
         Command::IgnitionCommand { sel, command } => {
-            let target = sel.get_target(&log)?.ok_or_else(|| {
-                anyhow!("must specify --target, --cubby, --sidecar, or --psc")
-            })?;
+            let target = sel.get_target(&log)?;
             sp.ignition_command(target, command).await?;
             info!(log, "ignition command {command:?} send to target {target}");
             if json {
