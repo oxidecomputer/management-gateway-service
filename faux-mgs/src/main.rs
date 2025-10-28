@@ -172,20 +172,23 @@ enum Command {
     /// Ask SP for its current state.
     State,
 
-    /// Get the ignition state for a single target port (only valid if the SP is
-    /// an ignition controller).
+    /// Get the ignition state for a port (only valid if the SP is an ignition
+    /// controller).
     Ignition {
+        #[clap(flatten)]
+        sel: IgnitionSelector,
         #[clap(
             help = "integer of a target, or 'all' for all targets",
             value_parser = IgnitionLinkEventsTarget::parse,
         )]
-        target: IgnitionLinkEventsTarget,
+        tgt: Option<IgnitionLinkEventsTarget>,
     },
 
     /// Send an ignition command for a single target port (only valid if the SP
     /// is an ignition controller).
     IgnitionCommand {
-        target: u8,
+        #[clap(flatten)]
+        sel: IgnitionSelector,
         #[clap(
             help = "'power-on', 'power-off', or 'power-reset'",
             value_parser = ignition_command_from_str,
@@ -641,6 +644,108 @@ impl std::fmt::Display for CfpaSlot {
             }
         )
     }
+}
+
+#[derive(Clone, Debug, clap::Args)]
+pub struct IgnitionSelector {
+    /// Ignition target
+    #[clap(short, long)]
+    target: Option<u8>,
+
+    /// Sled cubby (0-31)
+    #[clap(short, long, conflicts_with_all = ["target"])]
+    cubby: Option<u8>,
+
+    /// Sidecar ('local' or 'peer')
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby"],
+        value_parser = parse_sidecar_selector
+    )]
+    sidecar: Option<SidecarSelector>,
+
+    /// PSC index (0-1)
+    #[clap(short, long, conflicts_with_all = ["target", "cubby", "sidecar"])]
+    psc: Option<u8>,
+}
+
+impl IgnitionSelector {
+    /// Decodes CLI arguments to an ignition target
+    fn get_target(&self, log: &Logger) -> Result<Option<u8>> {
+        // At this point, we assume that the various `Option` values are
+        // mutually exclusive (enforced by `clap`).
+        let t = if let Some(t) = self.target {
+            t
+        } else if let Some(c) = self.cubby {
+            let t = match c {
+                0 => 14,
+                1 => 30,
+                2 => 15,
+                3 => 31,
+                4 => 13,
+                5 => 29,
+                6 => 12,
+                7 => 28,
+                8 => 10,
+                9 => 26,
+                10 => 11,
+                11 => 27,
+                12 => 9,
+                13 => 25,
+                14 => 8,
+                15 => 24,
+                16 => 4,
+                17 => 20,
+                18 => 5,
+                19 => 21,
+                20 => 7,
+                22 => 6,
+                24 => 0,
+                25 => 16,
+                26 => 1,
+                27 => 17,
+                28 => 3,
+                29 => 19,
+                30 => 2,
+                31 => 18,
+                i => bail!("cubby must be in the range 0-31, not {i}"),
+            };
+            debug!(log, "decoded cubby {c} => target {t}");
+            t
+        } else if let Some(s) = self.sidecar {
+            let t = match s {
+                SidecarSelector::Peer => 34,
+                SidecarSelector::Local => 35,
+            };
+            debug!(log, "decoded {s:?} => target {t}");
+            t
+        } else if let Some(p) = self.psc {
+            let t = match p {
+                0 => 32,
+                1 => 33,
+                i => bail!("psc must be in the range 0-1, not {i}"),
+            };
+            debug!(log, "decoded psc {p} => target {t}");
+            t
+        } else {
+            return Ok(None);
+        };
+        Ok(Some(t))
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum SidecarSelector {
+    Local,
+    Peer,
+}
+
+fn parse_sidecar_selector(s: &str) -> Result<SidecarSelector> {
+    let out = match s.to_ascii_lowercase().as_str() {
+        "local" => SidecarSelector::Local,
+        "peer" => SidecarSelector::Peer,
+        _ => bail!("invalid sidecar selector '{s}', must be 'local' or 'peer'"),
+    };
+    Ok(out)
 }
 
 impl Command {
@@ -1212,17 +1317,31 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::Ignition { target } => {
+        Command::Ignition { sel, tgt } => {
             let mut by_target = BTreeMap::new();
-            if let Some(target) = target.0 {
-                let state = sp.ignition_state(target).await?;
-                by_target.insert(usize::from(target), state);
-            } else {
-                let states = sp.bulk_ignition_state().await?;
-                for (i, state) in states.into_iter().enumerate() {
-                    by_target.insert(i, state);
+            match (sel.get_target(&log)?, tgt) {
+                (Some(_), Some(IgnitionLinkEventsTarget(None))) => {
+                    bail!("cannot specify a target and `all`")
                 }
-            }
+                (Some(_), Some(IgnitionLinkEventsTarget(Some(..)))) => {
+                    bail!(
+                        "cannot specify target with both flag and \
+                         standalone argument"
+                    )
+                }
+                (Some(target), None)
+                | (None, Some(IgnitionLinkEventsTarget(Some(target)))) => {
+                    let state = sp.ignition_state(target).await?;
+                    by_target.insert(usize::from(target), state);
+                }
+                (None, Some(IgnitionLinkEventsTarget(None))) => {
+                    let states = sp.bulk_ignition_state().await?;
+                    for (i, state) in states.into_iter().enumerate() {
+                        by_target.insert(i, state);
+                    }
+                }
+                (None, None) => (),
+            };
             if json {
                 Ok(Output::Json(serde_json::to_value(by_target).unwrap()))
             } else {
@@ -1233,7 +1352,10 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::IgnitionCommand { target, command } => {
+        Command::IgnitionCommand { sel, command } => {
+            let target = sel.get_target(&log)?.ok_or_else(|| {
+                anyhow!("must specify --target, --cubby, --sidecar, or --psc")
+            })?;
             sp.ignition_command(target, command).await?;
             info!(log, "ignition command {command:?} send to target {target}");
             if json {
