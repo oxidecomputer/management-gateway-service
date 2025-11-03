@@ -40,7 +40,7 @@ hubpack = "0.1.2"
 humantime = "2.3.0"
 indicatif = "0.18"
 lru-cache = "0.1.2"
-lzss = "0.8"
+lzss = "0.9"
 nix = { version = "0.27.1", features = ["net"] }
 omicron-zone-package = "0.12.0"
 once_cell = "1.21.3"
