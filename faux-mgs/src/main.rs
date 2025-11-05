@@ -176,12 +176,14 @@ enum Command {
     /// controller).
     Ignition {
         #[clap(flatten)]
-        sel: IgnitionBulkSelector,
+        sel: IgnitionBulkSelectorWithCompatibilityShim,
     },
 
     /// Send an ignition command for a single target port (only valid if the SP
     /// is an ignition controller).
     IgnitionCommand {
+        // We can't use the compatibility shim here because it has an optional
+        // positional argument, which can't be followed by `command`
         #[clap(flatten)]
         sel: IgnitionSingleSelector,
         #[clap(
@@ -195,12 +197,14 @@ enum Command {
     /// controller).
     IgnitionLinkEvents {
         #[clap(flatten)]
-        sel: IgnitionBulkSelector,
+        sel: IgnitionBulkSelectorWithCompatibilityShim,
     },
 
     /// Clear all ignition link events (only valid if the SP is an ignition
     /// controller).
     ClearIgnitionLinkEvents {
+        // We can't use the compatibility shim here because it has an optional
+        // positional argument, which can't be followed by `transceiver_select`
         #[clap(flatten)]
         sel: IgnitionBulkSelector,
         #[clap(
@@ -635,7 +639,7 @@ impl std::fmt::Display for CfpaSlot {
     }
 }
 
-#[derive(Clone, Debug, clap::Args)]
+#[derive(Copy, Clone, Debug, clap::Args)]
 pub struct IgnitionSelector {
     /// Ignition target
     #[clap(short, long)]
@@ -744,7 +748,7 @@ impl IgnitionSelector {
 #[derive(Clone, Debug, clap::Args)]
 #[clap(group(clap::ArgGroup::new("select")
     .required(true)
-    .args(&["target", "cubby", "sidecar", "psc", "all", "compat"]))
+    .args(&["target", "cubby", "sidecar", "psc", "all"]))
 )]
 pub struct IgnitionBulkSelector {
     #[clap(flatten)]
@@ -753,19 +757,45 @@ pub struct IgnitionBulkSelector {
     /// All targets
     #[clap(short, long)]
     all: bool,
+}
 
-    /// 'all' or a target number (backwards-compatibility shim)
+impl IgnitionBulkSelector {
+    fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
+        // Delegate to the fancier representation
+        IgnitionBulkSelectorWithCompatibilityShim {
+            sel: self.sel,
+            all: self.all,
+            compat: None,
+        }
+        .get_targets(log)
+    }
+}
+
+/// `IgnitionBulkSelector` that also supports a positional argument
+///
+/// This is for backwards compatibility. However, it can't be used in
+/// combination with later positional arguments, because optional positional
+/// arguments are only allowed at the end of an argument list.
+#[derive(Clone, Debug, clap::Args)]
+#[clap(group(clap::ArgGroup::new("select")
+    .required(true)
+    .args(&["target", "cubby", "sidecar", "psc", "all", "compat"]))
+)]
+pub struct IgnitionBulkSelectorWithCompatibilityShim {
+    #[clap(flatten)]
+    sel: IgnitionSelector,
+
+    /// All targets
+    #[clap(short, long)]
+    all: bool,
+
+    /// 'all' or a target number
+    /// (deprecated, present for backwards-compatibility)
     #[clap(value_parser = parse_bulk_targets_shim)]
     compat: Option<IgnitionBulkTargets>,
 }
 
-#[derive(Copy, Clone, Debug)]
-enum IgnitionBulkTargets {
-    Single(u8),
-    All,
-}
-
-impl IgnitionBulkSelector {
+impl IgnitionBulkSelectorWithCompatibilityShim {
     fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
         match (self.sel.get_target(log)?, self.all, self.compat) {
             (Some(_), true, _) | (_, true, Some(_)) => {
@@ -780,7 +810,22 @@ impl IgnitionBulkSelector {
             (Some(target), false, None) => {
                 Ok(IgnitionBulkTargets::Single(target))
             }
-            (None, false, Some(t)) => Ok(t),
+            (None, false, Some(t)) => {
+                match t {
+                    IgnitionBulkTargets::All => warn!(
+                        log,
+                        "positional `all` argument is deprecated, \
+                         please switch to `--all`"
+                    ),
+                    IgnitionBulkTargets::Single(..) => warn!(
+                        log,
+                        "positional target argument is deprecated, \
+                         please switch to `--target`, `--cubby`, \
+                         `--sidecar`, or `--psc`"
+                    ),
+                }
+                Ok(t)
+            }
             (None, true, None) => Ok(IgnitionBulkTargets::All),
             (None, false, None) => {
                 // enforced by clap
@@ -788,6 +833,12 @@ impl IgnitionBulkSelector {
             }
         }
     }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum IgnitionBulkTargets {
+    Single(u8),
+    All,
 }
 
 #[derive(Copy, Clone, Debug)]
