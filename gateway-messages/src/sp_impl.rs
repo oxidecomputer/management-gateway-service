@@ -764,7 +764,7 @@ fn handle_mgs_request<H: SpHandler>(
         }
         MgsRequest::BulkIgnitionState { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
-                if offset >= port_count {
+                if offset >= port_count && offset != 0 {
                     Err(SpError::RequestUnsupportedForComponent)
                 } else {
                     let iter = handler.bulk_ignition_state(offset)?;
@@ -782,7 +782,7 @@ fn handle_mgs_request<H: SpHandler>(
             .map(SpResponse::IgnitionLinkEvents),
         MgsRequest::BulkIgnitionLinkEvents { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
-                if offset >= port_count {
+                if offset >= port_count && offset != 0 {
                     Err(SpError::RequestUnsupportedForComponent)
                 } else {
                     let iter = handler.bulk_ignition_link_events(offset)?;
@@ -851,8 +851,9 @@ fn handle_mgs_request<H: SpHandler>(
             .map(|()| SpResponse::ResetComponentTriggerAck),
         MgsRequest::Inventory { device_index } => {
             // If a caller asks for an index past our end, return an error
+            // (but allow `device_index = 0` to get total device count)
             let total_devices = handler.num_devices();
-            if device_index >= total_devices {
+            if device_index >= total_devices && device_index != 0 {
                 Err(SpError::RequestUnsupportedForComponent)
             } else {
                 // We need to pack TLV-encoded device descriptions as our outgoing
@@ -877,7 +878,8 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentDetails { component, offset } => {
             handler.num_component_details(component).and_then(|total_items| {
                 // If a caller asks for an index past our end, return an error
-                if offset >= total_items {
+                // (but allow `offset = 0` to get total item count)
+                if offset >= total_items && offset != 0 {
                     Err(SpError::RequestUnsupportedForComponent)
                 } else {
                     // We need to pack TLV-encoded component details as our
