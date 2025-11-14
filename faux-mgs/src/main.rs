@@ -575,7 +575,6 @@ enum MonorailCommand {
             long,
             alias = "online",
             conflicts_with = "list",
-            conflicts_with = "ssh_auth_sock",
             requires = "key"
         )]
         permslip: bool,
