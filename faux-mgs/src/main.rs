@@ -214,6 +214,14 @@ enum Command {
         transceiver_select: IgnitionLinkEventsTransceiverSelect,
     },
 
+    /// Set a port to always transmit (only valid if the SP is an ignition
+    /// controller).
+    IgnitionAlwaysTransmit {
+        #[clap(flatten)]
+        sel: IgnitionBulkSelectorWithCompatibilityShim,
+        enabled: bool,
+    },
+
     /// Get or set the active slot of a component (e.g., `host-boot-flash`).
     ///
     /// Except for component "stage0", setting the active slot can be
@@ -1492,6 +1500,26 @@ async fn run_command(
                 Ok(Output::Lines(vec![
                     "ignition link events cleared".to_string()
                 ]))
+            }
+        }
+        Command::IgnitionAlwaysTransmit { sel, enabled } => {
+            let target = match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(t) => t,
+                IgnitionBulkTargets::All => {
+                    bail!("only single ignition targets are allowed")
+                }
+            };
+            sp.set_ignition_always_transmit(target, enabled).await?;
+            info!(
+                log,
+                "ignition always_transmit set to {enabled} on port {target}"
+            );
+            if json {
+                Ok(Output::Json(json!({ "ack": enabled })))
+            } else {
+                Ok(Output::Lines(vec![format!(
+                    "set always_transmit for target {target} to {enabled}"
+                )]))
             }
         }
         Command::ComponentActiveSlot { component, set, persist, transient } => {

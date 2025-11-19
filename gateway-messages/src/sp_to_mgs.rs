@@ -180,6 +180,9 @@ pub enum SpResponse {
 
     /// sha2-256 hash of a flash bank
     HostFlashHash([u8; 32]),
+
+    /// Modified always_transmit for an ignition target
+    IgnitionAlwaysTransmitAck,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.

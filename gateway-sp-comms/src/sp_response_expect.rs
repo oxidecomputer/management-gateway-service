@@ -94,6 +94,7 @@ expect_fn!(IgnitionState(state) -> IgnitionState);
 expect_fn!(IgnitionLinkEvents(events) -> LinkEvents);
 expect_fn!(IgnitionCommandAck);
 expect_fn!(ClearIgnitionLinkEventsAck);
+expect_fn!(IgnitionAlwaysTransmitAck);
 expect_fn!(SerialConsoleAttachAck);
 expect_fn!(SerialConsoleWriteAck { furthest_ingested_offset } -> u64);
 expect_fn!(SerialConsoleDetachAck);

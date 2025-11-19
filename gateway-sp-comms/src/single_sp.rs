@@ -551,6 +551,19 @@ impl SingleSp {
             .and_then(expect_ignition_command_ack)
     }
 
+    /// Force a controller to transmit to the given target.
+    ///
+    /// This will fail if this SP is not connected to an ignition controller.
+    pub async fn set_ignition_always_transmit(
+        &self,
+        target: u8,
+        enabled: bool,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::IgnitionAlwaysTransmit { target, enabled })
+            .await
+            .and_then(expect_ignition_always_transmit_ack)
+    }
+
     /// Request the state of the SP.
     pub async fn state(&self) -> Result<VersionedSpState> {
         self.rpc(MgsRequest::SpState).await.and_then(expect_sp_state)

@@ -236,6 +236,12 @@ pub enum MgsRequest {
     GetHostFlashHash {
         slot: u16,
     },
+
+    /// Force the controller to transmit to a target
+    IgnitionAlwaysTransmit {
+        target: u8,
+        enabled: bool,
+    },
 }
 
 #[derive(
