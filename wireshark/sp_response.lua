@@ -104,6 +104,10 @@ M.dissect_clear_ignition_link_events_ack = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse SpResponse clear_ignition_link_events_ack')
 end
 
+M.dissect_ignition_always_transmit_ack = function(buffer, pinfo, tree)
+    tree:add(buffer, 'TODO: parse SpResponse ignition_always_transmit_ack')
+end
+
 M.dissect_component_clear_status_ack = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse SpResponse component_clear_status_ack')
 end
