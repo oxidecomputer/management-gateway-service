@@ -418,7 +418,11 @@ pub trait SpHandler {
 
     fn get_host_flash_hash(&mut self, slot: u16) -> Result<[u8; 32], SpError>;
 
-    fn set_ignition_always_transmit(&mut self, target: u8, enabled: bool) -> Result<(), SpError>;
+    fn set_ignition_always_transmit(
+        &mut self,
+        target: u8,
+        enabled: bool
+    ) -> Result<(), SpError>;
 }
 
 /// Handle a single incoming message.
@@ -806,7 +810,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
-        MgsRequest::IgnitionAlwaysTransmit { target , enabled} => handler.set_ignition_always_transmit(target, enabled).map(|()| SpResponse::IgnitionAlwaysTransmitAck),
+        MgsRequest::IgnitionAlwaysTransmit { target , enabled} => handler
+            .set_ignition_always_transmit(target, enabled)
+            .map(|()| SpResponse::IgnitionAlwaysTransmitAck),
         MgsRequest::SpState => handler.sp_state().map(SpResponse::SpStateV2),
         MgsRequest::SpUpdatePrepare(update) => handler
             .sp_update_prepare(update)
