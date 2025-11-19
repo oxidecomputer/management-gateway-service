@@ -421,7 +421,7 @@ pub trait SpHandler {
     fn set_ignition_always_transmit(
         &mut self,
         target: u8,
-        enabled: bool
+        enabled: bool,
     ) -> Result<(), SpError>;
 }
 
@@ -810,7 +810,7 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::IgnitionCommand { target, command } => handler
             .ignition_command(target, command)
             .map(|()| SpResponse::IgnitionCommandAck),
-        MgsRequest::IgnitionAlwaysTransmit { target , enabled} => handler
+        MgsRequest::IgnitionAlwaysTransmit { target, enabled } => handler
             .set_ignition_always_transmit(target, enabled)
             .map(|()| SpResponse::IgnitionAlwaysTransmitAck),
         MgsRequest::SpState => handler.sp_state().map(SpResponse::SpStateV2),
