@@ -94,7 +94,6 @@ M.mgs_request.names = {
     [47] = "ReadHostFlash",
     [48] = "StartHostFlashHash",
     [49] = "GetHostFlashHash",
-    [50] = "IgnitionAlwaysTransmit",
 }
 M.mgs_request.handlers = {
     [0] = "dissect_discover",
@@ -147,7 +146,6 @@ M.mgs_request.handlers = {
     [47] = "dissect_read_host_flash",
     [48] = "dissect_start_host_flash_hash",
     [49] = "dissect_get_host_flash_hash",
-    [50] = "dissect_ignition_always_transmit",
 }
 M.mgs_request.field = ProtoField.uint8(
     "mgs.mgs_request",
@@ -332,7 +330,6 @@ M.sp_response.names = {
     [49] = "ReadHostFlash",
     [50] = "StartHostFlashHashAck",
     [51] = "HostFlashHash",
-    [52] = "IgnitionAlwaysTransmitAck",
 }
 M.sp_response.handlers = {
     [0] = "dissect_discover",
@@ -387,7 +384,6 @@ M.sp_response.handlers = {
     [49] = "dissect_read_host_flash",
     [50] = "dissect_start_host_flash_hash_ack",
     [51] = "dissect_host_flash_hash",
-    [52] = "dissect_ignition_always_transmit_ack",
 }
 M.sp_response.field = ProtoField.uint8(
     "mgs.sp_response",

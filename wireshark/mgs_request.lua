@@ -103,10 +103,6 @@ M.dissect_clear_ignition_link_events = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse MgsRequest clear_ignition_link_events')
 end
 
-M.dissect_ignition_always_transmit = function(buffer, pinfo, tree)
-    tree:add(buffer, 'TODO: parse MgsRequest clear_ignition_link_events')
-end
-
 M.dissect_component_clear_status = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse MgsRequest component_clear_status')
 end
