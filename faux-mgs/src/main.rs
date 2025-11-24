@@ -187,7 +187,7 @@ enum Command {
         #[clap(flatten)]
         sel: IgnitionSingleSelector,
         #[clap(
-            help = "'power-on', 'power-off', or 'power-reset'",
+            help = "'power-[on,off,reset]' or '[set,clear]-always-transmit'",
             value_parser = ignition_command_from_str,
         )]
         command: IgnitionCommand,
@@ -929,6 +929,12 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
         "power-on" => Ok(IgnitionCommand::PowerOn),
         "power-off" => Ok(IgnitionCommand::PowerOff),
         "power-reset" => Ok(IgnitionCommand::PowerReset),
+        "set-always-transmit" => {
+            Ok(IgnitionCommand::AlwaysTransmit { enabled: true })
+        }
+        "clear-always-transmit" => {
+            Ok(IgnitionCommand::AlwaysTransmit { enabled: false })
+        }
         _ => Err(anyhow!("Invalid ignition command: {s}")),
     }
 }
