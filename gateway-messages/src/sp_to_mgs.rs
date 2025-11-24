@@ -1055,8 +1055,15 @@ pub enum SpError {
     /// An update is already in progress with the specified amount of data
     /// already provided. MGS should resume the update at that offset.
     UpdateInProgress(UpdateStatus),
-    /// Received an invalid update chunk; the in-progress update must be
-    /// aborted and restarted.
+    /// Received an invalid update chunk; the SP was expecting an update chunk
+    /// with a different offset.
+    ///
+    /// This error may indicate packet loss from the SP to MGS (e.g., MGS will
+    /// resend an already-received-by-the-SP update chunk if it missed an ACK).
+    /// This error should be recoverable by asking the SP for its update status
+    /// to determine which chunk it wants and resuming from there. MGS and
+    /// faux-mgs attempt this automatically, so this error should only bubble
+    /// out to users if that recovery process has failed.
     InvalidUpdateChunk,
     /// An update operation failed with the associated code.
     UpdateFailed(u32),
