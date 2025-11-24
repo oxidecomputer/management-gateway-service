@@ -289,6 +289,7 @@ pub enum IgnitionCommand {
     PowerOn,
     PowerOff,
     PowerReset,
+    AlwaysTransmit { enabled: bool },
 }
 
 #[derive(
