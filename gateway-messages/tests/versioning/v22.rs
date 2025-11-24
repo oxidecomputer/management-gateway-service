@@ -20,25 +20,10 @@ use gateway_messages::{IgnitionCommand, MgsRequest};
 
 #[test]
 fn ignition_command_always_transmit() {
-    for (command, command_val) in [
-        (IgnitionCommand::PowerOn, 0),
-        (IgnitionCommand::PowerOff, 1),
-        (IgnitionCommand::PowerReset, 2),
-        (IgnitionCommand::AlwaysTransmit { enabled: false }, 3),
-        (IgnitionCommand::AlwaysTransmit { enabled: true }, 3),
-    ] {
+    for enabled in [false, true] {
+        let command = IgnitionCommand::AlwaysTransmit { enabled };
         let request = MgsRequest::IgnitionCommand { target: 7, command };
-        match command {
-            IgnitionCommand::AlwaysTransmit { enabled } => {
-                let expected = &[3, 7, command_val, enabled as u8];
-                assert_serialized(expected, &request);
-            }
-            IgnitionCommand::PowerOn
-            | IgnitionCommand::PowerOff
-            | IgnitionCommand::PowerReset => {
-                let expected = &[3, 7, command_val];
-                assert_serialized(expected, &request);
-            }
-        }
+        let expected = &[3, 7, 3, enabled as u8];
+        assert_serialized(expected, &request);
     }
 }
