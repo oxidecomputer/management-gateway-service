@@ -15,9 +15,11 @@ use futures::FutureExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
+use gateway_messages::SpError;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::UpdateChunk;
 use gateway_messages::UpdateId;
+use gateway_messages::UpdateInProgressStatus;
 use gateway_messages::UpdateStatus;
 use hubtools::Error as HubtoolsError;
 use hubtools::RawHubrisArchive;
@@ -662,11 +664,50 @@ async fn send_update_in_chunks(
             "offset" => offset,
         );
 
-        image = send_single_update_chunk(cmds_tx, component, id, offset, image)
-            .await?;
+        let result;
+        (image, result) =
+            send_single_update_chunk(cmds_tx, component, id, offset, image)
+                .await;
 
-        // Update our offset according to how far our cursor advanced.
-        offset += (image.position() - prior_pos) as u32;
+        match result {
+            Ok(()) => {
+                // Update our offset according to how far our cursor advanced.
+                offset += (image.position() - prior_pos) as u32;
+            }
+            Err(
+                err @ CommunicationError::SpError(SpError::InvalidUpdateChunk),
+            ) => {
+                warn!(
+                    log,
+                    "received invalid update chunk from SP; attempting recovery"
+                );
+                // Ideally `InvalidUpdateChunk` would return the offset the SP
+                // wants. We could add a new error variant for that; fow now,
+                // try to recover by asking the SP what chunk it expected.
+                if let Some(sp_offset) =
+                    determine_update_resume_point_via_update_status(
+                        cmds_tx,
+                        component,
+                        update_id,
+                        image.get_ref().len(),
+                        log,
+                    )
+                    .await
+                {
+                    // Rewind both our offset and the cursor on the data.
+                    offset = sp_offset;
+                    image.set_position(u64::from(sp_offset));
+                } else {
+                    // `determine_update_resume_point_via_update_status()`
+                    // already logged any meaningful problems fetching the
+                    // status; all we can do is bail out.
+                    return Err(err);
+                }
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        }
     }
     Ok(())
 }
@@ -681,7 +722,7 @@ async fn send_single_update_chunk(
     id: UpdateId,
     offset: u32,
     data: Cursor<Vec<u8>>,
-) -> Result<Cursor<Vec<u8>>> {
+) -> (Cursor<Vec<u8>>, Result<()>) {
     let update_chunk = UpdateChunk { component, id, offset };
     let (result, data) = super::rpc_with_trailing_data(
         cmds_tx,
@@ -690,7 +731,103 @@ async fn send_single_update_chunk(
     )
     .await;
 
-    result.and_then(expect_update_chunk_ack)?;
+    let result = result.and_then(expect_update_chunk_ack);
 
-    Ok(data)
+    (data, result)
+}
+
+/// Attempt to determine what offset the SP is expecting mid-update.
+///
+/// We use this when receiving an `InvalidUpdateChunk` from the SP, which
+/// indicates it's still expecting our update but we've gotten out of sync on
+/// how far along it is (e.g., via a lost packet containing an ACK from the SP
+/// for some successful chunk that we believe we need to resend).
+async fn determine_update_resume_point_via_update_status(
+    cmds_tx: &mpsc::Sender<InnerCommand>,
+    component: SpComponent,
+    update_id: Uuid,
+    image_len: usize,
+    log: &Logger,
+) -> Option<u32> {
+    // We can only recover if the SP still thinks this update is in progress.
+    let progress =
+        match super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
+            .await
+            .result
+            .and_then(expect_update_status)
+        {
+            Ok(UpdateStatus::InProgress(progress)) => progress,
+            Ok(other_status) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     SP update status is not in progress";
+                    "status" => ?other_status,
+                );
+                return None;
+            }
+            Err(status_err) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     could not get update status from SP";
+                    &status_err,
+                );
+                return None;
+            }
+        };
+
+    let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
+    let id = Uuid::from(id);
+
+    // This error check is not load-bearing; if we try to resume with our update
+    // ID and some other update is in progress, the SP will reject it with a
+    // different error (`InvalidUpdateId`). But it's easy enough to check here
+    // too to avoid that round trip in almost all cases, and it makes the
+    // "should never happen" cases below more sensible if we know the other
+    // fields relate to this same update ID.
+    if id != update_id {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             a different update is in progress";
+            "our_update_id" => %update_id,
+            "sp_update_id" => %id,
+        );
+        return None;
+    }
+
+    // This should never happen; if the update ID matches, we and the SP should
+    // both know how long the image is.
+    if usize::try_from(total_size).expect("u32 fits in usize") != image_len {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             SP expects an incorrect image length";
+            "our_image_len" => image_len,
+            "sp_expects_len" => total_size,
+        );
+        return None;
+    }
+
+    // This should never happen; the SP should never claim to have received more
+    // bytes than the total image length.
+    if bytes_received > total_size {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             invalid update status from SP \
+             (bytes_received > total_size ?!)";
+            "bytes_received" => bytes_received,
+            "total_size" => total_size,
+        );
+        return None;
+    }
+
+    warn!(
+        log,
+        "invalid update chunk recovery: attempting to resume \
+         from offset {bytes_received}"
+    );
+    Some(bytes_received)
 }
