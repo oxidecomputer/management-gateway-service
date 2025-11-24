@@ -19,7 +19,7 @@ resolver = "2"
 
 [workspace.dependencies]
 tlvc = { git = "https://github.com/oxidecomputer/tlvc.git", branch = "main" }
-hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", branch = "main"}
+hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", rev = "2b1ef9b38d75563ea800baa3b17327eec17b1b7a" }
 slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain.git", branch = "main", features = ["derive"] }
 
 anyhow = "1.0"

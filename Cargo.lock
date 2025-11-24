@@ -1228,8 +1228,8 @@ dependencies = [
 
 [[package]]
 name = "hubtools"
-version = "0.4.6"
-source = "git+https://github.com/oxidecomputer/hubtools.git?branch=main#cec2560e9a0126e9e687d51b385a57891abc87c3"
+version = "0.4.7"
+source = "git+https://github.com/oxidecomputer/hubtools.git?rev=2b1ef9b38d75563ea800baa3b17327eec17b1b7a#2b1ef9b38d75563ea800baa3b17327eec17b1b7a"
 dependencies = [
  "digest",
  "hex",
