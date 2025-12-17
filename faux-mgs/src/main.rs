@@ -1492,7 +1492,12 @@ async fn run_command(
                 ]))
             }
         }
-        Command::ComponentActiveSlot { component, set, persist, .. } => {
+        Command::ComponentActiveSlot {
+            component,
+            set,
+            persist,
+            transient: _,
+        } => {
             if let Some(slot) = set {
                 sp.set_component_active_slot(component, slot, persist).await?;
                 if json {
