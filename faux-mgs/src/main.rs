@@ -228,25 +228,17 @@ enum Command {
     ComponentActiveSlot {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
-        #[clap(
-            short,
-            long,
-            value_name = "SLOT",
-            requires = "switch_duration",
-            help = "set the active slot"
-        )]
+        #[clap(short, long, value_name = "SLOT", help = "set the active slot")]
         set: Option<u16>,
         #[clap(
             short,
             long,
             requires = "set",
-            group = "switch_duration",
             help = "persist the active slot to non-volatile memory"
         )]
         persist: bool,
-        /// Only valid with component "rot":
         /// Prefer the specified slot on the next soft reset.
-        #[clap(short, long, requires = "set", group = "switch_duration")]
+        #[clap(short, long, requires = "set", conflicts_with = "persist")]
         transient: bool,
     },
 
@@ -1500,10 +1492,8 @@ async fn run_command(
                 ]))
             }
         }
-        Command::ComponentActiveSlot { component, set, persist, transient } => {
-            if transient && component != SpComponent::ROT {
-                bail!("The --transient (-t) flag is only allowed for the 'rot' component, not for {component}");
-            } else if let Some(slot) = set {
+        Command::ComponentActiveSlot { component, set, persist, .. } => {
+            if let Some(slot) = set {
                 sp.set_component_active_slot(component, slot, persist).await?;
                 if json {
                     Ok(Output::Json(json!({ "ack": "set", "slot": slot })))
@@ -2594,4 +2584,294 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
         .collect::<Vec<_>>();
 
     json!({ "entries": entries })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Helper to parse args, prefixing with required global args.
+    fn parse_args(args: &[&str]) -> Result<Args, clap::Error> {
+        let mut full_args = vec!["faux-mgs", "--interface", "test0"];
+        full_args.extend(args);
+        Args::try_parse_from(full_args)
+    }
+
+    /// Helper to check that parsing succeeds and extract the Command.
+    fn parse_command(args: &[&str]) -> Command {
+        parse_args(args).expect("should parse successfully").command
+    }
+
+    /// Helper to check that parsing fails.
+    fn parse_should_fail(args: &[&str]) {
+        assert!(
+            parse_args(args).is_err(),
+            "expected parsing to fail for args: {:?}",
+            args
+        );
+    }
+
+    //
+    // Tests for pilot compatibility (these were broken by #385)
+    //
+
+    /// Pilot uses `component-active-slot host-boot-flash -s {slot}` for
+    /// transient updates. This must work without requiring --persist or
+    /// --transient.
+    #[test]
+    fn pilot_host_boot_flash_set_slot_transient_default() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "0",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, Some(0));
+                assert!(
+                    !persist,
+                    "should default to non-persistent (transient)"
+                );
+                assert!(!transient, "transient flag should not be set");
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    /// Pilot uses `component-active-slot host-boot-flash -s {slot} --persist`
+    /// for persistent updates.
+    #[test]
+    fn pilot_host_boot_flash_set_slot_persistent() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "1",
+            "--persist",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, Some(1));
+                assert!(persist, "persist flag should be set");
+                assert!(!transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    /// Pilot's operate.rs uses `component-active-slot {component} --set {slot}
+    /// --persist` with various components.
+    #[test]
+    fn pilot_operate_set_slot_persistent() {
+        for component_name in ["rot", "sp", "host-boot-flash", "stage0"] {
+            let cmd = parse_command(&[
+                "component-active-slot",
+                component_name,
+                "--set",
+                "0",
+                "--persist",
+            ]);
+            match cmd {
+                Command::ComponentActiveSlot { set, persist, .. } => {
+                    assert_eq!(set, Some(0));
+                    assert!(persist);
+                }
+                _ => panic!("expected ComponentActiveSlot command"),
+            }
+        }
+    }
+
+    //
+    // Tests for getting active slot (no -s flag)
+    //
+
+    #[test]
+    fn get_active_slot_rot() {
+        let cmd = parse_command(&["component-active-slot", "rot"]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::ROT);
+                assert_eq!(set, None);
+                assert!(!persist);
+                assert!(!transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn get_active_slot_host_boot_flash() {
+        let cmd = parse_command(&["component-active-slot", "host-boot-flash"]);
+        match cmd {
+            Command::ComponentActiveSlot { component, set, .. } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, None);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn get_active_slot_sp() {
+        let cmd = parse_command(&["component-active-slot", "sp"]);
+        match cmd {
+            Command::ComponentActiveSlot { component, set, .. } => {
+                assert_eq!(component, SpComponent::SP_ITSELF);
+                assert_eq!(set, None);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    //
+    // Tests for setting active slot with --transient
+    // (was broken: only allowed for 'rot' component)
+    //
+
+    #[test]
+    fn set_slot_transient_rot() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "--transient",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::ROT);
+                assert_eq!(set, Some(0));
+                assert!(!persist);
+                assert!(transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn set_slot_transient_host_boot_flash() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "1",
+            "-t",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, Some(1));
+                assert!(!persist);
+                assert!(transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn set_slot_transient_sp() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "sp",
+            "-s",
+            "0",
+            "--transient",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot { component, transient, .. } => {
+                assert_eq!(component, SpComponent::SP_ITSELF);
+                assert!(transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    //
+    // Tests for invalid argument combinations
+    //
+
+    /// --transient requires --set
+    #[test]
+    fn transient_requires_set() {
+        parse_should_fail(&["component-active-slot", "rot", "--transient"]);
+        parse_should_fail(&["component-active-slot", "host-boot-flash", "-t"]);
+    }
+
+    /// --persist requires --set
+    #[test]
+    fn persist_requires_set() {
+        parse_should_fail(&["component-active-slot", "rot", "--persist"]);
+        parse_should_fail(&["component-active-slot", "host-boot-flash", "-p"]);
+    }
+
+    /// --persist and --transient are mutually exclusive
+    #[test]
+    fn persist_and_transient_conflict() {
+        parse_should_fail(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "--persist",
+            "--transient",
+        ]);
+        parse_should_fail(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "0",
+            "-p",
+            "-t",
+        ]);
+    }
+
+    /// Cannot specify the same flag twice
+    #[test]
+    fn no_duplicate_flags() {
+        parse_should_fail(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "-p",
+            "-p",
+        ]);
+        parse_should_fail(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "-t",
+            "-t",
+        ]);
+    }
 }
