@@ -301,6 +301,11 @@ pub trait SpHandler {
         persist: bool,
     ) -> Result<(), SpError>;
 
+    fn component_get_persistent_slot(
+        &mut self,
+        component: SpComponent,
+    ) -> Result<u16, SpError>;
+
     fn component_action(
         &mut self,
         sender: Sender<Self::VLanId>,
@@ -906,6 +911,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentSetActiveSlot { component, slot } => handler
             .component_set_active_slot(component, slot, false)
             .map(|()| SpResponse::ComponentSetActiveSlotAck),
+        MgsRequest::ComponentGetPersistentSlot(component) => handler
+            .component_get_persistent_slot(component)
+            .map(SpResponse::ComponentPersistentSlot),
         MgsRequest::ComponentSetAndPersistActiveSlot { component, slot } => {
             handler
                 .component_set_active_slot(component, slot, true)
@@ -1330,6 +1338,13 @@ mod tests {
             _slot: u16,
             _persist: bool,
         ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn component_get_persistent_slot(
+            &mut self,
+            _component: SpComponent,
+        ) -> Result<u16, SpError> {
             unimplemented!()
         }
 

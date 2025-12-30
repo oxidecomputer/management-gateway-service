@@ -115,6 +115,10 @@ M.dissect_component_set_active_slot = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse MgsRequest component_set_active_slot')
 end
 
+M.dissect_component_get_persistent_slot = function(buffer, pinfo, tree)
+    tree:add(buffer, 'TODO: parse MgsRequest component_get_persistent_slot')
+end
+
 M.dissect_serial_console_break = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse MgsRequest serial_console_break')
 end

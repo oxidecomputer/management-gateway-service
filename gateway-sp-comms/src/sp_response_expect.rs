@@ -110,6 +110,7 @@ expect_fn!(SetStartupOptionsAck);
 expect_fn!(ComponentClearStatusAck);
 expect_fn!(ComponentActiveSlot(slot) -> u16);
 expect_fn!(ComponentSetActiveSlotAck);
+expect_fn!(ComponentPersistentSlot(slot) -> u16);
 expect_fn!(ComponentSetAndPersistActiveSlotAck);
 expect_fn!(SendHostNmiAck);
 expect_fn!(SetIpccKeyLookupValueAck);
