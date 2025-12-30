@@ -614,6 +614,16 @@ impl SingleSp {
         })
     }
 
+    /// Get the default slot of a particular component.
+    pub async fn component_persistent_slot(
+        &self,
+        component: SpComponent,
+    ) -> Result<u16> {
+        self.rpc(MgsRequest::ComponentGetPersistentSlot(component))
+            .await
+            .and_then(expect_component_persistent_slot)
+    }
+
     /// Request that the status of a component be cleared (e.g., resetting
     /// counters).
     pub async fn component_clear_status(

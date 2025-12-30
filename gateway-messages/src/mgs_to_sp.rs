@@ -96,7 +96,7 @@ pub enum MgsRequest {
     /// Clear any clearable state (e.g., event counters) on a component.
     ComponentClearStatus(SpComponent),
     /// For components with multiple slots (e.g., host boot flash), get the
-    /// currently-active slot.
+    /// currently-active slot. See also `ComponentGetPersistentSlot`.
     ComponentGetActiveSlot(SpComponent),
     /// For components with multiple slots (e.g., host boot flash), set the
     /// currently-active slot.
@@ -236,6 +236,11 @@ pub enum MgsRequest {
     GetHostFlashHash {
         slot: u16,
     },
+
+    /// For components with multiple slots (e.g., host boot flash), get the
+    /// current default slot as persisted in non-volatile memory. This may be
+    /// different than the current active slot (see `ComponentGetActiveSlot`).
+    ComponentGetPersistentSlot(SpComponent),
 }
 
 #[derive(
