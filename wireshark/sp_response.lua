@@ -116,6 +116,10 @@ M.dissect_component_set_active_slot_ack = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse SpResponse component_set_active_slot_ack')
 end
 
+M.dissect_component_persistent_slot = function(buffer, pinfo, tree)
+    tree:add(buffer, 'TODO: parse SpResponse component_persistent_slot')
+end
+
 M.dissect_serial_console_break_ack = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse SpResponse serial_console_break_ack')
 end
