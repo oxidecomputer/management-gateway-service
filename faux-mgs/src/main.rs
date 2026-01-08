@@ -1590,8 +1590,8 @@ async fn run_command(
 
             /// Helper `struct` to pretty-print component details
             ///
-            /// This normally delegates to `Debug`, but prints `LastPostCode` as
-            /// a hex value for convenience.
+            /// This normally delegates to `Debug`, but prints `LastPostCode`
+            /// and `Pcie` as a hex value for convenience.
             struct ComponentDetailPrinter(gateway_messages::ComponentDetails);
             impl std::fmt::Display for ComponentDetailPrinter {
                 fn fmt(
@@ -1602,6 +1602,15 @@ async fn run_command(
                     match &self.0 {
                         ComponentDetails::LastPostCode(p) => {
                             write!(f, "LastPostCode({:#x})", p.0)
+                        }
+                        ComponentDetails::Pcie(p) => {
+                            write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset, 
+
+                                match p.reg_result {
+                                    Ok(s) => format!("Ok({:#x})", s),
+                                    Err(e) => format!("Err({:#x})", e),
+                                }
+                            )
                         }
                         d => write!(f, "{d:?}"),
                     }
@@ -2565,6 +2574,7 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
         Measurement(Measurement),
         LastPostCode(u32),
         GpioToggleCount { edge_count: u32, cycles_since_last_edge: u32 },
+        Pcie { bar: u32, offset: u32, reg_result: Result<u32, u32> },
     }
 
     #[derive(serde::Serialize)]
@@ -2595,6 +2605,13 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
                 ComponentDetails::GpioToggleCount {
                     edge_count: n.edge_count,
                     cycles_since_last_edge: n.cycles_since_last_edge,
+                }
+            }
+            gateway_messages::ComponentDetails::Pcie(p) => {
+                ComponentDetails::Pcie {
+                    bar: p.bar,
+                    offset: p.offset,
+                    reg_result: p.reg_result,
                 }
             }
         })

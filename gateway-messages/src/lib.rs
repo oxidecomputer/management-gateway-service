@@ -389,6 +389,9 @@ impl SpComponent {
     /// The sidecar management network switch.
     pub const MONORAIL: Self = Self { id: *b"monorail\0\0\0\0\0\0\0\0" };
 
+    /// The Tofino on a sidecar SP
+    pub const TOFINO: Self = Self { id: *b"tofino\0\0\0\0\0\0\0\0\0\0" };
+
     // The RoT attached to the SP via SPI
     pub const ROT: Self = Self { id: *b"rot\0\0\0\0\0\0\0\0\0\0\0\0\0" };
 
