@@ -26,11 +26,13 @@ pub mod host_cpu_details;
 pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
+pub mod tofino;
 
 pub use host_cpu_details::GpioToggleCount;
 pub use host_cpu_details::LastPostCode;
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
+pub use tofino::PcieRegisterRead;
 
 use ignition::IgnitionError;
 use measurement::MeasurementHeader;
@@ -724,6 +726,7 @@ pub enum ComponentDetails {
     Measurement(Measurement),
     LastPostCode(LastPostCode),
     GpioToggleCount(GpioToggleCount),
+    Pcie(PcieRegisterRead),
 }
 
 impl ComponentDetails {
@@ -733,6 +736,7 @@ impl ComponentDetails {
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
             ComponentDetails::LastPostCode(_) => LastPostCode::TAG,
             ComponentDetails::GpioToggleCount(_) => GpioToggleCount::TAG,
+            ComponentDetails::Pcie(_) => PcieRegisterRead::TAG,
         }
     }
 
@@ -760,6 +764,7 @@ impl ComponentDetails {
             ComponentDetails::GpioToggleCount(code) => {
                 hubpack::serialize(buf, code)
             }
+            ComponentDetails::Pcie(p) => hubpack::serialize(buf, p),
         }
     }
 }

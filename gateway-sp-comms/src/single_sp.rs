@@ -1588,6 +1588,7 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         use gateway_messages::measurement::MeasurementHeader;
         use gateway_messages::monorail_port_status::PortStatus;
         use gateway_messages::monorail_port_status::PortStatusError;
+        use gateway_messages::tofino::PcieRegisterRead;
 
         match tag {
             PortStatus::TAG => {
@@ -1667,6 +1668,23 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                 }
 
                 Ok(Some(ComponentDetails::GpioToggleCount(result)))
+            }
+            PcieRegisterRead::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<PcieRegisterRead>(value)
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in PCIe TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::Pcie(result)))
             }
             _ => {
                 info!(
