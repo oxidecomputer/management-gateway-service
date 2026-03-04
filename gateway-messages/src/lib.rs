@@ -383,6 +383,13 @@ impl SpComponent {
     /// The `sp5` host CPU.
     pub const SP5_HOST_CPU: Self = Self { id: *b"sp5-host-cpu\0\0\0\0" };
 
+    /// The FPGA's buffer of POST codes emitted by the SP5 CPU
+    ///
+    /// This is a separate component from [`SP5_HOST_CPU`] because it contains a
+    /// dynamic number of component details, based on how many POST codes have
+    /// been recorded by the FPGA.
+    pub const SP5_POST_CODES: Self = Self { id: *b"sp5-post-codes\0\0" };
+
     /// The host CPU boot flash.
     pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
 
