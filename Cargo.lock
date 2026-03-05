@@ -3411,6 +3411,7 @@ checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
 [[package]]
 name = "turin-post-decoder"
 version = "0.4.0"
+source = "git+https://github.com/oxidecomputer/turin-post-decoder?branch=master#2ced4872bdedf2a21485b1406565f6d7f97c331b"
 
 [[package]]
 name = "typenum"

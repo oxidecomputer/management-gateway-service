@@ -1603,7 +1603,7 @@ async fn run_command(
                         ComponentDetails::LastPostCode(p) => {
                             let decoded = turin_post_decoder::decode(p.0);
                             let detail = decoded.lines().join("\n    ");
-                            write!(f, "LastPostCode({:#x})\n    {detail}", p.0,)
+                            write!(f, "LastPostCode({:#x})\n    {detail}", p.0)
                         }
                         ComponentDetails::Pcie(p) => {
                             write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset,
