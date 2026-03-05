@@ -1590,8 +1590,8 @@ async fn run_command(
 
             /// Helper `struct` to pretty-print component details
             ///
-            /// This normally delegates to `Debug`, but prints `LastPostCode`
-            /// and `Pcie` as a hex value for convenience.
+            /// This normally delegates to `Debug`, but prints `LastPostCode`,
+            /// `PostCode`, and `Pcie` as a hex value for convenience.
             struct ComponentDetailPrinter(gateway_messages::ComponentDetails);
             impl std::fmt::Display for ComponentDetailPrinter {
                 fn fmt(
@@ -1604,6 +1604,9 @@ async fn run_command(
                             let decoded = turin_post_decoder::decode(p.0);
                             let detail = decoded.lines().join("\n    ");
                             write!(f, "LastPostCode:\n    {detail}")
+                        }
+                        ComponentDetails::PostCode(p) => {
+                            write!(f, "PostCode({:#x})", p.0)
                         }
                         ComponentDetails::Pcie(p) => {
                             write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset,
@@ -2575,6 +2578,7 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
         LastPostCode(u32),
+        PostCode(u32),
         GpioToggleCount { edge_count: u32, cycles_since_last_edge: u32 },
         Pcie { bar: u32, offset: u32, reg_result: Result<u32, u32> },
     }
@@ -2602,6 +2606,9 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
             }
             gateway_messages::ComponentDetails::LastPostCode(code) => {
                 ComponentDetails::LastPostCode(code.0)
+            }
+            gateway_messages::ComponentDetails::PostCode(code) => {
+                ComponentDetails::PostCode(code.0)
             }
             gateway_messages::ComponentDetails::GpioToggleCount(n) => {
                 ComponentDetails::GpioToggleCount {

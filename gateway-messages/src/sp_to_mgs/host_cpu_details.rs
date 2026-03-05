@@ -26,3 +26,11 @@ pub struct LastPostCode(pub u32);
 impl LastPostCode {
     pub const TAG: tlv::Tag = tlv::Tag(*b"POST");
 }
+
+/// A POST code from the sequencer FPGA ringbuffer
+#[derive(Copy, Clone, Debug, Serialize, Deserialize, SerializedSize)]
+pub struct PostCode(pub u32);
+
+impl PostCode {
+    pub const TAG: tlv::Tag = tlv::Tag(*b"PSTB");
+}
