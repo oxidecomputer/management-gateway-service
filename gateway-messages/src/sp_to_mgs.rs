@@ -30,6 +30,7 @@ pub mod tofino;
 
 pub use host_cpu_details::GpioToggleCount;
 pub use host_cpu_details::LastPostCode;
+pub use host_cpu_details::PostCode;
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
 pub use tofino::PcieRegisterRead;
@@ -725,6 +726,7 @@ pub enum ComponentDetails {
     PortStatus(Result<PortStatus, PortStatusError>),
     Measurement(Measurement),
     LastPostCode(LastPostCode),
+    PostCode(PostCode),
     GpioToggleCount(GpioToggleCount),
     Pcie(PcieRegisterRead),
 }
@@ -735,6 +737,7 @@ impl ComponentDetails {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
             ComponentDetails::LastPostCode(_) => LastPostCode::TAG,
+            ComponentDetails::PostCode(_) => PostCode::TAG,
             ComponentDetails::GpioToggleCount(_) => GpioToggleCount::TAG,
             ComponentDetails::Pcie(_) => PcieRegisterRead::TAG,
         }
@@ -761,6 +764,7 @@ impl ComponentDetails {
             ComponentDetails::LastPostCode(code) => {
                 hubpack::serialize(buf, code)
             }
+            ComponentDetails::PostCode(code) => hubpack::serialize(buf, code),
             ComponentDetails::GpioToggleCount(code) => {
                 hubpack::serialize(buf, code)
             }
