@@ -791,6 +791,7 @@ dependencies = [
  "tokio",
  "tokio-stream",
  "tokio-util",
+ "turin-post-decoder",
  "uuid",
  "zerocopy 0.8.27",
 ]
@@ -3406,6 +3407,10 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "turin-post-decoder"
+version = "0.4.0"
 
 [[package]]
 name = "typenum"

@@ -1601,10 +1601,12 @@ async fn run_command(
                     use gateway_messages::ComponentDetails;
                     match &self.0 {
                         ComponentDetails::LastPostCode(p) => {
-                            write!(f, "LastPostCode({:#x})", p.0)
+                            let decoded = turin_post_decoder::decode(p.0);
+                            let detail = decoded.lines().join("\n    ");
+                            write!(f, "LastPostCode({:#x})\n    {detail}", p.0,)
                         }
                         ComponentDetails::Pcie(p) => {
-                            write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset, 
+                            write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset,
 
                                 match p.reg_result {
                                     Ok(s) => format!("Ok({:#x})", s),
@@ -2572,7 +2574,7 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     enum ComponentDetails {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
-        LastPostCode(u32),
+        LastPostCode { code: u32, decoded: Vec<String> },
         GpioToggleCount { edge_count: u32, cycles_since_last_edge: u32 },
         Pcie { bar: u32, offset: u32, reg_result: Result<u32, u32> },
     }
@@ -2599,7 +2601,10 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
                 })
             }
             gateway_messages::ComponentDetails::LastPostCode(code) => {
-                ComponentDetails::LastPostCode(code.0)
+                ComponentDetails::LastPostCode {
+                    code: code.0,
+                    decoded: turin_post_decoder::decode(code.0).lines(),
+                }
             }
             gateway_messages::ComponentDetails::GpioToggleCount(n) => {
                 ComponentDetails::GpioToggleCount {
