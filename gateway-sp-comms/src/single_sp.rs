@@ -110,11 +110,10 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 // (getting back multiple triples per call, hopefully, but that's fully in the
 // SP's control). The number of triples is a u32; if an SP claimed to have an
 // absurdly large number, we'd be stuck fetching that many (and building up a
-// Vec of them in memory). We set a "we never expect this many devices" cap
-// here; 1024 is over 10x our current gimlet rev-c device inventory count, so
-// this should be plenty of buffer. If it needs to increase in the future, that
-// will require an MGS update.
-const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
+// Vec of them in memory). We set a "we never expect this many items" cap here;
+// our current winner is the dynamic POST code buffer on Cosmo, which can return
+// up to 4096 POST codes.
+const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 16384;
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
