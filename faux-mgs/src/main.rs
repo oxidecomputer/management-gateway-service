@@ -1601,10 +1601,12 @@ async fn run_command(
                     use gateway_messages::ComponentDetails;
                     match &self.0 {
                         ComponentDetails::LastPostCode(p) => {
-                            write!(f, "LastPostCode({:#x})", p.0)
+                            let decoded = turin_post_decoder::decode(p.0);
+                            let detail = decoded.lines().join("\n    ");
+                            write!(f, "LastPostCode:\n    {detail}")
                         }
                         ComponentDetails::Pcie(p) => {
-                            write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset, 
+                            write!(f, "Pcie(PcieRegisterRead {{ bar: {:#x} offset: {:#x} reg_result: {}) }})", p.bar, p.offset,
 
                                 match p.reg_result {
                                     Ok(s) => format!("Ok({:#x})", s),
