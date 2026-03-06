@@ -68,4 +68,9 @@ pub enum MeasurementKind {
     InputVoltage,
     Speed,
     CpuTctl,
+    /// PWM command or reading, normalized to the 0.0-1.0 range
+    NormalizedPwm,
+    InputPower,
+    OutputEnergy,
+    InputEnergy,
 }
