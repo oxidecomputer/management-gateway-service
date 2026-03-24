@@ -21,7 +21,7 @@ use gateway_messages::measurement::MeasurementKind;
 #[test]
 fn measurement_kinds() {
     for (kind, serialized) in [
-        (MeasurementKind::NormalizedPwm, &[8]),
+        (MeasurementKind::Pwm, &[8]),
         (MeasurementKind::InputPower, &[9]),
         (MeasurementKind::OutputEnergy, &[10]),
         (MeasurementKind::InputEnergy, &[11]),
