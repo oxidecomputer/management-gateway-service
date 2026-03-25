@@ -60,12 +60,28 @@ pub enum MeasurementError {
     Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub enum MeasurementKind {
+    /// Temperature (°C)
     Temperature,
+    /// Output power (watts)
     Power,
+    /// Output current (amps)
     Current,
+    /// Output voltage (volts)
     Voltage,
+    /// Input current (current)
     InputCurrent,
+    /// Input voltage (volts)
     InputVoltage,
+    /// Fan speed (RPM)
     Speed,
+    /// CPU temperature (fake AMD units)
     CpuTctl,
+    /// PWM command or reading (normalized to the 0.0-1.0 range)
+    Pwm,
+    /// Input power (watts)
+    InputPower,
+    /// Sampled output energy (joules)
+    OutputEnergy,
+    /// Sampled input energy (joules)
+    InputEnergy,
 }

@@ -16,19 +16,16 @@
 //! tests can be removed as we will stop supporting $VERSION.
 
 use super::assert_serialized;
-use gateway_messages::ignition::SystemType;
+use gateway_messages::measurement::MeasurementKind;
 
 #[test]
-fn cosmo_ignition() {
-    // We technically only need `Cosmo` but test everything else
-    // here again for good measure
-    for (system_type, system_type_val) in [
-        (SystemType::Gimlet, &[0_u8] as &[_]),
-        (SystemType::Sidecar, &[1]),
-        (SystemType::Psc, &[2]),
-        (SystemType::Unknown(0xa0a1), &[3, 0xa1, 0xa0]),
-        (SystemType::Cosmo, &[4]),
+fn measurement_kinds() {
+    for (kind, serialized) in [
+        (MeasurementKind::Pwm, &[8]),
+        (MeasurementKind::InputPower, &[9]),
+        (MeasurementKind::OutputEnergy, &[10]),
+        (MeasurementKind::InputEnergy, &[11]),
     ] {
-        assert_serialized(system_type_val, &system_type);
+        assert_serialized(serialized, &kind);
     }
 }
