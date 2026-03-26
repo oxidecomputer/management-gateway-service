@@ -16,6 +16,8 @@ use futures::stream::FuturesOrdered;
 use futures::FutureExt;
 use futures::StreamExt;
 use gateway_messages::ignition::TransceiverSelect;
+use gateway_messages::ApobComponentAction;
+use gateway_messages::ApobComponentActionResponse;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
 use gateway_messages::EcdsaSha2Nistp256Challenge;
@@ -453,6 +455,12 @@ enum Command {
         cmd: MonorailCommand,
     },
 
+    /// Perform an action on the APOB
+    Apob {
+        #[clap(subcommand)]
+        cmd: ApobCommand,
+    },
+
     /// List and read per-task crash dumps
     Dump {
         #[clap(subcommand)]
@@ -574,6 +582,12 @@ enum MonorailCommand {
 
     /// Lock the technician port
     Lock,
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ApobCommand {
+    /// Clears the APOB in flash
+    Clear,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -1924,6 +1938,37 @@ async fn run_command(
                 Ok(Output::Lines(vec!["done".to_string()]))
             }
         }
+        Command::Apob { cmd } => match cmd {
+            ApobCommand::Clear => {
+                let r = sp
+                    .component_action_with_response(
+                        SpComponent::HOST_CPU_BOOT_APOB,
+                        ComponentAction::Apob(ApobComponentAction::Clear),
+                    )
+                    .await?;
+                let ComponentActionResponse::Apob(r) = r else {
+                    bail!("unexpected response: {r:?}");
+                };
+                match r {
+                    ApobComponentActionResponse::Success => {
+                        if json {
+                            Ok(Output::Json(json!({ "ok": "apob" })))
+                        } else {
+                            Ok(Output::Lines(vec!["done".to_string()]))
+                        }
+                    }
+                    ApobComponentActionResponse::NotMuxedToSp => {
+                        bail!("host flash was not muxed to the SP");
+                    }
+                    ApobComponentActionResponse::NotImplemented => {
+                        bail!("APOB clear is not implemented for this target");
+                    }
+                    ApobComponentActionResponse::InvalidState => {
+                        bail!("APOB is in an invalid state");
+                    }
+                }
+            }
+        },
         Command::ReadComponentCaboose { component, slot, key } => {
             let slot = match (component, slot.as_deref()) {
                 (SpComponent::SP_ITSELF, Some("active" | "0") | None) => 0,

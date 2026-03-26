@@ -333,6 +333,7 @@ pub struct ComponentUpdatePrepare {
 pub enum ComponentAction {
     Led(LedComponentAction),
     Monorail(MonorailComponentAction),
+    Apob(ApobComponentAction),
 }
 
 /// Actions for LED components, i.e. components with `IS_LED` set
@@ -366,6 +367,15 @@ pub enum MonorailComponentAction {
 
     /// Relock the management network
     Lock,
+}
+
+/// Actions for the APOB stored in flash
+#[derive(
+    Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
+)]
+pub enum ApobComponentAction {
+    /// Clear the APOB so that it can't be used for future boots
+    Clear,
 }
 
 /// Challenge provided to the SP when someone wants to unlock it
