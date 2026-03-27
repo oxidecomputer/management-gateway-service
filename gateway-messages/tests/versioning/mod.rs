@@ -30,6 +30,7 @@ mod v21;
 mod v22;
 mod v23;
 mod v24;
+mod v25;
 
 pub fn assert_serialized<T: Serialize + SerializedSize + std::fmt::Debug>(
     expected: &[u8],

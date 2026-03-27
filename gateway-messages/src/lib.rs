@@ -69,7 +69,7 @@ pub const HF_PAGE_SIZE: usize = 256;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 24;
+    pub const CURRENT: u32 = 25;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;
@@ -396,6 +396,9 @@ impl SpComponent {
 
     /// The host CPU boot flash.
     pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
+
+    /// The AMD PSP Output Blob for the host
+    pub const HOST_CPU_BOOT_APOB: Self = Self { id: *b"host-boot-apob\0\0" };
 
     /// The sidecar management network switch.
     pub const MONORAIL: Self = Self { id: *b"monorail\0\0\0\0\0\0\0\0" };

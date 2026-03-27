@@ -779,6 +779,7 @@ impl ComponentDetails {
 pub enum ComponentActionResponse {
     Ack,
     Monorail(MonorailComponentActionResponse),
+    Apob(ApobComponentActionResponse),
 }
 
 #[derive(
@@ -842,6 +843,16 @@ pub struct DumpSegment {
 )]
 pub enum MonorailComponentActionResponse {
     RequestChallenge(UnlockChallenge),
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum ApobComponentActionResponse {
+    Success,
+    NotMuxedToSp,
+    NotImplemented,
+    InvalidState,
 }
 
 /// Header for the description of a single device.
