@@ -23,11 +23,11 @@ use gateway_messages::UpdateInProgressStatus;
 use gateway_messages::UpdateStatus;
 use hubtools::Error as HubtoolsError;
 use hubtools::RawHubrisArchive;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::warn;
-use slog::Logger;
 use std::convert::TryInto;
 use std::io::Cursor;
 use std::io::Read;
@@ -104,13 +104,13 @@ pub(super) async fn start_sp_update(
     // here and log a warning if it is not. We should never see this, but if we
     // do it's likely something is about to go wrong, and it'd be nice to have a
     // breadcrumb.
-    if let Ok(final_bin) = archive.extract_file("img/final.bin") {
-        if sp_image != final_bin {
-            warn!(
-                log,
-                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
-            );
-        }
+    if let Ok(final_bin) = archive.extract_file("img/final.bin")
+        && sp_image != final_bin
+    {
+        warn!(
+            log,
+            "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+        );
     }
 
     // Extract the board from the image's caboose and check that this matches
@@ -338,7 +338,10 @@ fn bootleby_from_old_style_archive(
                             return Ok(rot_image);
                         }
                         Err(err) => {
-                            error!(log, "cannot access bootleby.bin from zip file index {i}: {err}");
+                            error!(
+                                log,
+                                "cannot access bootleby.bin from zip file index {i}: {err}"
+                            );
                             return Err(UpdateError::InvalidArchive);
                         }
                     }
@@ -378,13 +381,12 @@ pub(super) async fn start_rot_update(
                     // is about to go wrong, and it'd be nice to have a
                     // breadcrumb.
                     if let Ok(final_bin) = archive.extract_file("img/final.bin")
+                        && rot_image != final_bin
                     {
-                        if rot_image != final_bin {
-                            warn!(
-                                log,
-                                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
-                            );
-                        }
+                        warn!(
+                            log,
+                            "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+                        );
                     }
 
                     // Preflight check 1: Does the image name of this archive
@@ -396,7 +398,7 @@ pub(super) async fn start_rot_update(
                                 return Err(UpdateError::RotSlotMismatch {
                                     slot,
                                     image_name,
-                                })
+                                });
                             }
                         },
                         // At the time of this writing `image-name` is a recent

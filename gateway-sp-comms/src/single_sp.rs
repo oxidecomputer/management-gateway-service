@@ -6,6 +6,9 @@
 
 //! Interface for communicating with a single SP.
 
+use crate::SharedSocket;
+use crate::SwitchPortConfig;
+use crate::VersionedSpState;
 use crate::ereport;
 use crate::error::CommunicationError;
 use crate::error::EreportError;
@@ -14,16 +17,8 @@ use crate::shared_socket::SingleSpHandle;
 use crate::shared_socket::SingleSpHandleError;
 use crate::shared_socket::SingleSpMessage;
 use crate::sp_response_expect::*;
-use crate::SharedSocket;
-use crate::SwitchPortConfig;
-use crate::VersionedSpState;
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
-use gateway_messages::ignition::LinkEvents;
-use gateway_messages::ignition::TransceiverSelect;
-use gateway_messages::tlv;
-use gateway_messages::version;
-use gateway_messages::version::WATCHDOG_VERSION;
 use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
@@ -35,15 +30,18 @@ use gateway_messages::DevicePresence;
 use gateway_messages::DumpCompression;
 use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
+use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
+use gateway_messages::MIN_TRAILING_DATA_LEN;
 use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::MonorailError;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
+use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotRequest;
 use gateway_messages::SensorReading;
@@ -59,16 +57,18 @@ use gateway_messages::SprotProtocolError;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
-use gateway_messages::HF_PAGE_SIZE;
-use gateway_messages::MIN_TRAILING_DATA_LEN;
-use gateway_messages::ROT_PAGE_SIZE;
+use gateway_messages::ignition::LinkEvents;
+use gateway_messages::ignition::TransceiverSelect;
+use gateway_messages::tlv;
+use gateway_messages::version;
+use gateway_messages::version::WATCHDOG_VERSION;
 use serde::Serialize;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::trace;
 use slog::warn;
-use slog::Logger;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Seek;
@@ -701,8 +701,7 @@ impl SingleSp {
                 // Are we expecting this chunk?
                 if entries.len() >= total {
                     return Err(CommunicationError::TlvPagination {
-                        reason:
-                            "SP returned more entries than its reported total",
+                        reason: "SP returned more entries than its reported total",
                     });
                 }
 
@@ -2663,7 +2662,7 @@ impl<T: InnerSocket<SingleSpMessage>> Inner<T> {
                         peer,
                         response,
                         sp_trailing_data.to_vec(),
-                    )))
+                    )));
                 }
             }
         }
@@ -2849,8 +2848,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rpc_call_one_attempt_times_out_while_receiving_host_request_updates(
-    ) {
+    async fn rpc_call_one_attempt_times_out_while_receiving_host_request_updates()
+     {
         let (sp_addr_tx, _sp_addr_rx) = watch::channel(None);
         let (_cmds_tx, cmds_rx) = mpsc::channel(128);
         let (socket, socket_tx) =

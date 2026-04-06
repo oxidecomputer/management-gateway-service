@@ -4,18 +4,17 @@
 
 // Copyright 2022 Oxide Computer Company
 
-use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::bail;
 use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
-use futures::stream::FuturesOrdered;
 use futures::FutureExt;
 use futures::StreamExt;
-use gateway_messages::ignition::TransceiverSelect;
+use futures::stream::FuturesOrdered;
 use gateway_messages::ApobComponentAction;
 use gateway_messages::ApobComponentActionResponse;
 use gateway_messages::ComponentAction;
@@ -26,6 +25,7 @@ use gateway_messages::LedComponentAction;
 use gateway_messages::MonorailComponentAction;
 use gateway_messages::MonorailComponentActionResponse;
 use gateway_messages::PowerState;
+use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
@@ -33,27 +33,27 @@ use gateway_messages::UnlockChallenge;
 use gateway_messages::UnlockResponse;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
-use gateway_messages::ROT_PAGE_SIZE;
-use gateway_sp_comms::ereport;
-use gateway_sp_comms::shared_socket;
+use gateway_messages::ignition::TransceiverSelect;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
+use gateway_sp_comms::MGS_PORT;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SpComponentDetails;
 use gateway_sp_comms::SpRetryConfig;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
-use gateway_sp_comms::MGS_PORT;
+use gateway_sp_comms::ereport;
+use gateway_sp_comms::shared_socket;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use serde_json::json;
+use slog::Drain;
+use slog::Level;
+use slog::Logger;
 use slog::debug;
 use slog::info;
 use slog::o;
 use slog::warn;
-use slog::Drain;
-use slog::Level;
-use slog::Logger;
 use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
 use std::fs;
@@ -158,11 +158,7 @@ fn level_from_str(s: &str) -> Result<Level> {
 struct JsonPretty;
 
 fn json_pretty_from_str(s: &str) -> Result<JsonPretty> {
-    if s == "pretty" {
-        Ok(JsonPretty)
-    } else {
-        bail!("expected \"pretty\"")
-    }
+    if s == "pretty" { Ok(JsonPretty) } else { bail!("expected \"pretty\"") }
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -919,7 +915,9 @@ impl IgnitionLinkEventsTransceiverSelect {
             "target-link0" => Ok(Self(Some(TransceiverSelect::TargetLink0))),
             "target-link1" => Ok(Self(Some(TransceiverSelect::TargetLink1))),
             _ => {
-                bail!("transceiver selection must be one of 'all', 'controller', 'target-link0', 'target-link1'")
+                bail!(
+                    "transceiver selection must be one of 'all', 'controller', 'target-link0', 'target-link1'"
+                )
             }
         }
     }
@@ -1003,7 +1001,9 @@ fn build_requested_interfaces(patterns: Vec<String>) -> Result<Vec<String>> {
         }
         if requested_ifaces.len() == prev_count {
             if matched_existing {
-                bail!("`--interface {pattern}` did not match any interfaces not already covered by previous `--interface` arguments");
+                bail!(
+                    "`--interface {pattern}` did not match any interfaces not already covered by previous `--interface` arguments"
+                );
             } else {
                 bail!("`--interface {pattern}` did not match any interfaces");
             }
@@ -1178,7 +1178,9 @@ async fn main() -> Result<()> {
         }
         Command::Update { allow_multiple_update, .. } => {
             if num_sps > 1 && !allow_multiple_update {
-                bail!("Did you mean to attempt to update multiple SPs? If so, add `--allow-multiple-updates`.");
+                bail!(
+                    "Did you mean to attempt to update multiple SPs? If so, add `--allow-multiple-updates`."
+                );
             }
         }
 
@@ -1506,7 +1508,7 @@ async fn run_command(
                 Ok(Output::Json(json!({ "ack": "cleared" })))
             } else {
                 Ok(Output::Lines(vec![
-                    "ignition link events cleared".to_string()
+                    "ignition link events cleared".to_string(),
                 ]))
             }
         }
@@ -1684,9 +1686,9 @@ async fn run_command(
             if json {
                 Ok(Output::Json(json!({ "ack": "detached" })))
             } else {
-                Ok(Output::Lines(
-                    vec!["SP serial console detached".to_string()],
-                ))
+                Ok(Output::Lines(vec![
+                    "SP serial console detached".to_string(),
+                ]))
             }
         }
         Command::Update { component, slot, image, .. } => {
@@ -1737,7 +1739,9 @@ async fn run_command(
                     ..
                 } => {
                     let id = Uuid::from(id);
-                    format!("update {id} aux flash scan complete (found_match={found_match})")
+                    format!(
+                        "update {id} aux flash scan complete (found_match={found_match})"
+                    )
                 }
                 UpdateStatus::InProgress(sub_status) => {
                     let id = Uuid::from(sub_status.id);
@@ -2265,7 +2269,9 @@ async fn monorail_unlock(
             } else if let Some(socket) = ssh_sock {
                 unlock_ssh(log, socket, pub_key, ecdsa_challenge)?
             } else {
-                bail!("don't know how to unlock tech port without ssh or permslip")
+                bail!(
+                    "don't know how to unlock tech port without ssh or permslip"
+                )
             }
         }
     };

@@ -4,10 +4,6 @@
 
 //! Behavior implemented by both real and simulated SPs.
 
-use crate::ignition;
-use crate::ignition::LinkEvents;
-use crate::tlv;
-use crate::version;
 use crate::BadRequestReason;
 use crate::ComponentAction;
 use crate::ComponentActionResponse;
@@ -21,6 +17,7 @@ use crate::DumpRequest;
 use crate::DumpResponse;
 use crate::DumpSegment;
 use crate::DumpTask;
+use crate::HF_PAGE_SIZE;
 use crate::Header;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
@@ -31,6 +28,7 @@ use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
 use crate::PowerStateTransition;
+use crate::ROT_PAGE_SIZE;
 use crate::RotBootInfo;
 use crate::RotRequest;
 use crate::RotResponse;
@@ -49,8 +47,10 @@ use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
-use crate::HF_PAGE_SIZE;
-use crate::ROT_PAGE_SIZE;
+use crate::ignition;
+use crate::ignition::LinkEvents;
+use crate::tlv;
+use crate::version;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
 
@@ -373,7 +373,7 @@ pub trait SpHandler {
     ) -> Result<RotResponse, SpError>;
 
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
-        -> Result<usize, SpError>;
+    -> Result<usize, SpError>;
 
     // On success, this method will return unless the reset
     // affects the SP_ITSELF.

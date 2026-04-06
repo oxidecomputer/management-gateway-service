@@ -17,7 +17,7 @@ use serde::Serialize;
 use static_assertions::const_assert;
 
 pub use hubpack::error::Error as HubpackError;
-pub use hubpack::{deserialize, serialize, SerializedSize};
+pub use hubpack::{SerializedSize, deserialize, serialize};
 
 // Re-export all public types in our submodules for messages in either
 // direction.
@@ -300,10 +300,10 @@ impl Serialize for SpComponent {
     {
         // If we're serializing to a human-readable form (e.g., `faux-mgs --json
         // output`), serialize ourself as a string....
-        if serializer.is_human_readable() {
-            if let Some(s) = self.as_str() {
-                return serializer.serialize_str(s);
-            }
+        if serializer.is_human_readable()
+            && let Some(s) = self.as_str()
+        {
+            return serializer.serialize_str(s);
         }
 
         // ... otherwise, serialize our id array directly, which matches what

@@ -4,7 +4,6 @@
 
 //! Types for messages sent from MGS to SPs.
 
-use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::RotRequest;
@@ -13,6 +12,7 @@ use crate::SensorRequest;
 use crate::SpComponent;
 use crate::SwitchDuration;
 use crate::UpdateId;
+use crate::ignition::TransceiverSelect;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;

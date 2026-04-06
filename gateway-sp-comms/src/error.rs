@@ -4,8 +4,8 @@
 
 // Copyright 2022 Oxide Computer Company
 
-use gateway_messages::tlv;
 use gateway_messages::SpError;
+use gateway_messages::tlv;
 use slog_error_chain::SlogInlineError;
 use std::io;
 use std::net::Ipv6Addr;
@@ -100,7 +100,9 @@ pub enum UpdateError {
     CabooseError(#[from] hubtools::CabooseError),
     #[error("board mismatch: SP is {sp} but archive is for {archive}")]
     BoardMismatch { sp: String, archive: String },
-    #[error("RoT slot mismatch: target slot {slot} cannot be written with {image_name:?} image")]
+    #[error(
+        "RoT slot mismatch: target slot {slot} cannot be written with {image_name:?} image"
+    )]
     RotSlotMismatch { slot: u16, image_name: String },
     #[error("error reading aux flash image: {0:?}")]
     TlvcError(tlvc::TlvcReadError<std::convert::Infallible>),

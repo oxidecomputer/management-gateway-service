@@ -4,7 +4,6 @@
 
 //! Types for messages sent from SPs to MGS.
 
-use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::RotResponse;
@@ -14,6 +13,7 @@ use crate::SpComponent;
 use crate::StartupOptions;
 use crate::UnlockChallenge;
 use crate::UpdateId;
+use crate::tlv;
 use bitflags::bitflags;
 use core::fmt;
 use hubpack::SerializedSize;
@@ -1203,7 +1203,10 @@ impl fmt::Display for SpError {
                 write!(f, "power state error (code {}))", code)
             }
             Self::ResetTriggerWithoutPrepare => {
-                write!(f, "sys reset trigger requested without a preceding sys reset prepare")
+                write!(
+                    f,
+                    "sys reset trigger requested without a preceding sys reset prepare"
+                )
             }
             Self::InvalidSlotForComponent => {
                 write!(f, "invalid slot number for component")
@@ -1245,10 +1248,16 @@ impl fmt::Display for SpError {
                 write!(f, "could not find the board in the image caboose")
             }
             Self::ImageBoardMismatch => {
-                write!(f, "the image has a board that doesn't match the current image")
+                write!(
+                    f,
+                    "the image has a board that doesn't match the current image"
+                )
             }
             Self::ResetComponentTriggerWithoutPrepare => {
-                write!(f, "reset component trigger requested without a preceding reset component prepare")
+                write!(
+                    f,
+                    "reset component trigger requested without a preceding reset component prepare"
+                )
             }
             Self::SwitchDefaultImageError(code) => {
                 write!(f, "switch default image failed with code {code}")
