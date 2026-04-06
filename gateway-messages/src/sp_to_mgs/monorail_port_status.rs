@@ -68,6 +68,18 @@ pub enum Speed {
     Speed10G,
 }
 
+#[cfg(feature = "std")]
+impl std::fmt::Display for Speed {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let s = match self {
+            Speed::Speed100M => "100M",
+            Speed::Speed1G => "1G",
+            Speed::Speed10G => "10G",
+        };
+        write!(f, "{s}")
+    }
+}
+
 #[derive(
     Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
@@ -76,6 +88,18 @@ pub enum PortMode {
     BaseKr,
     Sgmii(Speed),
     Qsgmii(Speed),
+}
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for PortMode {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            PortMode::Sfi => write!(f, "SFI"),
+            PortMode::BaseKr => write!(f, "10GBASE-KR"),
+            PortMode::Sgmii(speed) => write!(f, "{speed} SGMII"),
+            PortMode::Qsgmii(speed) => write!(f, "{speed} QSGMII"),
+        }
+    }
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, SerializedSize)]
@@ -117,4 +141,17 @@ pub enum PhyType {
     Vsc8522,
     Vsc8552,
     Vsc8562,
+}
+
+#[cfg(feature = "std")]
+impl std::fmt::Display for PhyType {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let s = match self {
+            PhyType::Vsc8504 => "VSC8504",
+            PhyType::Vsc8522 => "VSC8522",
+            PhyType::Vsc8552 => "VSC8552",
+            PhyType::Vsc8562 => "VSC8562",
+        };
+        write!(f, "{s}")
+    }
 }
