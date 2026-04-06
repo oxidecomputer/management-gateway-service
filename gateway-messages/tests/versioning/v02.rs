@@ -13,15 +13,6 @@
 //! bump the `version::MIN` to a value higher than 2, at which point these tests
 //! can be removed as we will stop supporting v2.
 
-use gateway_messages::ignition::IgnitionError;
-use gateway_messages::ignition::LinkEvents;
-use gateway_messages::ignition::ReceiverStatus;
-use gateway_messages::ignition::SystemFaults;
-use gateway_messages::ignition::SystemPowerState;
-use gateway_messages::ignition::SystemType;
-use gateway_messages::ignition::TargetState;
-use gateway_messages::ignition::TransceiverEvents;
-use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::BadRequestReason;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::DiscoverResponse;
@@ -57,6 +48,15 @@ use gateway_messages::UpdateInProgressStatus;
 use gateway_messages::UpdatePreparationProgress;
 use gateway_messages::UpdatePreparationStatus;
 use gateway_messages::UpdateStatus;
+use gateway_messages::ignition::IgnitionError;
+use gateway_messages::ignition::LinkEvents;
+use gateway_messages::ignition::ReceiverStatus;
+use gateway_messages::ignition::SystemFaults;
+use gateway_messages::ignition::SystemPowerState;
+use gateway_messages::ignition::SystemType;
+use gateway_messages::ignition::TargetState;
+use gateway_messages::ignition::TransceiverEvents;
+use gateway_messages::ignition::TransceiverSelect;
 
 use super::assert_serialized;
 

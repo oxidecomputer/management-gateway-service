@@ -2,14 +2,15 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::error::CommunicationError;
 use crate::VersionedSpState;
-use gateway_messages::ignition::LinkEvents;
+use crate::error::CommunicationError;
 use gateway_messages::ComponentActionResponse;
 use gateway_messages::DiscoverResponse;
+use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::IgnitionState;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
+use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotResponse;
 use gateway_messages::SensorResponse;
@@ -17,8 +18,7 @@ use gateway_messages::SpResponse;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
-use gateway_messages::HF_PAGE_SIZE;
-use gateway_messages::ROT_PAGE_SIZE;
+use gateway_messages::ignition::LinkEvents;
 use paste::paste;
 use std::net::SocketAddrV6;
 
