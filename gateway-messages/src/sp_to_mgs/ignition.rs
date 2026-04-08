@@ -116,6 +116,19 @@ pub enum SystemType {
     Cosmo,
 }
 
+#[cfg(feature = "std")]
+impl std::fmt::Display for SystemType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SystemType::Gimlet => write!(f, "Gimlet"),
+            SystemType::Sidecar => write!(f, "Sidecar"),
+            SystemType::Psc => write!(f, "PSC"),
+            SystemType::Cosmo => write!(f, "Cosmo"),
+            SystemType::Unknown(u) => write!(f, "Unknown ({u})"),
+        }
+    }
+}
+
 impl From<u16> for SystemType {
     fn from(val: u16) -> Self {
         match val {

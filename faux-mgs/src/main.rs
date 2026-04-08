@@ -12,6 +12,7 @@ use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
+use colored::Colorize;
 use futures::FutureExt;
 use futures::StreamExt;
 use futures::stream::FuturesOrdered;
@@ -578,6 +579,15 @@ enum MonorailCommand {
 
     /// Lock the technician port
     Lock,
+
+    /// Print diagnostic information about the rack
+    Diagnose {
+        #[clap(flatten)]
+        sel: MonorailSelectorArgs,
+        /// Print additional info for present systems
+        #[clap(long, short)]
+        verbose: bool,
+    },
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -644,14 +654,17 @@ impl std::fmt::Display for CfpaSlot {
     }
 }
 
-#[derive(Copy, Clone, Debug, clap::Args)]
+#[derive(Copy, Clone, Debug, Default, clap::Args)]
 pub struct IgnitionSelector {
     /// Ignition target
     #[clap(short, long)]
     target: Option<u8>,
 
     /// Sled cubby (0-31)
-    #[clap(short, long, conflicts_with_all = ["target"])]
+    #[clap(
+        short, long, conflicts_with_all = ["target"],
+        value_parser = parse_cubby
+    )]
     cubby: Option<u8>,
 
     /// Sidecar ('local' or 'peer')
@@ -662,7 +675,10 @@ pub struct IgnitionSelector {
     sidecar: Option<SidecarSelector>,
 
     /// PSC index (0-1)
-    #[clap(short, long, conflicts_with_all = ["target", "cubby", "sidecar"])]
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby", "sidecar"],
+        value_parser = parse_psc
+    )]
     psc: Option<u8>,
 }
 
@@ -677,19 +693,22 @@ pub struct IgnitionSingleSelector {
 }
 
 impl IgnitionSingleSelector {
-    fn get_target(&self, log: &Logger) -> Result<u8> {
+    fn get_target(&self, log: &Logger) -> u8 {
         // presence of at least one is enforced by clap
-        Ok(self.sel.get_target(log)?.unwrap())
+        self.sel.get_target(log).unwrap()
     }
 }
 
 impl IgnitionSelector {
     /// Decodes CLI arguments to an ignition target
-    fn get_target(&self, log: &Logger) -> Result<Option<u8>> {
+    ///
+    /// # Panics
+    /// If the `IgnitionSelector` state is invalid (checked by `clap`)
+    fn get_target(&self, log: &Logger) -> Option<u8> {
         // At this point, we assume that the various `Option` values are
         // mutually exclusive (enforced by `clap`).
-        let t = if let Some(t) = self.target {
-            t
+        if let Some(t) = self.target {
+            Some(t)
         } else if let Some(c) = self.cubby {
             // See RFD 144 § 6.1 (Switch Port Map) for this mapping
             let t = match c {
@@ -714,7 +733,9 @@ impl IgnitionSelector {
                 18 => 5,
                 19 => 21,
                 20 => 7,
+                21 => 23,
                 22 => 6,
+                23 => 22,
                 24 => 0,
                 25 => 16,
                 26 => 1,
@@ -723,29 +744,28 @@ impl IgnitionSelector {
                 29 => 19,
                 30 => 2,
                 31 => 18,
-                i => bail!("cubby must be in the range 0-31, not {i}"),
+                i => panic!("bad cubby {i}"),
             };
             debug!(log, "decoded cubby {c} => target {t}");
-            t
+            Some(t)
         } else if let Some(s) = self.sidecar {
             let t = match s {
                 SidecarSelector::Peer => 34,
                 SidecarSelector::Local => 35,
             };
             debug!(log, "decoded {s:?} => target {t}");
-            t
+            Some(t)
         } else if let Some(p) = self.psc {
             let t = match p {
                 0 => 32,
                 1 => 33,
-                i => bail!("psc must be in the range 0-1, not {i}"),
+                i => panic!("bad psc {i}"),
             };
             debug!(log, "decoded psc {p} => target {t}");
-            t
+            Some(t)
         } else {
-            return Ok(None);
-        };
-        Ok(Some(t))
+            None
+        }
     }
 }
 
@@ -802,7 +822,7 @@ pub struct IgnitionBulkSelectorWithCompatibilityShim {
 
 impl IgnitionBulkSelectorWithCompatibilityShim {
     fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
-        match (self.sel.get_target(log)?, self.all, self.compat) {
+        match (self.sel.get_target(log), self.all, self.compat) {
             (Some(_), true, _) | (_, true, Some(_)) => {
                 bail!("cannot specify a target and `--all`")
             }
@@ -846,10 +866,187 @@ enum IgnitionBulkTargets {
     All,
 }
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 enum SidecarSelector {
     Local,
     Peer,
+}
+
+/// CLI selector for a device on the monorail network (can be empty)
+#[derive(Copy, Clone, Debug, clap::Args)]
+pub struct MonorailSelectorArgs {
+    /// Sled cubby (0-31)
+    #[clap(
+        short, long, conflicts_with_all = ["target"],
+        value_parser = parse_cubby
+    )]
+    cubby: Option<u8>,
+
+    /// Sidecar ('local' or 'peer')
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby"],
+        value_parser = parse_sidecar_selector
+    )]
+    sidecar: Option<SidecarSelector>,
+
+    /// PSC index (0-1)
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby", "sidecar"],
+        value_parser = parse_psc
+    )]
+    psc: Option<u8>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+enum MonorailSelector {
+    /// Sled cubby (0-31)
+    Cubby(u8),
+    /// Sidecar ('local' or 'peer')
+    Sidecar(SidecarSelector),
+    /// PSC index (0-1)
+    Psc(u8),
+}
+
+impl MonorailSelectorArgs {
+    /// Converts from `clap`-friendly arguments to a selector enum
+    ///
+    /// # Panics
+    /// If the selector state is invalid (checked by `clap`)
+    fn to_selector(self) -> Option<MonorailSelector> {
+        assert!(
+            u8::from(self.cubby.is_some())
+                + u8::from(self.sidecar.is_some())
+                + u8::from(self.psc.is_some())
+                <= 1,
+            "maximum of 1 selector may be present"
+        );
+        if let Some(cubby) = self.cubby {
+            assert!(cubby < 32);
+            Some(MonorailSelector::Cubby(cubby))
+        } else if let Some(sidecar) = self.sidecar {
+            Some(MonorailSelector::Sidecar(sidecar))
+        } else if let Some(psc) = self.psc {
+            assert!(psc < 2);
+            Some(MonorailSelector::Psc(psc))
+        } else {
+            None
+        }
+    }
+}
+
+impl std::fmt::Display for MonorailSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MonorailSelector::Cubby(i) => write!(f, "Cubby {i}"),
+            MonorailSelector::Sidecar(SidecarSelector::Peer) => {
+                write!(f, "Peer Sidecar")
+            }
+            MonorailSelector::Sidecar(SidecarSelector::Local) => {
+                write!(f, "Local Sidecar")
+            }
+            MonorailSelector::Psc(i) => write!(f, "PSC {i}"),
+        }
+    }
+}
+
+impl MonorailSelector {
+    /// Decodes CLI arguments to a tuple of `(monorail port, ignition target)`
+    fn get_targets(&self, log: &Logger) -> (u8, u8) {
+        // Build a dummy IgnitionSelector to piggyback on its `get_target`
+        let ignition_target = match self {
+            MonorailSelector::Cubby(c) => {
+                IgnitionSelector { cubby: Some(*c), ..Default::default() }
+            }
+            MonorailSelector::Sidecar(s) => {
+                IgnitionSelector { sidecar: Some(*s), ..Default::default() }
+            }
+            MonorailSelector::Psc(p) => {
+                IgnitionSelector { psc: Some(*p), ..Default::default() }
+            }
+        }
+        .get_target(log)
+        .unwrap();
+        let monorail_port = match self {
+            MonorailSelector::Cubby(c) => {
+                // See RFD 144 § 6.1 (Switch Port Map) for this mapping
+                //
+                // Note that this mapping is different from ignition target
+                // mapping in `IgnitionSelector::get_target`; monorail ports are
+                // not one-to-one with ignition targets.
+                let t = match c {
+                    0 => 14,
+                    1 => 30,
+                    2 => 15,
+                    3 => 31,
+                    4 => 13,
+                    5 => 29,
+                    6 => 12,
+                    7 => 28,
+                    8 => 10,
+                    9 => 26,
+                    10 => 11,
+                    11 => 27,
+                    12 => 9,
+                    13 => 25,
+                    14 => 8,
+                    15 => 24,
+                    16 => 4,
+                    17 => 20,
+                    18 => 5,
+                    19 => 21,
+                    20 => 7,
+                    21 => 52,
+                    22 => 6,
+                    23 => 51,
+                    24 => 0,
+                    25 => 16,
+                    26 => 1,
+                    27 => 17,
+                    28 => 3,
+                    29 => 19,
+                    30 => 2,
+                    31 => 18,
+                    i => panic!("bad cubby {i}"),
+                };
+                debug!(log, "decoded cubby {c} => monorail port {t}");
+                t
+            }
+            MonorailSelector::Sidecar(s) => {
+                let t = match s {
+                    SidecarSelector::Peer => 42,
+                    SidecarSelector::Local => 48,
+                };
+                debug!(log, "decoded {s:?} => monorail port {t}");
+                t
+            }
+            MonorailSelector::Psc(p) => {
+                let t = match p {
+                    0 => 40,
+                    1 => 41,
+                    i => panic!("bad psc {i}"),
+                };
+                debug!(log, "decoded psc {p} => monorail port {t}");
+                t
+            }
+        };
+        (monorail_port, ignition_target)
+    }
+}
+
+fn parse_cubby(s: &str) -> Result<u8> {
+    let out: u8 = s.parse()?;
+    if out >= 32 {
+        bail!("cubby must be in the range 0-31, not {out}");
+    }
+    Ok(out)
+}
+
+fn parse_psc(s: &str) -> Result<u8> {
+    let out: u8 = s.parse()?;
+    if out >= 2 {
+        bail!("psc must be in the range 0-1, not {out}");
+    }
+    Ok(out)
 }
 
 fn parse_sidecar_selector(s: &str) -> Result<SidecarSelector> {
@@ -1462,7 +1659,7 @@ async fn run_command(
             }
         }
         Command::IgnitionCommand { sel, command } => {
-            let target = sel.get_target(&log)?;
+            let target = sel.get_target(&log);
             sp.ignition_command(target, command).await?;
             info!(log, "ignition command {command:?} send to target {target}");
             if json {
@@ -1933,6 +2130,13 @@ async fn run_command(
                             permslip,
                         )
                         .await?;
+                    }
+                }
+                MonorailCommand::Diagnose { sel, verbose } => {
+                    if let Some(sel) = sel.to_selector() {
+                        monorail_diagnose_one(&log, &sp, sel).await?;
+                    } else {
+                        monorail_diagnose_all(&log, &sp, verbose).await?;
                     }
                 }
             }
@@ -2437,6 +2641,445 @@ fn ssh_keygen_sign(
         h => bail!("invalid hash algorithm {h:?}"),
     }
     Ok(sig)
+}
+
+async fn monorail_diagnose_one(
+    log: &Logger,
+    sp: &SingleSp,
+    sel: MonorailSelector,
+) -> Result<()> {
+    use gateway_messages::ComponentDetails;
+
+    let (monorail_port, ignition_target) = sel.get_targets(log);
+    info!(log, "got target {monorail_port}, {ignition_target}");
+    let get_mono_details = async || {
+        sp.component_details(SpComponent::MONORAIL)
+            .await?
+            .entries
+            .into_iter()
+            .find_map(|c| {
+                if let ComponentDetails::PortStatus(r) = c
+                    && let Ok(r) = r
+                    && r.port == u32::from(monorail_port)
+                {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .with_context(|| {
+                format!(
+                    "could not find component details for \
+                     monorail port {monorail_port}"
+                )
+            })
+    };
+    // Get two samples from monorail to check that counters are going up
+    let mono = get_mono_details().await?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let mono_later = get_mono_details().await?;
+    let igni = sp.ignition_state(ignition_target).await?;
+
+    monorail_diagnose_print(
+        sel,
+        monorail_port,
+        ignition_target,
+        Some(igni),
+        mono,
+        mono_later,
+    )
+}
+
+fn monorail_diagnose_print(
+    sel: MonorailSelector,
+    monorail_port: u8,
+    ignition_target: u8,
+    igni: Option<gateway_messages::IgnitionState>,
+    mono: gateway_messages::monorail_port_status::PortStatus,
+    mono_later: gateway_messages::monorail_port_status::PortStatus,
+) -> Result<()> {
+    use gateway_messages::{
+        ignition::{ReceiverStatus, SystemFaults, SystemPowerState},
+        monorail_port_status::LinkStatus,
+    };
+    let link_status = |s: LinkStatus| match s {
+        LinkStatus::Up => "up".green(),
+        LinkStatus::Down => "down".red(),
+        LinkStatus::Error => "error".red(),
+    };
+    println!("{sel}:");
+    println!("  monorail port: {monorail_port} ({})", mono.cfg.mode);
+    println!("    link status: {}", link_status(mono.link_status));
+    if let Some(phy) = mono.phy_status {
+        println!("    phy: {}", phy.ty);
+        println!("      mac status:   {}", link_status(phy.mac_link_up));
+        println!("      media status: {}", link_status(phy.media_link_up));
+    }
+    // Only check packet counters if we expect the link to be up
+    let check_counters = mono.link_status == LinkStatus::Up
+        && mono.phy_status.is_none_or(|p| {
+            p.mac_link_up == LinkStatus::Up && p.media_link_up == LinkStatus::Up
+        });
+    if check_counters {
+        println!(
+            "    rx counters: {}",
+            if mono_later.counters.rx.unicast > mono.counters.rx.unicast
+                || mono_later.counters.rx.multicast > mono.counters.rx.multicast
+                || mono_later.counters.rx.broadcast > mono.counters.rx.broadcast
+            {
+                "going up".green()
+            } else {
+                "not going up".red()
+            }
+        );
+    }
+
+    if let Some(igni) = igni {
+        let rx_status = |receiver: ReceiverStatus| {
+            format!(
+                "aligned: {}, locked: {}",
+                if receiver.aligned { "yes".green() } else { "no".red() },
+                if receiver.locked { "yes".green() } else { "no".red() },
+            )
+        };
+        println!("  ignition target: {ignition_target}");
+        println!("    {}", rx_status(igni.receiver));
+        if let Some(target) = igni.target {
+            println!("    target: {}", target.system_type);
+            println!(
+                "    power state: {}",
+                match target.power_state {
+                    SystemPowerState::Off => "off".red(),
+                    SystemPowerState::On => "on".green(),
+                    SystemPowerState::Aborted => "aborted".red(),
+                    SystemPowerState::PoweringOff => "powering off".red(),
+                    SystemPowerState::PoweringOn => "powering on".yellow(),
+                }
+            );
+            if target.power_reset_in_progress {
+                println!("    {}", "power reset in progress".red());
+            }
+            let SystemFaults { power_a3, power_a2, sp, rot } = target.faults;
+            if power_a3 | power_a2 | sp | rot {
+                print!("    faults: ");
+                let mut printed = false;
+                for (f, dev) in [
+                    (power_a3, ("A3 power")),
+                    (power_a2, "A2 power"),
+                    (sp, "SP"),
+                    (rot, "RoT"),
+                ] {
+                    if f {
+                        if printed {
+                            print!(" | ");
+                        }
+                        print!("{dev}");
+                        printed = true;
+                    }
+                }
+            } else {
+                println!("    {}", "no faults".green());
+            }
+            for (i, (present, status)) in [
+                (target.controller0_present, target.link0_receiver_status),
+                (target.controller1_present, target.link1_receiver_status),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                println!("    controller {i}:");
+                println!(
+                    "      {}",
+                    if present { "present".green() } else { "absent".red() }
+                );
+                println!("      {}", rx_status(status));
+            }
+        } else {
+            println!("    {}", "no target".red());
+        }
+    } else {
+        println!(
+            "  ignition: {} {}",
+            "unavailable".yellow(),
+            "(this is expected for old hardware)".dimmed(),
+        );
+    }
+    Ok(())
+}
+
+async fn monorail_diagnose_all(
+    log: &Logger,
+    sp: &SingleSp,
+    verbose: bool,
+) -> Result<()> {
+    use gateway_messages::{
+        ComponentDetails,
+        ignition::{IgnitionState, SystemPowerState},
+        monorail_port_status::{LinkStatus, PortStatus},
+    };
+
+    let targets = (0..32)
+        .map(MonorailSelector::Cubby)
+        .chain(
+            [SidecarSelector::Peer, SidecarSelector::Local]
+                .map(MonorailSelector::Sidecar),
+        )
+        .chain((0..2).map(MonorailSelector::Psc))
+        .collect::<Vec<_>>();
+
+    struct Info {
+        monorail_port: u8,
+        ignition_target: u8,
+        ignition_state: Option<IgnitionState>,
+        monorail_state: [PortStatus; 2],
+    }
+
+    #[derive(Copy, Clone)]
+    enum InfoState {
+        Okay,
+        Gone,
+        Error,
+    }
+
+    impl std::fmt::Display for InfoState {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            // Padded to fit columns
+            let s = match self {
+                InfoState::Error => "err     ",
+                InfoState::Okay => "okay    ",
+                InfoState::Gone => "gone    ",
+            };
+            write!(f, "{s}")
+        }
+    }
+
+    impl Info {
+        fn ignition_state(&self) -> Option<InfoState> {
+            let i = self.ignition_state?;
+            if i.target.is_none() && !i.receiver.aligned && !i.receiver.locked {
+                Some(InfoState::Gone)
+            } else if i.receiver.aligned
+                && i.receiver.locked
+                && let Some(t) = i.target
+                && !t.faults.sp
+                && !t.faults.power_a3
+                && !t.faults.power_a2
+                && !t.faults.rot
+                && t.power_state == SystemPowerState::On
+                && !t.power_reset_in_progress
+                && (t.controller0_present || t.controller1_present)
+            {
+                Some(InfoState::Okay)
+            } else {
+                Some(InfoState::Error)
+            }
+        }
+        fn monorail_state(&self) -> InfoState {
+            let m0 = self.monorail_state[0];
+            let m1 = self.monorail_state[1];
+            if m0.link_status == LinkStatus::Down
+                || (m0.link_status == LinkStatus::Up
+                    && m0.phy_status.is_some_and(|m| {
+                        m.mac_link_up == LinkStatus::Up
+                            && m.media_link_up == LinkStatus::Down
+                    }))
+            {
+                InfoState::Gone
+            } else if m0.link_status == LinkStatus::Up
+                && m0.phy_status.is_none_or(|p| {
+                    p.mac_link_up == LinkStatus::Up
+                        && p.media_link_up == LinkStatus::Up
+                })
+                && (m1.counters.rx.unicast > m0.counters.rx.unicast
+                    || m1.counters.rx.multicast > m0.counters.rx.multicast
+                    || m1.counters.rx.broadcast > m0.counters.rx.broadcast)
+            {
+                InfoState::Okay
+            } else {
+                InfoState::Error
+            }
+        }
+        fn is_okay(&self) -> bool {
+            // We don't need to print supplementary info if both ignition and
+            // monorail are either good or gone
+            matches!(
+                (self.ignition_state(), self.monorail_state()),
+                (None | Some(InfoState::Gone), InfoState::Gone)
+                    | (None | Some(InfoState::Okay), InfoState::Okay)
+            )
+        }
+        fn is_problematic(&self) -> bool {
+            !self.is_okay()
+        }
+    }
+
+    let mut info_map: BTreeMap<MonorailSelector, Info> = BTreeMap::new();
+
+    // Sample the monorail state now, then plan to sample again in 1 second
+    // (so that counters have time to go up)
+    let mono0 = sp.component_details(SpComponent::MONORAIL).await?.entries;
+    let now = tokio::time::Instant::now();
+    let sample_time = now + tokio::time::Duration::from_secs(1);
+
+    let mut ignition_map: BTreeMap<MonorailSelector, Option<IgnitionState>> =
+        BTreeMap::new();
+
+    // Get all of our ignition sampling done while we wait
+    //
+    // We could also use `bulk_ignition_state`, but then the mapping to
+    // selectors isn't as obvious (and we've got a whole second to kill, so
+    // might as well do the easy option).
+    for sel in &targets {
+        let (_, ignition_target) = sel.get_targets(log);
+        let ignition_state = match sp.ignition_state(ignition_target).await {
+            Ok(i) => Some(i),
+            Err(gateway_sp_comms::error::CommunicationError::SpError(
+                gateway_messages::SpError::Ignition(
+                    gateway_messages::ignition::IgnitionError::InvalidPort,
+                ),
+            )) if *sel == MonorailSelector::Sidecar(SidecarSelector::Local) => {
+                warn!(
+                    log,
+                    "cannot talk to local Sidecar SP over ignition; \
+                     this is expected for old Sidecar revisions"
+                );
+                None
+            }
+            Err(e) => return Err(e.into()),
+        };
+        ignition_map.insert(*sel, ignition_state);
+    }
+
+    // Get the second monorail sample
+    tokio::time::sleep_until(sample_time).await;
+    let mono1 = sp.component_details(SpComponent::MONORAIL).await?.entries;
+
+    // Now shove everything into an info map
+    for sel in &targets {
+        // Helper function to find matching monorail component details
+        let get_mono_details =
+            |monorail_port: u8, mono: &[ComponentDetails]| {
+                mono.iter()
+                    .find_map(|c| {
+                        if let ComponentDetails::PortStatus(r) = c
+                            && let Ok(r) = r
+                            && r.port == u32::from(monorail_port)
+                        {
+                            Some(*r)
+                        } else {
+                            None
+                        }
+                    })
+                    .with_context(|| {
+                        format!(
+                            "could not find component details for \
+                             monorail port {monorail_port}"
+                        )
+                    })
+            };
+        let (monorail_port, ignition_target) = sel.get_targets(log);
+        info_map.insert(
+            *sel,
+            Info {
+                ignition_target,
+                monorail_port,
+                ignition_state: ignition_map.remove(sel).unwrap(),
+                monorail_state: [
+                    get_mono_details(monorail_port, &mono0)?,
+                    get_mono_details(monorail_port, &mono1)?,
+                ],
+            },
+        );
+    }
+
+    if verbose {
+        for sel in &targets {
+            let info = &info_map[sel];
+            if matches!(info.ignition_state(), None | Some(InfoState::Gone))
+                && matches!(info.monorail_state(), InfoState::Gone)
+            {
+                println!("{sel} {}", "absent".dimmed());
+            } else {
+                monorail_diagnose_print(
+                    *sel,
+                    info.monorail_port,
+                    info.ignition_target,
+                    info.ignition_state,
+                    info.monorail_state[0],
+                    info.monorail_state[1],
+                )?;
+            }
+        }
+    } else {
+        println!(
+            "  {:<13} | {:<10} | {:<8} | {:<8}",
+            "POSITION", "TYPE", "IGNITION", "MONORAIL"
+        );
+        for sel in &targets {
+            let info = &info_map[sel];
+            let s = info
+                .ignition_state
+                .map(|i| {
+                    i.target
+                        .map(|t| format!("{}", t.system_type).into())
+                        .unwrap_or("[absent]".dimmed())
+                })
+                .unwrap_or("[unavail]".dimmed());
+            let mono = info.monorail_state();
+            let igni = info.ignition_state();
+            let m = mono.to_string();
+            let i = igni
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "unknown ".to_owned());
+            // Select colors for the table.  This is non-obvious: we can't just
+            // map Okay / Error / Gone, because Gone is only acceptable if both
+            // sides are Gone; otherwise, it indicates a problem!
+            let (m, i) = match (mono, igni) {
+                (InfoState::Okay, Some(InfoState::Okay)) => {
+                    (m.green(), i.green())
+                }
+                (InfoState::Okay, None) => (m.green(), i.dimmed()),
+                (InfoState::Okay, Some(InfoState::Gone | InfoState::Error)) => {
+                    (m.yellow(), i.red())
+                }
+                (InfoState::Error | InfoState::Gone, Some(InfoState::Okay)) => {
+                    (m.red(), i.yellow())
+                }
+                (InfoState::Error | InfoState::Gone, None) => {
+                    (m.red(), i.dimmed())
+                }
+                (InfoState::Gone, Some(InfoState::Gone)) => {
+                    (m.dimmed(), i.dimmed())
+                }
+                (InfoState::Gone, Some(InfoState::Error)) => {
+                    (m.yellow(), i.red())
+                }
+                (InfoState::Error, Some(InfoState::Gone)) => {
+                    (m.red(), i.yellow())
+                }
+                (InfoState::Error, Some(InfoState::Error)) => {
+                    (m.red(), i.red())
+                }
+            };
+            println!("  {:<13} | {s:<10} | {i} | {m}", sel.to_string());
+        }
+        let mut printed_header = false;
+        for (sel, i) in info_map.iter().filter(|(_sel, i)| i.is_problematic()) {
+            if !printed_header {
+                println!("\n{}", "Detailed info".bold());
+                printed_header = true
+            }
+            monorail_diagnose_print(
+                *sel,
+                i.monorail_port,
+                i.ignition_target,
+                i.ignition_state,
+                i.monorail_state[0],
+                i.monorail_state[1],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn handle_cxpa(
