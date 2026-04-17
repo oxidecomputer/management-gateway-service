@@ -335,7 +335,7 @@ fn decode_body_v0(
     //  As described in RFD 545 4.4:
     //  https://rfd.shared.oxide.computer/rfd/0545#_readresponse
     //
-    // V0 ereport packets consit of the following:
+    // V0 ereport packets consist of the following:
     //
     // - A CBOR map (using the "indefinite-length" encoding) of strings to
     //   CBOR values, containing metadata.
