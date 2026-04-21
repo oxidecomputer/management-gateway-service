@@ -222,6 +222,7 @@ async fn drive_sp_update(
     };
 
     // Send the aux flash image, if necessary.
+    let auxflash_size = aux_image.as_ref().map(|d| d.len()).unwrap_or(0);
     if !sp_matched_chck {
         // `poll_until_update_prep_complete` can only return `Ok(false)` if we
         // told it we had an aux flash update (i.e., if `aux_image.is_some()`).
@@ -232,6 +233,11 @@ async fn drive_sp_update(
             SpComponent::SP_AUX_FLASH,
             update_id,
             data,
+            UpdateStatusParams {
+                component: SpComponent::SP_ITSELF,
+                bytes_received_offset: 0,
+                total_size_delta: sp_image.len(),
+            },
             &log,
         )
         .await
@@ -256,6 +262,11 @@ async fn drive_sp_update(
         SpComponent::SP_ITSELF,
         update_id,
         sp_image,
+        UpdateStatusParams {
+            component: SpComponent::SP_ITSELF,
+            bytes_received_offset: auxflash_size,
+            total_size_delta: auxflash_size,
+        },
         &log,
     )
     .await
@@ -449,8 +460,10 @@ pub(super) async fn start_rot_update(
         _ => return Err(UpdateError::InvalidComponent),
     };
 
-    start_component_update(cmds_tx, component, update_id, slot, rot_image, log)
-        .await
+    start_component_update(
+        cmds_tx, component, update_id, slot, rot_image, None, log,
+    )
+    .await
 }
 
 /// Start an update to a component of the SP.
@@ -463,10 +476,19 @@ pub(super) async fn start_component_update(
     update_id: Uuid,
     slot: u16,
     image: Vec<u8>,
+    update_status_params: Option<UpdateStatusParams>,
     log: &Logger,
 ) -> Result<UpdateDriverTask, UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
+
+    // Use a default set of `UpdateStatusParams` if none are provided
+    let update_status_params =
+        update_status_params.unwrap_or(UpdateStatusParams {
+            component,
+            bytes_received_offset: 0,
+            total_size_delta: 0,
+        });
 
     info!(
         log, "starting update";
@@ -493,6 +515,7 @@ pub(super) async fn start_component_update(
         component,
         update_id,
         image,
+        update_status_params,
         log.clone(),
     )))
 }
@@ -504,6 +527,7 @@ async fn drive_component_update(
     component: SpComponent,
     update_id: Uuid,
     image: Vec<u8>,
+    update_status_params: UpdateStatusParams,
     log: Logger,
 ) -> Result<(), UpdateDriverTaskError> {
     let id = update_id.into();
@@ -529,8 +553,15 @@ async fn drive_component_update(
     }
 
     // Deliver the update in chunks.
-    match send_update_in_chunks(&cmds_tx, component, update_id, image, &log)
-        .await
+    match send_update_in_chunks(
+        &cmds_tx,
+        component,
+        update_id,
+        image,
+        update_status_params,
+        &log,
+    )
+    .await
     {
         Ok(()) => {
             info!(log, "update complete"; "id" => %update_id);
@@ -653,6 +684,7 @@ async fn send_update_in_chunks(
     component: SpComponent,
     update_id: Uuid,
     data: Vec<u8>,
+    update_status_params: UpdateStatusParams,
     log: &Logger,
 ) -> Result<()> {
     let mut image = Cursor::new(data);
@@ -689,9 +721,9 @@ async fn send_update_in_chunks(
                 if let Some(sp_offset) =
                     determine_update_resume_point_via_update_status(
                         cmds_tx,
-                        component,
                         update_id,
                         image.get_ref().len(),
+                        update_status_params,
                         log,
                     )
                     .await
@@ -738,6 +770,33 @@ async fn send_single_update_chunk(
     (data, result)
 }
 
+/// Parameters to be used when requesting [`UpdateStatus`]
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct UpdateStatusParams {
+    /// Component for which status should be requested
+    ///
+    /// This is usually the component being updated, with one exception: if
+    /// we're updating the SP's auxflash, we request the status for the
+    /// [`SP_ITSELF`] component, which returns monotonic progress for the
+    /// combined auxflash and SP update.
+    component: SpComponent,
+
+    /// Value to subtract from the reported `bytes_received` value
+    ///
+    /// This is usually 0, but if we're updating the SP image and have an
+    /// auxflash image, then we must subtract the auxflash size (because the SP
+    /// image is delivered after the auxflash image, and `UpdateStatus` uses a
+    /// monotonic counter from 0 to `aux_len + sp_len`.
+    bytes_received_offset: usize,
+
+    /// Value to subtract from the reported `total_size` value
+    ///
+    /// This is usually 0, but if we're updating the SP image and it has an
+    /// auxflash image then `UpdateStatus` reports a combined size and we must
+    /// subtract the _other_ component's size.
+    total_size_delta: usize,
+}
+
 /// Attempt to determine what offset the SP is expecting mid-update.
 ///
 /// We use this when receiving an `InvalidUpdateChunk` from the SP, which
@@ -746,41 +805,72 @@ async fn send_single_update_chunk(
 /// for some successful chunk that we believe we need to resend).
 async fn determine_update_resume_point_via_update_status(
     cmds_tx: &mpsc::Sender<InnerCommand>,
-    component: SpComponent,
     update_id: Uuid,
     image_len: usize,
+    params: UpdateStatusParams,
     log: &Logger,
 ) -> Option<u32> {
     // We can only recover if the SP still thinks this update is in progress.
-    let progress =
-        match super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
-            .await
-            .result
-            .and_then(expect_update_status)
-        {
-            Ok(UpdateStatus::InProgress(progress)) => progress,
-            Ok(other_status) => {
-                error!(
-                    log,
-                    "invalid update chunk recovery failed: \
-                     SP update status is not in progress";
-                    "status" => ?other_status,
-                );
-                return None;
-            }
-            Err(status_err) => {
-                error!(
-                    log,
-                    "invalid update chunk recovery failed: \
-                     could not get update status from SP";
-                    &status_err,
-                );
-                return None;
-            }
-        };
+    let progress = match super::rpc(
+        cmds_tx,
+        MgsRequest::UpdateStatus(params.component),
+        None,
+    )
+    .await
+    .result
+    .and_then(expect_update_status)
+    {
+        Ok(UpdateStatus::InProgress(progress)) => progress,
+        Ok(other_status) => {
+            error!(
+                log,
+                "invalid update chunk recovery failed: \
+                 SP update status is not in progress";
+                "status" => ?other_status,
+            );
+            return None;
+        }
+        Err(status_err) => {
+            error!(
+                log,
+                "invalid update chunk recovery failed: \
+                 could not get update status from SP";
+                &status_err,
+            );
+            return None;
+        }
+    };
 
     let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
     let id = Uuid::from(id);
+
+    // Remap our position in the update to handle combined auxflash + SP counter
+    let Some(bytes_received) = usize::try_from(bytes_received)
+        .expect("u32 fits in usize")
+        .checked_sub(params.bytes_received_offset)
+    else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             could not apply offset of {} to bytes received {}",
+            params.bytes_received_offset,
+            bytes_received
+        );
+        return None;
+    };
+    let Some(total_size) = usize::try_from(total_size)
+        .expect("u32 fits in usize")
+        .checked_sub(params.total_size_delta)
+    else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             could not apply delta of {} to total size {}",
+            params.total_size_delta,
+            total_size,
+        );
+        return None;
+    };
 
     // This error check is not load-bearing; if we try to resume with our update
     // ID and some other update is in progress, the SP will reject it with a
@@ -801,7 +891,7 @@ async fn determine_update_resume_point_via_update_status(
 
     // This should never happen; if the update ID matches, we and the SP should
     // both know how long the image is.
-    if usize::try_from(total_size).expect("u32 fits in usize") != image_len {
+    if total_size != image_len {
         error!(
             log,
             "invalid update chunk recovery failed: \
@@ -831,5 +921,5 @@ async fn determine_update_resume_point_via_update_status(
         "invalid update chunk recovery: attempting to resume \
          from offset {bytes_received}"
     );
-    Some(bytes_received)
+    Some(u32::try_from(bytes_received).expect("round-trip conversion"))
 }

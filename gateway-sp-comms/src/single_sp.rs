@@ -800,6 +800,7 @@ impl SingleSp {
                 update_id,
                 slot,
                 image,
+                None,
                 self.log(),
             )
             .await
