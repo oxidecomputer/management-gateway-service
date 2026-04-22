@@ -777,8 +777,8 @@ pub(crate) struct UpdateStatusParams {
     ///
     /// This is usually the component being updated, with one exception: if
     /// we're updating the SP's auxflash, we request the status for the
-    /// [`SP_ITSELF`] component, which returns monotonic progress for the
-    /// combined auxflash and SP update.
+    /// [`SP_ITSELF`](SpComponent::SP_ITSELF) component, which returns monotonic
+    /// progress for the combined auxflash and SP update.
     component: SpComponent,
 
     /// Value to subtract from the reported `bytes_received` value
@@ -786,7 +786,7 @@ pub(crate) struct UpdateStatusParams {
     /// This is usually 0, but if we're updating the SP image and have an
     /// auxflash image, then we must subtract the auxflash size (because the SP
     /// image is delivered after the auxflash image, and `UpdateStatus` uses a
-    /// monotonic counter from 0 to `aux_len + sp_len`.
+    /// monotonic counter from 0 to `aux_len + sp_len`).
     bytes_received_offset: usize,
 
     /// Value to subtract from the reported `total_size` value
@@ -827,6 +827,7 @@ async fn determine_update_resume_point_via_update_status(
                 "invalid update chunk recovery failed: \
                  SP update status is not in progress";
                 "status" => ?other_status,
+                "id" => %update_id,
             );
             return None;
         }
@@ -836,6 +837,7 @@ async fn determine_update_resume_point_via_update_status(
                 "invalid update chunk recovery failed: \
                  could not get update status from SP";
                 &status_err,
+                "id" => %update_id,
             );
             return None;
         }
@@ -843,34 +845,6 @@ async fn determine_update_resume_point_via_update_status(
 
     let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
     let id = Uuid::from(id);
-
-    // Remap our position in the update to handle combined auxflash + SP counter
-    let Some(bytes_received) = usize::try_from(bytes_received)
-        .expect("u32 fits in usize")
-        .checked_sub(params.bytes_received_offset)
-    else {
-        error!(
-            log,
-            "invalid update chunk recovery failed: \
-             could not apply offset of {} to bytes received {}",
-            params.bytes_received_offset,
-            bytes_received
-        );
-        return None;
-    };
-    let Some(total_size) = usize::try_from(total_size)
-        .expect("u32 fits in usize")
-        .checked_sub(params.total_size_delta)
-    else {
-        error!(
-            log,
-            "invalid update chunk recovery failed: \
-             could not apply delta of {} to total size {}",
-            params.total_size_delta,
-            total_size,
-        );
-        return None;
-    };
 
     // This error check is not load-bearing; if we try to resume with our update
     // ID and some other update is in progress, the SP will reject it with a
@@ -889,6 +863,36 @@ async fn determine_update_resume_point_via_update_status(
         return None;
     }
 
+    // Remap our position in the update to handle combined auxflash + SP counter
+    let Some(bytes_received) = usize::try_from(bytes_received)
+        .expect("u32 fits in usize")
+        .checked_sub(params.bytes_received_offset)
+    else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             could not apply offset to bytes received";
+            "offset" => params.bytes_received_offset,
+            "bytes_received" => bytes_received,
+            "id" => %update_id,
+        );
+        return None;
+    };
+    let Some(total_size) = usize::try_from(total_size)
+        .expect("u32 fits in usize")
+        .checked_sub(params.total_size_delta)
+    else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             could not apply delta to total size";
+            "delta" => params.total_size_delta,
+            "total_size" => total_size,
+            "id" => %update_id,
+        );
+        return None;
+    };
+
     // This should never happen; if the update ID matches, we and the SP should
     // both know how long the image is.
     if total_size != image_len {
@@ -898,6 +902,7 @@ async fn determine_update_resume_point_via_update_status(
              SP expects an incorrect image length";
             "our_image_len" => image_len,
             "sp_expects_len" => total_size,
+            "id" => %update_id,
         );
         return None;
     }
@@ -912,6 +917,7 @@ async fn determine_update_resume_point_via_update_status(
              (bytes_received > total_size ?!)";
             "bytes_received" => bytes_received,
             "total_size" => total_size,
+            "id" => %update_id,
         );
         return None;
     }
