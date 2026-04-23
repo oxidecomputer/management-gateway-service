@@ -815,37 +815,35 @@ async fn determine_update_resume_point_via_update_status(
     log: &Logger,
 ) -> Option<u32> {
     // We can only recover if the SP still thinks this update is in progress.
-    let progress = match super::rpc(
-        cmds_tx,
-        MgsRequest::UpdateStatus(params.component),
-        None,
-    )
-    .await
-    .result
-    .and_then(expect_update_status)
-    {
-        Ok(UpdateStatus::InProgress(progress)) => progress,
-        Ok(other_status) => {
-            error!(
-                log,
-                "invalid update chunk recovery failed: \
-                 SP update status is not in progress";
-                "status" => ?other_status,
-                "id" => %update_id,
-            );
-            return None;
-        }
-        Err(status_err) => {
-            error!(
-                log,
-                "invalid update chunk recovery failed: \
-                 could not get update status from SP";
-                &status_err,
-                "id" => %update_id,
-            );
-            return None;
-        }
-    };
+    let component = params.component;
+    let progress =
+        match super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
+            .await
+            .result
+            .and_then(expect_update_status)
+        {
+            Ok(UpdateStatus::InProgress(progress)) => progress,
+            Ok(other_status) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     SP update status is not in progress";
+                    "status" => ?other_status,
+                    "id" => %update_id,
+                );
+                return None;
+            }
+            Err(status_err) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     could not get update status from SP";
+                    &status_err,
+                    "id" => %update_id,
+                );
+                return None;
+            }
+        };
 
     let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
     let id = Uuid::from(id);
