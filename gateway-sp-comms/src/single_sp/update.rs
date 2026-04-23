@@ -452,10 +452,8 @@ pub(super) async fn start_rot_update(
         _ => return Err(UpdateError::InvalidComponent),
     };
 
-    start_component_update(
-        cmds_tx, component, update_id, slot, rot_image, None, log,
-    )
-    .await
+    start_component_update(cmds_tx, component, update_id, slot, rot_image, log)
+        .await
 }
 
 /// Start an update to a component of the SP.
@@ -468,19 +466,10 @@ pub(super) async fn start_component_update(
     update_id: Uuid,
     slot: u16,
     image: Vec<u8>,
-    update_status_params: Option<UpdateStatusParams>,
     log: &Logger,
 ) -> Result<UpdateDriverTask, UpdateError> {
     let total_size =
         image.len().try_into().map_err(|_err| UpdateError::ImageTooLarge)?;
-
-    // Use a default set of `UpdateStatusParams` if none are provided
-    let update_status_params =
-        update_status_params.unwrap_or(UpdateStatusParams {
-            component,
-            bytes_received_offset: 0,
-            total_size_delta: 0,
-        });
 
     info!(
         log, "starting update";
@@ -507,7 +496,6 @@ pub(super) async fn start_component_update(
         component,
         update_id,
         image,
-        update_status_params,
         log.clone(),
     )))
 }
@@ -519,7 +507,6 @@ async fn drive_component_update(
     component: SpComponent,
     update_id: Uuid,
     image: Vec<u8>,
-    update_status_params: UpdateStatusParams,
     log: Logger,
 ) -> Result<(), UpdateDriverTaskError> {
     let id = update_id.into();
@@ -550,7 +537,7 @@ async fn drive_component_update(
         component,
         update_id,
         image,
-        update_status_params,
+        UpdateStatusParams::default_for(component),
         &log,
     )
     .await
@@ -790,6 +777,11 @@ pub(crate) struct UpdateStatusParams {
 }
 
 impl UpdateStatusParams {
+    /// Default parameters for a particular component
+    fn default_for(component: SpComponent) -> Self {
+        Self { component, bytes_received_offset: 0, total_size_delta: 0 }
+    }
+
     /// Parameters for sending an auxflash image before sending the SP image
     fn auxflash_before_sp(sp_image_len: usize) -> Self {
         Self {
