@@ -233,11 +233,7 @@ async fn drive_sp_update(
             SpComponent::SP_AUX_FLASH,
             update_id,
             data,
-            UpdateStatusParams {
-                component: SpComponent::SP_ITSELF,
-                bytes_received_offset: 0,
-                total_size_delta: sp_image.len(),
-            },
+            UpdateStatusParams::auxflash_before_sp(sp_image.len()),
             &log,
         )
         .await
@@ -262,11 +258,7 @@ async fn drive_sp_update(
         SpComponent::SP_ITSELF,
         update_id,
         sp_image,
-        UpdateStatusParams {
-            component: SpComponent::SP_ITSELF,
-            bytes_received_offset: auxflash_size,
-            total_size_delta: auxflash_size,
-        },
+        UpdateStatusParams::sp_after_auxflash(auxflash_size),
         &log,
     )
     .await
@@ -795,6 +787,26 @@ pub(crate) struct UpdateStatusParams {
     /// auxflash image then `UpdateStatus` reports a combined size and we must
     /// subtract the _other_ component's size.
     total_size_delta: usize,
+}
+
+impl UpdateStatusParams {
+    /// Parameters for sending an auxflash image before sending the SP image
+    fn auxflash_before_sp(sp_image_len: usize) -> Self {
+        Self {
+            component: SpComponent::SP_ITSELF,
+            bytes_received_offset: 0,
+            total_size_delta: sp_image_len,
+        }
+    }
+
+    /// Parameters for sending an SP image after sending the auxflash image
+    fn sp_after_auxflash(auxflash_len: usize) -> Self {
+        Self {
+            component: SpComponent::SP_ITSELF,
+            bytes_received_offset: auxflash_len,
+            total_size_delta: auxflash_len,
+        }
+    }
 }
 
 /// Attempt to determine what offset the SP is expecting mid-update.
