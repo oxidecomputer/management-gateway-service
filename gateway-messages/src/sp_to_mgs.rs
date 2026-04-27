@@ -906,6 +906,15 @@ bitflags! {
         const HAS_MEASUREMENT_CHANNELS = 1 << 1;
         const HAS_SERIAL_CONSOLE = 1 << 2;
         const IS_LED = 1 << 3;
+        /// The device has vital product data, such as a part number and serial
+        /// number
+        const HAS_VPD = 1 << 4;
+        /// This is a PMBus device.
+        ///
+        /// This implies that the device `HAS_MEASUREMENT_CHANNELS` and
+        /// `HAS_VPD`, but also indicates that the device has PMBus status
+        /// registers.
+        const IS_PMBUS = 1 << 5;
         // MGS has a placeholder API for powering off an individual component;
         // do we want to keep that? If so, add a bit for "can be powered on and
         // off".
