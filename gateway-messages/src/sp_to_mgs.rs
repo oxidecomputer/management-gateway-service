@@ -906,7 +906,7 @@ bitflags! {
         const HAS_MEASUREMENT_CHANNELS = 1 << 1;
         const HAS_SERIAL_CONSOLE = 1 << 2;
         const IS_LED = 1 << 3;
-        /// The device has vital product data, such as a part numbe and serial
+        /// The device has vital product data, such as a part number and serial
         /// number
         const HAS_VPD = 1 << 4;
         /// This is a PMBus device.
