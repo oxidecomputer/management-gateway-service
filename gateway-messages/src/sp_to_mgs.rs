@@ -911,9 +911,11 @@ bitflags! {
         const HAS_VPD = 1 << 4;
         /// This is a PMBus device.
         ///
-        /// This implies that the device `HAS_MEASUREMENT_CHANNELS` and
-        /// `HAS_VPD`, but also indicates that the device has PMBus status
-        /// registers.
+        /// Typically, PMBus devices will also advertise the `HAS_VPD` and
+        /// `HAS_MEASUREMENT_CHANNELS` capabilities. However, it is generally
+        /// recommended that client code prefer using those bits to detect those
+        /// capabilities, rather than assuming that they will be present if a
+        /// device `IS_PMBUS`.
         const IS_PMBUS = 1 << 5;
         // MGS has a placeholder API for powering off an individual component;
         // do we want to keep that? If so, add a bit for "can be powered on and
