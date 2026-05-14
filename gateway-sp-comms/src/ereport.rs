@@ -575,7 +575,18 @@ fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
             convert_cbor_object_into(cbor, &mut json)?;
             JsonValue::Object(json)
         }
-        CborValue::Text(s) => JsonValue::String(s),
+        CborValue::Text(s) => {
+            // Strip null bytes from the start and end of the string, in case it
+            // came from a null-padded byte array in Hubris. We do this
+            // conditionally on the presence of such bytes, because it should be
+            // unnecessary to reallocate if we aren't stripping nulls.
+            let s = if s.starts_with('\0') || s.ends_with('\0') {
+                s.trim_matches('\0').to_string()
+            } else {
+                s
+            };
+            JsonValue::String(s)
+        }
 
         // Per RFC 8949 section 6.1:
         //
