@@ -2439,7 +2439,22 @@ async fn run_command(
                         }
                     }
                     serde_json::Value::String(s) => {
-                        buf.push_str(s);
+                        if !s.contains('\n') {
+                            buf.push_str(s);
+                        } else {
+                            let indent = indent + 4;
+                            let mut lines = s.lines();
+                            if let Some(line) = lines.next() {
+                                writeln!(buf, "\n{:>indent$}{line}", "").expect(
+                                    "writing to a string should always work",
+                                );
+                                for line in lines {
+                                    writeln!(buf, "{:>indent$}{line}", "").expect(
+                                        "writing to a string should always work",
+                                    );
+                                }
+                            }
+                        }
                     }
                     serde_json::Value::Number(n) => {
                         buf.push_str(&n.to_string());
