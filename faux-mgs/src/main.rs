@@ -2332,6 +2332,8 @@ async fn run_command(
             restart_id: req_restart_id,
             limit,
         } => {
+            use std::fmt::Write;
+
             anyhow::ensure!(
                 committed_ena <= Some(start_ena),
                 "`--committed-ena` argument must be less than or equal to \
@@ -2377,20 +2379,63 @@ async fn run_command(
                 "TIME", "CLASS", "ENA"
             );
 
-            use std::fmt::Write;
+            enum Name<'a> {
+                Key(&'a str),
+                ArrayIndex(&'a Name<'a>, usize),
+            }
+
+            impl std::fmt::Display for Name<'_> {
+                fn fmt(
+                    &self,
+                    f: &mut std::fmt::Formatter<'_>,
+                ) -> std::fmt::Result {
+                    match self {
+                        Name::Key(key) => write!(f, "{key}"),
+                        Name::ArrayIndex(key, index) => {
+                            write!(f, "{key}[{index}]")
+                        }
+                    }
+                }
+            }
+
             fn prettyprint_json(
                 buf: &mut String,
                 indent: usize,
+                name: Name<'_>,
                 value: &serde_json::Value,
             ) {
                 match value {
                     serde_json::Value::Object(obj) => {
-                        prettyprint_json_obj(buf, indent + 2, obj);
+                        buf.push_str("(object)\n");
+                        prettyprint_json_obj(buf, indent + 4, obj);
+                        if !obj.is_empty() {
+                            writeln!(buf, "{:>indent$}(end {name})", "")
+                                .expect(
+                                    "writing to a string should always work",
+                                );
+                        }
                     }
                     serde_json::Value::Array(arr) => {
-                        for value in arr {
-                            prettyprint_json(buf, indent + 2, value);
-                            buf.push('\n');
+                        writeln!(buf, "(array of {} elements)", arr.len())
+                            .expect("writing to a string should always work");
+                        if !arr.is_empty() {
+                            for (idx, value) in arr.iter().enumerate() {
+                                let indent = indent + 4;
+                                write!(buf, "{:>indent$}", "").expect(
+                                    "writing to a string should always work",
+                                );
+                                prettyprint_json(
+                                    buf,
+                                    indent,
+                                    Name::ArrayIndex(&name, idx),
+                                    value,
+                                );
+                                buf.push('\n');
+                            }
+                            writeln!(buf, "{:>indent$}(end {name})", "")
+                                .expect(
+                                    "writing to a string should always work",
+                                );
                         }
                     }
                     serde_json::Value::String(s) => {
@@ -2413,24 +2458,21 @@ async fn run_command(
                 indent: usize,
                 obj: &serde_json::Map<String, serde_json::Value>,
             ) {
-                if obj.is_empty() {
+                for (key, value) in obj {
+                    let key = if key == "k" {
+                        "class"
+                    } else if key == "v" {
+                        "version"
+                    } else {
+                        key.as_ref()
+                    };
+                    write!(buf, "{:>indent$}{key} = ", "")
+                        .expect("writing to a string works okay");
+                    prettyprint_json(buf, indent, Name::Key(key), value);
                     buf.push('\n');
-                } else {
-                    for (key, value) in obj {
-                        let key = if key == "k" {
-                            "class"
-                        } else if key == "v" {
-                            "version"
-                        } else {
-                            key.as_ref()
-                        };
-                        write!(buf, "{:>indent$}{key} = ", "")
-                            .expect("writing to a string works okay");
-                        prettyprint_json(buf, indent, value);
-                        buf.push('\n');
-                    }
                 }
             }
+
             for ereport in ereports {
                 lines.push(header.clone());
                 let uptime: &dyn std::fmt::Display =
