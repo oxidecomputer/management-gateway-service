@@ -267,8 +267,8 @@ pub enum MgsRequest {
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
 )]
 pub struct HostInfoRequest {
-    offset: u32,
-    index: u32,
+    pub offset: u32,
+    pub index: u32,
 }
 
 #[derive(
