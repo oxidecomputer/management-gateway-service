@@ -1850,13 +1850,21 @@ impl fmt::Display for HfError {
     Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum HostPanicError {
-    Placeholder,
+    NoHostInfo,
+    InvalidOffset,
+    InvalidIndex,
+    ServerRestarted,
 }
 
 impl fmt::Display for HostPanicError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::Placeholder => "",
+            Self::NoHostInfo => "No Host Panic Available",
+            Self::InvalidOffset => "Invalid Host Panic data offset request",
+            Self::InvalidIndex => {
+                "Incorrect Host Panic index (new panic occurred)"
+            }
+            Self::ServerRestarted => "Failed to retrieve Host Panic",
         };
         write!(f, "{s}")
     }
@@ -1869,13 +1877,21 @@ impl fmt::Display for HostPanicError {
     Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum HostBootfailError {
-    Placeholder,
+    NoHostInfo,
+    InvalidOffset,
+    InvalidIndex,
+    ServerRestarted,
 }
 
 impl fmt::Display for HostBootfailError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let s = match self {
-            Self::Placeholder => "",
+            Self::NoHostInfo => "No Boot Failure Available",
+            Self::InvalidOffset => "Invalid Boot Failure data offset request",
+            Self::InvalidIndex => {
+                "Incorrect Boot Failure index (new panic occurred)"
+            }
+            Self::ServerRestarted => "Failed to retrieve Boot Failure",
         };
         write!(f, "{s}")
     }
