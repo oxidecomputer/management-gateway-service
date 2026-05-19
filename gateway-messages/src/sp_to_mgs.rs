@@ -1880,3 +1880,16 @@ impl fmt::Display for HostBootfailError {
         write!(f, "{s}")
     }
 }
+
+pub struct HostPanicPayloadData {
+    pub len: usize,
+    pub index: u32,
+    pub total_len: u32,
+}
+
+pub struct HostBootfailPayloadData {
+    pub len: usize,
+    pub index: u32,
+    pub total_len: u32,
+    pub reason: u8,
+}

@@ -19,7 +19,9 @@ use crate::DumpSegment;
 use crate::DumpTask;
 use crate::HF_PAGE_SIZE;
 use crate::Header;
+use crate::HostBootfailPayloadData;
 use crate::HostInfoRequest;
+use crate::HostPanicPayloadData;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
 use crate::Message;
@@ -437,19 +439,6 @@ pub trait SpHandler {
         len: u32,
         trailing_tx_buf: &mut [u8],
     ) -> Result<HostBootfailPayloadData, SpError>;
-}
-
-pub struct HostPanicPayloadData {
-    pub len: usize,
-    pub index: u32,
-    pub total_len: u32,
-}
-
-pub struct HostBootfailPayloadData {
-    pub len: usize,
-    pub index: u32,
-    pub total_len: u32,
-    pub reason: u8,
 }
 
 /// Handle a single incoming message.
