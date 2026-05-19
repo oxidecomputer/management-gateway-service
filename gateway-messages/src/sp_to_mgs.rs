@@ -186,6 +186,19 @@ pub enum SpResponse {
 
     /// Default slot as persisted in non-volatile memory
     ComponentPersistentSlot(u16),
+
+    /// Host Panic Payload. Metadata here, payload in trailing data
+    HostPanicPayload {
+        total_len: u32,
+        index: u32,
+    },
+
+    /// Host Boot Failure Payload. Metadata here, payload in trailing data
+    HostBootfailPayload {
+        total_len: u32,
+        index: u32,
+        reason: u8,
+    },
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -1159,6 +1172,8 @@ pub enum SpError {
     Monorail(MonorailError),
     Dump(DumpError),
     Hf(HfError),
+    HostPanic(HostPanicError),
+    HostBootfail(HostBootfailError),
 }
 
 impl fmt::Display for SpError {
@@ -1283,6 +1298,8 @@ impl fmt::Display for SpError {
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
             Self::Hf(e) => write!(f, "hf: {}", e),
+            Self::HostPanic(e) => write!(f, "hostpanic: {}", e),
+            Self::HostBootfail(e) => write!(f, "hostbootfail: {}", e),
         }
     }
 }
@@ -1821,6 +1838,44 @@ impl fmt::Display for HfError {
             Self::HashUncalculated => "No hash calculated for slot",
             Self::RecalculateHash => "Slot requires hash recalculation",
             Self::HashInProgress => "Hash calcuation in progress",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Errors encountered while obtaining Host Panic messages
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum HostPanicError {
+    Placeholder,
+}
+
+impl fmt::Display for HostPanicError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Placeholder => "",
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Errors encountered while obtaining Host Boot Failure messages
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum HostBootfailError {
+    Placeholder,
+}
+
+impl fmt::Display for HostBootfailError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::Placeholder => "",
         };
         write!(f, "{s}")
     }

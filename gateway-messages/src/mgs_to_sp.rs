@@ -241,6 +241,34 @@ pub enum MgsRequest {
     /// current default slot as persisted in non-volatile memory. This may be
     /// different than the current active slot (see `ComponentGetActiveSlot`).
     ComponentGetPersistentSlot(SpComponent),
+
+    /// Request for Host Panic Payload
+    GetHostPanicPayload {
+        // If Some: must include a valid offset, and the index of the current Host Panic.
+        // If None: Will always be an offset of 0, and the index of the current Host Panic
+        // (if any) will be included in the response
+        request: Option<HostInfoRequest>,
+        // The maximum size, in bytes, of the fragment to be returned
+        len: u32,
+    },
+
+    /// Request for Host Boot Failure Payload
+    GetHostBootfailPayload {
+        // If Some: must include a valid offset, and the index of the current Host Bootfail.
+        // If None: Will always be an offset of 0, and the index of the current Host Bootfail
+        // (if any) will be included in the response
+        request: Option<HostInfoRequest>,
+        // The maximum size, in bytes, of the fragment to be returned
+        len: u32,
+    },
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
+)]
+pub struct HostInfoRequest {
+    offset: u32,
+    index: u32,
 }
 
 #[derive(
