@@ -744,6 +744,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "877a4ace8713b0bcf2a4e7eec82529c029f1d0619886d18145fea96c3ffe5c0f"
 
 [[package]]
+name = "erebor"
+version = "0.1.0"
+source = "git+https://github.com/oxidecomputer/erebor?rev=400a0faa1adaef7bc29d9ec39d724b27a9efb3df#400a0faa1adaef7bc29d9ec39d724b27a9efb3df"
+dependencies = [
+ "serde_json",
+]
+
+[[package]]
 name = "errno"
 version = "0.3.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -779,6 +787,7 @@ dependencies = [
  "camino",
  "clap",
  "colored",
+ "erebor",
  "futures",
  "gateway-messages",
  "gateway-sp-comms",

@@ -2332,8 +2332,6 @@ async fn run_command(
             restart_id: req_restart_id,
             limit,
         } => {
-            use std::fmt::Write;
-
             anyhow::ensure!(
                 committed_ena <= Some(start_ena),
                 "`--committed-ena` argument must be less than or equal to \
@@ -2379,115 +2377,6 @@ async fn run_command(
                 "TIME", "CLASS", "ENA"
             );
 
-            enum Name<'a> {
-                Key(&'a str),
-                ArrayIndex(&'a Name<'a>, usize),
-            }
-
-            impl std::fmt::Display for Name<'_> {
-                fn fmt(
-                    &self,
-                    f: &mut std::fmt::Formatter<'_>,
-                ) -> std::fmt::Result {
-                    match self {
-                        Name::Key(key) => write!(f, "{key}"),
-                        Name::ArrayIndex(key, index) => {
-                            write!(f, "{key}[{index}]")
-                        }
-                    }
-                }
-            }
-
-            fn prettyprint_json(
-                buf: &mut String,
-                indent: usize,
-                name: Name<'_>,
-                value: &serde_json::Value,
-            ) {
-                match value {
-                    serde_json::Value::Object(obj) => {
-                        buf.push_str("(object)\n");
-                        prettyprint_json_obj(buf, indent + 4, obj);
-                        if !obj.is_empty() {
-                            writeln!(buf, "{:>indent$}(end {name})", "")
-                                .expect(
-                                    "writing to a string should always work",
-                                );
-                        }
-                    }
-                    serde_json::Value::Array(arr) => {
-                        writeln!(buf, "(array of {} elements)", arr.len())
-                            .expect("writing to a string should always work");
-                        if !arr.is_empty() {
-                            for (idx, value) in arr.iter().enumerate() {
-                                let indent = indent + 4;
-                                write!(buf, "{:>indent$}", "").expect(
-                                    "writing to a string should always work",
-                                );
-                                prettyprint_json(
-                                    buf,
-                                    indent,
-                                    Name::ArrayIndex(&name, idx),
-                                    value,
-                                );
-                                buf.push('\n');
-                            }
-                            writeln!(buf, "{:>indent$}(end {name})", "")
-                                .expect(
-                                    "writing to a string should always work",
-                                );
-                        }
-                    }
-                    serde_json::Value::String(s) => {
-                        if !s.contains('\n') {
-                            buf.push_str(s);
-                        } else {
-                            let indent = indent + 4;
-                            let mut lines = s.lines();
-                            if let Some(line) = lines.next() {
-                                writeln!(buf, "\n{:>indent$}{line}", "").expect(
-                                    "writing to a string should always work",
-                                );
-                                for line in lines {
-                                    writeln!(buf, "{:>indent$}{line}", "").expect(
-                                        "writing to a string should always work",
-                                    );
-                                }
-                            }
-                        }
-                    }
-                    serde_json::Value::Number(n) => {
-                        buf.push_str(&n.to_string());
-                    }
-                    serde_json::Value::Bool(b) => {
-                        buf.push_str(if *b { "true" } else { "false" });
-                    }
-                    serde_json::Value::Null => {
-                        buf.push_str(NULL);
-                    }
-                }
-            }
-
-            fn prettyprint_json_obj(
-                buf: &mut String,
-                indent: usize,
-                obj: &serde_json::Map<String, serde_json::Value>,
-            ) {
-                for (key, value) in obj {
-                    let key = if key == "k" {
-                        "class"
-                    } else if key == "v" {
-                        "version"
-                    } else {
-                        key.as_ref()
-                    };
-                    write!(buf, "{:>indent$}{key} = ", "")
-                        .expect("writing to a string works okay");
-                    prettyprint_json(buf, indent, Name::Key(key), value);
-                    buf.push('\n');
-                }
-            }
-
             for ereport in ereports {
                 lines.push(header.clone());
                 let uptime: &dyn std::fmt::Display =
@@ -2509,9 +2398,8 @@ async fn run_command(
                     ereport.ena.into_u64(),
                 ));
                 lines.push(String::new());
-                let mut buf = String::new();
-                prettyprint_json_obj(&mut buf, 0, &ereport.data);
-                lines.push(buf);
+                let pretty = erebor::Displayer::new(&ereport.data).to_string();
+                lines.push(pretty);
             }
 
             Ok(Output::Lines(lines))
