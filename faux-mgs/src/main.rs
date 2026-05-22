@@ -2398,7 +2398,8 @@ async fn run_command(
                     ereport.ena.into_u64(),
                 ));
                 lines.push(String::new());
-                let pretty = erebor::Displayer::new(&ereport.data).to_string();
+                let data = serde_json::Value::Object(ereport.data);
+                let pretty = erebor::Displayer::new(&data).to_string();
                 lines.push(pretty);
             }
 
