@@ -33,7 +33,7 @@ camino-tempfile = "1.4.1"
 clap = { version = "4.5", features = ["derive", "env"] }
 colored = "3"
 convert_case = "0.8"
-erebor = { git = "https://github.com/oxidecomputer/erebor", rev = "d41644dc6ec8396415712a2863edbee73d6e7ab9" }
+erebor = { git = "https://github.com/oxidecomputer/erebor", rev = "48512bf970474ff0fd0868c833fd504c8d169064" }
 expectorate = "=1.1.0" # 1.2 requires rust 1.75; bump eventually
 futures = "0.3.31"
 fxhash = "0.2.1"
