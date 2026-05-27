@@ -12,7 +12,6 @@
 
 use async_trait::async_trait;
 use fxhash::FxHashMap;
-use gateway_messages::version;
 use gateway_messages::Header;
 use gateway_messages::Message;
 use gateway_messages::MessageKind;
@@ -21,11 +20,12 @@ use gateway_messages::MgsResponse;
 use gateway_messages::SpComponent;
 use gateway_messages::SpRequest;
 use gateway_messages::SpResponse;
+use gateway_messages::version;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::o;
 use slog::warn;
-use slog::Logger;
 use slog_error_chain::SlogInlineError;
 use std::collections::hash_map;
 use std::fmt;
@@ -37,20 +37,20 @@ use std::sync::Arc;
 use std::time::Duration;
 use thiserror::Error;
 use tokio::net::UdpSocket;
+use tokio::sync::Mutex;
 use tokio::sync::mpsc;
 use tokio::sync::mpsc::error::TrySendError;
-use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 use tokio::time::Instant;
 
+use crate::HostPhase2Provider;
+use crate::SP_TO_MGS_MULTICAST_ADDR;
 use crate::error::HostPhase2Error;
 use crate::scope_id_cache::InterfaceError;
 use crate::scope_id_cache::Name;
 use crate::scope_id_cache::ScopeIdCache;
 use crate::shared_socket;
 use crate::single_sp::HostPhase2Request;
-use crate::HostPhase2Provider;
-use crate::SP_TO_MGS_MULTICAST_ADDR;
 
 #[derive(Debug, Error, SlogInlineError)]
 #[error("failed to bind to {addr})")]
@@ -209,7 +209,9 @@ impl<T: Send> SharedSocket<T> {
 
             match single_sp_handlers.entry(interface.clone()) {
                 hash_map::Entry::Occupied(_) => {
-                    panic!("single_sp_handler called with duplicate interface {interface:?}");
+                    panic!(
+                        "single_sp_handler called with duplicate interface {interface:?}"
+                    );
                 }
                 hash_map::Entry::Vacant(slot) => {
                     slot.insert(tx);
@@ -288,22 +290,21 @@ impl<T> SingleSpHandle<T> {
 
         // Scope ID changed; if we had a nonzero scope ID, we'd previously
         // joined the SP_TO_MGS multicast group on it; now leave it.
-        if old_scope_id != 0 {
-            if let Err(err) = self
+        if old_scope_id != 0
+            && let Err(err) = self
                 .socket
                 .leave_multicast_v6(&SP_TO_MGS_MULTICAST_ADDR, old_scope_id)
-            {
-                // This presumably isn't fatal, because `old_scope_id` almost
-                // certainly references an interface that no longer exists; just
-                // log a warning and move on.
-                warn!(
-                    self.log, "failed to leave multicast group";
-                    "group" => %SP_TO_MGS_MULTICAST_ADDR,
-                    "interface" => self.interface(),
-                    "scope_id" => old_scope_id,
-                    "err" => %err,
-                );
-            }
+        {
+            // This presumably isn't fatal, because `old_scope_id` almost
+            // certainly references an interface that no longer exists; just
+            // log a warning and move on.
+            warn!(
+                self.log, "failed to leave multicast group";
+                "group" => %SP_TO_MGS_MULTICAST_ADDR,
+                "interface" => self.interface(),
+                "scope_id" => old_scope_id,
+                "err" => %err,
+            );
         }
 
         // Join the same multicast group on our new scope ID.
@@ -726,7 +727,7 @@ impl<T: HostPhase2Provider> ControlPlaneAgentHandler<T> {
                     return Err(RecvError::VersionMismatch {
                         expected: version::CURRENT,
                         sp: header.version,
-                    })
+                    });
                 }
                 // We failed to deserialize but the version is in the range we
                 // should have understood; return a deserialization error.

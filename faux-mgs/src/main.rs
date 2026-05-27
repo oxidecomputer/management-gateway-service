@@ -4,25 +4,29 @@
 
 // Copyright 2022 Oxide Computer Company
 
-use anyhow::anyhow;
-use anyhow::bail;
 use anyhow::Context;
 use anyhow::Result;
+use anyhow::anyhow;
+use anyhow::bail;
 use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
 use clap::ValueEnum;
-use futures::stream::FuturesOrdered;
+use colored::Colorize;
 use futures::FutureExt;
 use futures::StreamExt;
-use gateway_messages::ignition::TransceiverSelect;
+use futures::stream::FuturesOrdered;
+use gateway_messages::ApobComponentAction;
+use gateway_messages::ApobComponentActionResponse;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
+use gateway_messages::EcdsaSha2Nistp256Challenge;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::MonorailComponentAction;
 use gateway_messages::MonorailComponentActionResponse;
 use gateway_messages::PowerState;
+use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
 use gateway_messages::SpComponent;
 use gateway_messages::StartupOptions;
@@ -30,27 +34,27 @@ use gateway_messages::UnlockChallenge;
 use gateway_messages::UnlockResponse;
 use gateway_messages::UpdateId;
 use gateway_messages::UpdateStatus;
-use gateway_messages::ROT_PAGE_SIZE;
-use gateway_sp_comms::ereport;
-use gateway_sp_comms::shared_socket;
+use gateway_messages::ignition::TransceiverSelect;
 use gateway_sp_comms::InMemoryHostPhase2Provider;
+use gateway_sp_comms::MGS_PORT;
 use gateway_sp_comms::SharedSocket;
 use gateway_sp_comms::SingleSp;
 use gateway_sp_comms::SpComponentDetails;
 use gateway_sp_comms::SpRetryConfig;
 use gateway_sp_comms::SwitchPortConfig;
 use gateway_sp_comms::VersionedSpState;
-use gateway_sp_comms::MGS_PORT;
+use gateway_sp_comms::ereport;
+use gateway_sp_comms::shared_socket;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
 use serde_json::json;
+use slog::Drain;
+use slog::Level;
+use slog::Logger;
 use slog::debug;
 use slog::info;
 use slog::o;
 use slog::warn;
-use slog::Drain;
-use slog::Level;
-use slog::Logger;
 use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
 use std::fs;
@@ -155,11 +159,7 @@ fn level_from_str(s: &str) -> Result<Level> {
 struct JsonPretty;
 
 fn json_pretty_from_str(s: &str) -> Result<JsonPretty> {
-    if s == "pretty" {
-        Ok(JsonPretty)
-    } else {
-        bail!("expected \"pretty\"")
-    }
+    if s == "pretty" { Ok(JsonPretty) } else { bail!("expected \"pretty\"") }
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -171,22 +171,22 @@ enum Command {
     /// Ask SP for its current state.
     State,
 
-    /// Get the ignition state for a single target port (only valid if the SP is
-    /// an ignition controller).
+    /// Get the ignition state for a port (only valid if the SP is an ignition
+    /// controller).
     Ignition {
-        #[clap(
-            help = "integer of a target, or 'all' for all targets",
-            value_parser = IgnitionLinkEventsTarget::parse,
-        )]
-        target: IgnitionLinkEventsTarget,
+        #[clap(flatten)]
+        sel: IgnitionBulkSelectorWithCompatibilityShim,
     },
 
     /// Send an ignition command for a single target port (only valid if the SP
     /// is an ignition controller).
     IgnitionCommand {
-        target: u8,
+        // We can't use the compatibility shim here because it has an optional
+        // positional argument, which can't be followed by `command`
+        #[clap(flatten)]
+        sel: IgnitionSingleSelector,
         #[clap(
-            help = "'power-on', 'power-off', or 'power-reset'",
+            help = "'power-[on,off,reset]' or '[set,clear]-always-transmit'",
             value_parser = ignition_command_from_str,
         )]
         command: IgnitionCommand,
@@ -195,21 +195,17 @@ enum Command {
     /// Get bulk ignition link events (only valid if the SP is an ignition
     /// controller).
     IgnitionLinkEvents {
-        #[clap(
-            help = "integer of a target, or 'all' for all targets",
-            value_parser = IgnitionLinkEventsTarget::parse,
-        )]
-        target: IgnitionLinkEventsTarget,
+        #[clap(flatten)]
+        sel: IgnitionBulkSelectorWithCompatibilityShim,
     },
 
     /// Clear all ignition link events (only valid if the SP is an ignition
     /// controller).
     ClearIgnitionLinkEvents {
-        #[clap(
-            help = "integer of a target, or 'all' for all targets",
-            value_parser = IgnitionLinkEventsTarget::parse,
-        )]
-        target: IgnitionLinkEventsTarget,
+        // We can't use the compatibility shim here because it has an optional
+        // positional argument, which can't be followed by `transceiver_select`
+        #[clap(flatten)]
+        sel: IgnitionBulkSelector,
         #[clap(
             help = "'controller', 'target-link0', 'target-link1', or 'all'",
             value_parser = IgnitionLinkEventsTransceiverSelect::parse,
@@ -228,28 +224,24 @@ enum Command {
     ///
     /// Power failures during the copy can disable the RoT. Only one stage0
     /// update should be in process in a rack at any time.
+    ///
+    /// Some components (e.g., `host-boot-flash`) allow setting a default
+    /// slot that gets persisted in non-volatile memory. Passing the `persist`
+    /// flag will return that value which may differ than the currently
+    /// active slot as returned without the flag.
     ComponentActiveSlot {
         #[clap(value_parser = parse_sp_component)]
         component: SpComponent,
-        #[clap(
-            short,
-            long,
-            value_name = "SLOT",
-            requires = "switch_duration",
-            help = "set the active slot"
-        )]
+        #[clap(short, long, value_name = "SLOT", help = "set the active slot")]
         set: Option<u16>,
         #[clap(
             short,
             long,
-            requires = "set",
-            group = "switch_duration",
-            help = "persist the active slot to non-volatile memory"
+            help = "get default slot from or persist the active slot to non-volatile memory"
         )]
         persist: bool,
-        /// Only valid with component "rot":
         /// Prefer the specified slot on the next soft reset.
-        #[clap(short, long, requires = "set", group = "switch_duration")]
+        #[clap(short, long, requires = "set", conflicts_with = "persist")]
         transient: bool,
     },
 
@@ -460,6 +452,12 @@ enum Command {
         cmd: MonorailCommand,
     },
 
+    /// Perform an action on the APOB
+    Apob {
+        #[clap(subcommand)]
+        cmd: ApobCommand,
+    },
+
     /// List and read per-task crash dumps
     Dump {
         #[clap(subcommand)]
@@ -555,21 +553,47 @@ enum MonorailCommand {
         #[clap(flatten)]
         cmd: UnlockGroup,
 
-        /// Public key for SSH signing challenge
+        /// Name of the signing key for producing unlock challenge responses
         ///
-        /// This is either a path to a public key (ending in `.pub`), or a
-        /// substring to match against known keys (which can be printed with
-        /// `faux-mgs monorail unlock --list`).
+        /// This is either a path to an SSH public key file (ending in `.pub`),
+        /// or a substring to match against known SSH keys (which can be printed
+        /// with `faux-mgs monorail unlock --list`), or a permslip key name (see
+        /// `permslip list-keys -t`).
         #[clap(short, long, conflicts_with = "list")]
         key: Option<String>,
 
         /// Path to the SSH agent socket
         #[clap(long, env)]
         ssh_auth_sock: Option<PathBuf>,
+
+        /// Use the Online Signing Service with `permslip`
+        #[clap(
+            short,
+            long,
+            alias = "online",
+            conflicts_with = "list",
+            requires = "key"
+        )]
+        permslip: bool,
     },
 
     /// Lock the technician port
     Lock,
+
+    /// Print diagnostic information about the rack
+    Diagnose {
+        #[clap(flatten)]
+        sel: MonorailSelectorArgs,
+        /// Print additional info for present systems
+        #[clap(long, short)]
+        verbose: bool,
+    },
+}
+
+#[derive(Subcommand, Debug, Clone)]
+enum ApobCommand {
+    /// Clears the APOB in flash
+    Clear,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -630,6 +654,410 @@ impl std::fmt::Display for CfpaSlot {
     }
 }
 
+#[derive(Copy, Clone, Debug, Default, clap::Args)]
+pub struct IgnitionSelector {
+    /// Ignition target
+    #[clap(short, long)]
+    target: Option<u8>,
+
+    /// Sled cubby (0-31)
+    #[clap(
+        short, long, conflicts_with_all = ["target"],
+        value_parser = parse_cubby
+    )]
+    cubby: Option<u8>,
+
+    /// Sidecar ('local' or 'peer')
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby"],
+        value_parser = parse_sidecar_selector
+    )]
+    sidecar: Option<SidecarSelector>,
+
+    /// PSC index (0-1)
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby", "sidecar"],
+        value_parser = parse_psc
+    )]
+    psc: Option<u8>,
+}
+
+#[derive(Clone, Debug, clap::Args)]
+#[clap(group(clap::ArgGroup::new("select")
+    .required(true)
+    .args(&["target", "cubby", "sidecar", "psc"]))
+)]
+pub struct IgnitionSingleSelector {
+    #[clap(flatten)]
+    sel: IgnitionSelector,
+}
+
+impl IgnitionSingleSelector {
+    fn get_target(&self, log: &Logger) -> u8 {
+        // presence of at least one is enforced by clap
+        self.sel.get_target(log).unwrap()
+    }
+}
+
+impl IgnitionSelector {
+    /// Decodes CLI arguments to an ignition target
+    ///
+    /// # Panics
+    /// If the `IgnitionSelector` state is invalid (checked by `clap`)
+    fn get_target(&self, log: &Logger) -> Option<u8> {
+        // At this point, we assume that the various `Option` values are
+        // mutually exclusive (enforced by `clap`).
+        if let Some(t) = self.target {
+            Some(t)
+        } else if let Some(c) = self.cubby {
+            // See RFD 144 § 6.1 (Switch Port Map) for this mapping
+            let t = match c {
+                0 => 14,
+                1 => 30,
+                2 => 15,
+                3 => 31,
+                4 => 13,
+                5 => 29,
+                6 => 12,
+                7 => 28,
+                8 => 10,
+                9 => 26,
+                10 => 11,
+                11 => 27,
+                12 => 9,
+                13 => 25,
+                14 => 8,
+                15 => 24,
+                16 => 4,
+                17 => 20,
+                18 => 5,
+                19 => 21,
+                20 => 7,
+                21 => 23,
+                22 => 6,
+                23 => 22,
+                24 => 0,
+                25 => 16,
+                26 => 1,
+                27 => 17,
+                28 => 3,
+                29 => 19,
+                30 => 2,
+                31 => 18,
+                i => panic!("bad cubby {i}"),
+            };
+            debug!(log, "decoded cubby {c} => target {t}");
+            Some(t)
+        } else if let Some(s) = self.sidecar {
+            let t = match s {
+                SidecarSelector::Peer => 34,
+                SidecarSelector::Local => 35,
+            };
+            debug!(log, "decoded {s:?} => target {t}");
+            Some(t)
+        } else if let Some(p) = self.psc {
+            let t = match p {
+                0 => 32,
+                1 => 33,
+                i => panic!("bad psc {i}"),
+            };
+            debug!(log, "decoded psc {p} => target {t}");
+            Some(t)
+        } else {
+            None
+        }
+    }
+}
+
+/// `IgnitionSelector` that also supports `--all`
+#[derive(Clone, Debug, clap::Args)]
+#[clap(group(clap::ArgGroup::new("select")
+    .required(true)
+    .args(&["target", "cubby", "sidecar", "psc", "all"]))
+)]
+pub struct IgnitionBulkSelector {
+    #[clap(flatten)]
+    sel: IgnitionSelector,
+
+    /// All targets
+    #[clap(short, long)]
+    all: bool,
+}
+
+impl IgnitionBulkSelector {
+    fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
+        // Delegate to the fancier representation
+        IgnitionBulkSelectorWithCompatibilityShim {
+            sel: self.sel,
+            all: self.all,
+            compat: None,
+        }
+        .get_targets(log)
+    }
+}
+
+/// `IgnitionBulkSelector` that also supports a positional argument
+///
+/// This is for backwards compatibility. However, it can't be used in
+/// combination with later positional arguments, because optional positional
+/// arguments are only allowed at the end of an argument list.
+#[derive(Clone, Debug, clap::Args)]
+#[clap(group(clap::ArgGroup::new("select")
+    .required(true)
+    .args(&["target", "cubby", "sidecar", "psc", "all", "compat"]))
+)]
+pub struct IgnitionBulkSelectorWithCompatibilityShim {
+    #[clap(flatten)]
+    sel: IgnitionSelector,
+
+    /// All targets
+    #[clap(short, long)]
+    all: bool,
+
+    /// 'all' or a target number
+    /// (deprecated, present for backwards-compatibility)
+    #[clap(value_parser = parse_bulk_targets_shim)]
+    compat: Option<IgnitionBulkTargets>,
+}
+
+impl IgnitionBulkSelectorWithCompatibilityShim {
+    fn get_targets(&self, log: &Logger) -> Result<IgnitionBulkTargets> {
+        match (self.sel.get_target(log), self.all, self.compat) {
+            (Some(_), true, _) | (_, true, Some(_)) => {
+                bail!("cannot specify a target and `--all`")
+            }
+            (Some(_), _, Some(_)) => {
+                bail!(
+                    "cannot specify a target with both flags \
+                     and positional arguments"
+                )
+            }
+            (Some(target), false, None) => {
+                Ok(IgnitionBulkTargets::Single(target))
+            }
+            (None, false, Some(t)) => {
+                match t {
+                    IgnitionBulkTargets::All => warn!(
+                        log,
+                        "positional `all` argument is deprecated, \
+                         please switch to `--all`"
+                    ),
+                    IgnitionBulkTargets::Single(..) => warn!(
+                        log,
+                        "positional target argument is deprecated, \
+                         please switch to `--target`, `--cubby`, \
+                         `--sidecar`, or `--psc`"
+                    ),
+                }
+                Ok(t)
+            }
+            (None, true, None) => Ok(IgnitionBulkTargets::All),
+            (None, false, None) => {
+                // enforced by clap
+                panic!("must specify either a target or `--all`")
+            }
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug)]
+enum IgnitionBulkTargets {
+    Single(u8),
+    All,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+enum SidecarSelector {
+    Local,
+    Peer,
+}
+
+/// CLI selector for a device on the monorail network (can be empty)
+#[derive(Copy, Clone, Debug, clap::Args)]
+pub struct MonorailSelectorArgs {
+    /// Sled cubby (0-31)
+    #[clap(
+        short, long, conflicts_with_all = ["target"],
+        value_parser = parse_cubby
+    )]
+    cubby: Option<u8>,
+
+    /// Sidecar ('local' or 'peer')
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby"],
+        value_parser = parse_sidecar_selector
+    )]
+    sidecar: Option<SidecarSelector>,
+
+    /// PSC index (0-1)
+    #[clap(
+        short, long, conflicts_with_all = ["target", "cubby", "sidecar"],
+        value_parser = parse_psc
+    )]
+    psc: Option<u8>,
+}
+
+#[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
+enum MonorailSelector {
+    /// Sled cubby (0-31)
+    Cubby(u8),
+    /// Sidecar ('local' or 'peer')
+    Sidecar(SidecarSelector),
+    /// PSC index (0-1)
+    Psc(u8),
+}
+
+impl MonorailSelectorArgs {
+    /// Converts from `clap`-friendly arguments to a selector enum
+    ///
+    /// # Panics
+    /// If the selector state is invalid (checked by `clap`)
+    fn to_selector(self) -> Option<MonorailSelector> {
+        assert!(
+            u8::from(self.cubby.is_some())
+                + u8::from(self.sidecar.is_some())
+                + u8::from(self.psc.is_some())
+                <= 1,
+            "maximum of 1 selector may be present"
+        );
+        if let Some(cubby) = self.cubby {
+            assert!(cubby < 32);
+            Some(MonorailSelector::Cubby(cubby))
+        } else if let Some(sidecar) = self.sidecar {
+            Some(MonorailSelector::Sidecar(sidecar))
+        } else if let Some(psc) = self.psc {
+            assert!(psc < 2);
+            Some(MonorailSelector::Psc(psc))
+        } else {
+            None
+        }
+    }
+}
+
+impl std::fmt::Display for MonorailSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            MonorailSelector::Cubby(i) => write!(f, "Cubby {i}"),
+            MonorailSelector::Sidecar(SidecarSelector::Peer) => {
+                write!(f, "Peer Sidecar")
+            }
+            MonorailSelector::Sidecar(SidecarSelector::Local) => {
+                write!(f, "Local Sidecar")
+            }
+            MonorailSelector::Psc(i) => write!(f, "PSC {i}"),
+        }
+    }
+}
+
+impl MonorailSelector {
+    /// Decodes CLI arguments to a tuple of `(monorail port, ignition target)`
+    fn get_targets(&self, log: &Logger) -> (u8, u8) {
+        // Build a dummy IgnitionSelector to piggyback on its `get_target`
+        let ignition_target = match self {
+            MonorailSelector::Cubby(c) => {
+                IgnitionSelector { cubby: Some(*c), ..Default::default() }
+            }
+            MonorailSelector::Sidecar(s) => {
+                IgnitionSelector { sidecar: Some(*s), ..Default::default() }
+            }
+            MonorailSelector::Psc(p) => {
+                IgnitionSelector { psc: Some(*p), ..Default::default() }
+            }
+        }
+        .get_target(log)
+        .unwrap();
+        let monorail_port = match self {
+            MonorailSelector::Cubby(c) => {
+                // See RFD 144 § 6.1 (Switch Port Map) for this mapping
+                //
+                // Note that this mapping is different from ignition target
+                // mapping in `IgnitionSelector::get_target`; monorail ports are
+                // not one-to-one with ignition targets.
+                let t = match c {
+                    0 => 14,
+                    1 => 30,
+                    2 => 15,
+                    3 => 31,
+                    4 => 13,
+                    5 => 29,
+                    6 => 12,
+                    7 => 28,
+                    8 => 10,
+                    9 => 26,
+                    10 => 11,
+                    11 => 27,
+                    12 => 9,
+                    13 => 25,
+                    14 => 8,
+                    15 => 24,
+                    16 => 4,
+                    17 => 20,
+                    18 => 5,
+                    19 => 21,
+                    20 => 7,
+                    21 => 52,
+                    22 => 6,
+                    23 => 51,
+                    24 => 0,
+                    25 => 16,
+                    26 => 1,
+                    27 => 17,
+                    28 => 3,
+                    29 => 19,
+                    30 => 2,
+                    31 => 18,
+                    i => panic!("bad cubby {i}"),
+                };
+                debug!(log, "decoded cubby {c} => monorail port {t}");
+                t
+            }
+            MonorailSelector::Sidecar(s) => {
+                let t = match s {
+                    SidecarSelector::Peer => 42,
+                    SidecarSelector::Local => 48,
+                };
+                debug!(log, "decoded {s:?} => monorail port {t}");
+                t
+            }
+            MonorailSelector::Psc(p) => {
+                let t = match p {
+                    0 => 40,
+                    1 => 41,
+                    i => panic!("bad psc {i}"),
+                };
+                debug!(log, "decoded psc {p} => monorail port {t}");
+                t
+            }
+        };
+        (monorail_port, ignition_target)
+    }
+}
+
+fn parse_cubby(s: &str) -> Result<u8> {
+    let out: u8 = s.parse()?;
+    if out >= 32 {
+        bail!("cubby must be in the range 0-31, not {out}");
+    }
+    Ok(out)
+}
+
+fn parse_psc(s: &str) -> Result<u8> {
+    let out: u8 = s.parse()?;
+    if out >= 2 {
+        bail!("psc must be in the range 0-1, not {out}");
+    }
+    Ok(out)
+}
+
+fn parse_sidecar_selector(s: &str) -> Result<SidecarSelector> {
+    let out = match s.to_ascii_lowercase().as_str() {
+        "local" => SidecarSelector::Local,
+        "peer" => SidecarSelector::Peer,
+        _ => bail!("invalid sidecar selector '{s}', must be 'local' or 'peer'"),
+    };
+    Ok(out)
+}
+
 impl Command {
     // If the user didn't specify a listening port, what should we use? We
     // allow this to vary by command so that client commands (most of them) can
@@ -661,19 +1089,14 @@ fn parse_sp_component(component: &str) -> Result<SpComponent> {
         .map_err(|_| anyhow!("invalid component name: {component}"))
 }
 
-#[derive(Debug, Clone, Copy)]
-struct IgnitionLinkEventsTarget(Option<u8>);
-
-impl IgnitionLinkEventsTarget {
-    fn parse(s: &str) -> Result<Self> {
-        match s {
-            "all" | "ALL" => Ok(Self(None)),
-            _ => {
-                let target = s
-                    .parse()
-                    .with_context(|| "must be an integer (0..256) or 'all'")?;
-                Ok(Self(Some(target)))
-            }
+fn parse_bulk_targets_shim(s: &str) -> Result<IgnitionBulkTargets> {
+    match s {
+        "all" | "ALL" => Ok(IgnitionBulkTargets::All),
+        _ => {
+            let target = s
+                .parse()
+                .with_context(|| "must be an integer (0..256) or 'all'")?;
+            Ok(IgnitionBulkTargets::Single(target))
         }
     }
 }
@@ -689,7 +1112,9 @@ impl IgnitionLinkEventsTransceiverSelect {
             "target-link0" => Ok(Self(Some(TransceiverSelect::TargetLink0))),
             "target-link1" => Ok(Self(Some(TransceiverSelect::TargetLink1))),
             _ => {
-                bail!("transceiver selection must be one of 'all', 'controller', 'target-link0', 'target-link1'")
+                bail!(
+                    "transceiver selection must be one of 'all', 'controller', 'target-link0', 'target-link1'"
+                )
             }
         }
     }
@@ -709,6 +1134,12 @@ fn ignition_command_from_str(s: &str) -> Result<IgnitionCommand> {
         "power-on" => Ok(IgnitionCommand::PowerOn),
         "power-off" => Ok(IgnitionCommand::PowerOff),
         "power-reset" => Ok(IgnitionCommand::PowerReset),
+        "set-always-transmit" => {
+            Ok(IgnitionCommand::AlwaysTransmit { enabled: true })
+        }
+        "clear-always-transmit" => {
+            Ok(IgnitionCommand::AlwaysTransmit { enabled: false })
+        }
         _ => Err(anyhow!("Invalid ignition command: {s}")),
     }
 }
@@ -767,7 +1198,9 @@ fn build_requested_interfaces(patterns: Vec<String>) -> Result<Vec<String>> {
         }
         if requested_ifaces.len() == prev_count {
             if matched_existing {
-                bail!("`--interface {pattern}` did not match any interfaces not already covered by previous `--interface` arguments");
+                bail!(
+                    "`--interface {pattern}` did not match any interfaces not already covered by previous `--interface` arguments"
+                );
             } else {
                 bail!("`--interface {pattern}` did not match any interfaces");
             }
@@ -942,7 +1375,9 @@ async fn main() -> Result<()> {
         }
         Command::Update { allow_multiple_update, .. } => {
             if num_sps > 1 && !allow_multiple_update {
-                bail!("Did you mean to attempt to update multiple SPs? If so, add `--allow-multiple-updates`.");
+                bail!(
+                    "Did you mean to attempt to update multiple SPs? If so, add `--allow-multiple-updates`."
+                );
             }
         }
 
@@ -1199,17 +1634,20 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::Ignition { target } => {
+        Command::Ignition { sel } => {
             let mut by_target = BTreeMap::new();
-            if let Some(target) = target.0 {
-                let state = sp.ignition_state(target).await?;
-                by_target.insert(usize::from(target), state);
-            } else {
-                let states = sp.bulk_ignition_state().await?;
-                for (i, state) in states.into_iter().enumerate() {
-                    by_target.insert(i, state);
+            match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(target) => {
+                    let state = sp.ignition_state(target).await?;
+                    by_target.insert(usize::from(target), state);
                 }
-            }
+                IgnitionBulkTargets::All => {
+                    let states = sp.bulk_ignition_state().await?;
+                    for (i, state) in states.into_iter().enumerate() {
+                        by_target.insert(i, state);
+                    }
+                }
+            };
             if json {
                 Ok(Output::Json(serde_json::to_value(by_target).unwrap()))
             } else {
@@ -1220,7 +1658,8 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::IgnitionCommand { target, command } => {
+        Command::IgnitionCommand { sel, command } => {
+            let target = sel.get_target(&log);
             sp.ignition_command(target, command).await?;
             info!(log, "ignition command {command:?} send to target {target}");
             if json {
@@ -1231,15 +1670,18 @@ async fn run_command(
                 )]))
             }
         }
-        Command::IgnitionLinkEvents { target } => {
+        Command::IgnitionLinkEvents { sel } => {
             let mut by_target = BTreeMap::new();
-            if let Some(target) = target.0 {
-                let events = sp.ignition_link_events(target).await?;
-                by_target.insert(usize::from(target), events);
-            } else {
-                let events = sp.bulk_ignition_link_events().await?;
-                for (i, events) in events.into_iter().enumerate() {
-                    by_target.insert(i, events);
+            match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(target) => {
+                    let events = sp.ignition_link_events(target).await?;
+                    by_target.insert(usize::from(target), events);
+                }
+                IgnitionBulkTargets::All => {
+                    let events = sp.bulk_ignition_link_events().await?;
+                    for (i, events) in events.into_iter().enumerate() {
+                        by_target.insert(i, events);
+                    }
                 }
             }
             if json {
@@ -1252,22 +1694,28 @@ async fn run_command(
                 Ok(Output::Lines(lines))
             }
         }
-        Command::ClearIgnitionLinkEvents { target, transceiver_select } => {
-            sp.clear_ignition_link_events(target.0, transceiver_select.0)
-                .await?;
+        Command::ClearIgnitionLinkEvents { sel, transceiver_select } => {
+            let target = match sel.get_targets(&log)? {
+                IgnitionBulkTargets::Single(t) => Some(t),
+                IgnitionBulkTargets::All => None,
+            };
+            sp.clear_ignition_link_events(target, transceiver_select.0).await?;
             info!(log, "ignition link events cleared");
             if json {
                 Ok(Output::Json(json!({ "ack": "cleared" })))
             } else {
                 Ok(Output::Lines(vec![
-                    "ignition link events cleared".to_string()
+                    "ignition link events cleared".to_string(),
                 ]))
             }
         }
-        Command::ComponentActiveSlot { component, set, persist, transient } => {
-            if transient && component != SpComponent::ROT {
-                bail!("The --transient (-t) flag is only allowed for the 'rot' component, not for {component}");
-            } else if let Some(slot) = set {
+        Command::ComponentActiveSlot {
+            component,
+            set,
+            persist,
+            transient: _,
+        } => {
+            if let Some(slot) = set {
                 sp.set_component_active_slot(component, slot, persist).await?;
                 if json {
                     Ok(Output::Json(json!({ "ack": "set", "slot": slot })))
@@ -1277,8 +1725,16 @@ async fn run_command(
                     )]))
                 }
             } else {
-                let slot = sp.component_active_slot(component).await?;
-                info!(log, "active slot for {component:?}: {slot}");
+                let slot = if persist {
+                    sp.component_persistent_slot(component).await?
+                } else {
+                    sp.component_active_slot(component).await?
+                };
+                info!(
+                    log,
+                    "{} slot for {component:?}: {slot}",
+                    if persist { "persistent" } else { "active" }
+                );
                 if json {
                     Ok(Output::Json(json!({ "slot": slot })))
                 } else {
@@ -1344,9 +1800,53 @@ async fn run_command(
             if json {
                 return Ok(Output::Json(component_details_to_json(details)));
             }
+
+            /// Helper `struct` to pretty-print component details
+            ///
+            /// This normally delegates to `Debug`, but prints `LastPostCode`,
+            /// `PostCode`, and `Pcie` decoded values for convenience.
+            struct ComponentDetailPrinter(gateway_messages::ComponentDetails);
+            impl std::fmt::Display for ComponentDetailPrinter {
+                fn fmt(
+                    &self,
+                    f: &mut std::fmt::Formatter<'_>,
+                ) -> std::fmt::Result {
+                    use gateway_messages::ComponentDetails;
+                    match &self.0 {
+                        ComponentDetails::LastPostCode(p) => {
+                            let decoded = turin_post_decoder::decode(p.0);
+                            let detail = decoded.lines().join("\n    ");
+                            write!(f, "LastPostCode:\n    {detail}")
+                        }
+                        ComponentDetails::PostCode(p) => {
+                            let decoded = turin_post_decoder::decode(p.0);
+                            write!(f, "{}", decoded.lines().join("\n"))
+                        }
+                        ComponentDetails::Pcie(p) => {
+                            write!(
+                                f,
+                                "Pcie(PcieRegisterRead {{ \
+                                    bar: {:#x} \
+                                    offset: {:#x} \
+                                    reg_result: {}) \
+                                }})",
+                                p.bar,
+                                p.offset,
+                                match p.reg_result {
+                                    Ok(s) => format!("Ok({:#x})", s),
+                                    Err(e) => format!("Err({:#x})", e),
+                                }
+                            )
+                        }
+                        d => write!(f, "{d:?}"),
+                    }
+                }
+            }
+
             let mut lines = Vec::new();
             for entry in details.entries {
-                lines.push(format!("{entry:?}"));
+                let d = ComponentDetailPrinter(entry);
+                lines.push(format!("{d}"));
             }
             Ok(Output::Lines(lines))
         }
@@ -1383,9 +1883,9 @@ async fn run_command(
             if json {
                 Ok(Output::Json(json!({ "ack": "detached" })))
             } else {
-                Ok(Output::Lines(
-                    vec!["SP serial console detached".to_string()],
-                ))
+                Ok(Output::Lines(vec![
+                    "SP serial console detached".to_string(),
+                ]))
             }
         }
         Command::Update { component, slot, image, .. } => {
@@ -1436,7 +1936,9 @@ async fn run_command(
                     ..
                 } => {
                     let id = Uuid::from(id);
-                    format!("update {id} aux flash scan complete (found_match={found_match})")
+                    format!(
+                        "update {id} aux flash scan complete (found_match={found_match})"
+                    )
                 }
                 UpdateStatus::InProgress(sub_status) => {
                     let id = Uuid::from(sub_status.id);
@@ -1605,6 +2107,7 @@ async fn run_command(
                     cmd: UnlockGroup { time, list },
                     key,
                     ssh_auth_sock,
+                    permslip,
                 } => {
                     if list {
                         let Some(ssh_auth_sock) = ssh_auth_sock else {
@@ -1624,8 +2127,16 @@ async fn run_command(
                             time_sec,
                             ssh_auth_sock,
                             key,
+                            permslip,
                         )
                         .await?;
+                    }
+                }
+                MonorailCommand::Diagnose { sel, verbose } => {
+                    if let Some(sel) = sel.to_selector() {
+                        monorail_diagnose_one(&log, &sp, sel).await?;
+                    } else {
+                        monorail_diagnose_all(&log, &sp, verbose).await?;
                     }
                 }
             }
@@ -1635,6 +2146,37 @@ async fn run_command(
                 Ok(Output::Lines(vec!["done".to_string()]))
             }
         }
+        Command::Apob { cmd } => match cmd {
+            ApobCommand::Clear => {
+                let r = sp
+                    .component_action_with_response(
+                        SpComponent::HOST_CPU_BOOT_APOB,
+                        ComponentAction::Apob(ApobComponentAction::Clear),
+                    )
+                    .await?;
+                let ComponentActionResponse::Apob(r) = r else {
+                    bail!("unexpected response: {r:?}");
+                };
+                match r {
+                    ApobComponentActionResponse::Success => {
+                        if json {
+                            Ok(Output::Json(json!({ "ok": "apob" })))
+                        } else {
+                            Ok(Output::Lines(vec!["done".to_string()]))
+                        }
+                    }
+                    ApobComponentActionResponse::NotMuxedToSp => {
+                        bail!("host flash was not muxed to the SP");
+                    }
+                    ApobComponentActionResponse::NotImplemented => {
+                        bail!("APOB clear is not implemented for this target");
+                    }
+                    ApobComponentActionResponse::InvalidState => {
+                        bail!("APOB is in an invalid state");
+                    }
+                }
+            }
+        },
         Command::ReadComponentCaboose { component, slot, key } => {
             let slot = match (component, slot.as_deref()) {
                 (SpComponent::SP_ITSELF, Some("active" | "0") | None) => 0,
@@ -1824,12 +2366,41 @@ async fn run_command(
             lines.push(String::new());
             lines.push("ereports:".to_string());
 
+            const WRONG_TYPE: &str = "<wrong type>";
+            const NULL: &str = "<null>";
+            const MAX_UPTIME_DIGITS: usize = 12;
+            const MAX_ENA_DIGITS: usize = 18;
+            const MAX_CLASS: usize =
+                79 - MAX_UPTIME_DIGITS - MAX_ENA_DIGITS - 4;
+            let header = format!(
+                "{:<MAX_UPTIME_DIGITS$} {:<MAX_CLASS$} {:<MAX_ENA_DIGITS$}",
+                "TIME", "CLASS", "ENA"
+            );
+
             for ereport in ereports {
+                lines.push(header.clone());
+                let uptime: &dyn std::fmt::Display =
+                    match ereport.data.get("hubris_uptime_ms") {
+                        Some(serde_json::Value::Number(n)) => {
+                            &n.as_u64().unwrap_or(u64::MAX)
+                        }
+                        Some(_) => &WRONG_TYPE,
+                        None => &NULL,
+                    };
+                let class = match ereport.data.get("k") {
+                    Some(serde_json::Value::String(c)) => c.as_str(),
+                    Some(_) => WRONG_TYPE,
+                    None => NULL,
+                };
                 lines.push(format!(
-                    "{:#x}: {:#?}\n",
+                    "{uptime:<MAX_UPTIME_DIGITS$} {class:<MAX_CLASS$} \
+                     {:<#0MAX_ENA_DIGITS$x}",
                     ereport.ena.into_u64(),
-                    ereport.data
                 ));
+                lines.push(String::new());
+                let data = serde_json::Value::Object(ereport.data);
+                let pretty = erebor::Displayer::new(&data).to_string();
+                lines.push(pretty);
             }
 
             Ok(Output::Lines(lines))
@@ -1900,8 +2471,9 @@ async fn monorail_unlock(
     log: &Logger,
     sp: &SingleSp,
     time_sec: u32,
-    socket: Option<PathBuf>,
+    ssh_sock: Option<PathBuf>,
     pub_key: Option<String>,
+    permslip: bool,
 ) -> Result<()> {
     let r = sp
         .component_action_with_response(
@@ -1924,82 +2496,16 @@ async fn monorail_unlock(
         UnlockChallenge::Trivial { timestamp } => {
             UnlockResponse::Trivial { timestamp }
         }
-        UnlockChallenge::EcdsaSha2Nistp256(data) => {
-            let Some(socket) = socket else {
-                bail!("must provide --ssh-auth-sock");
-            };
-            let keys = ssh_list_keys(&socket)?;
-            let pub_key = if keys.len() == 1 && pub_key.is_none() {
-                keys[0].clone()
+        UnlockChallenge::EcdsaSha2Nistp256(ecdsa_challenge) => {
+            if pub_key.is_some() && permslip {
+                unlock_permslip(log, pub_key.unwrap(), challenge)?
+            } else if let Some(socket) = ssh_sock {
+                unlock_ssh(log, socket, pub_key, ecdsa_challenge)?
             } else {
-                let Some(pub_key) = pub_key else {
-                    bail!(
-                        "need --key for ECDSA challenge; \
-                         multiple keys are available"
-                    );
-                };
-                if pub_key.ends_with(".pub") {
-                    ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
-                        .with_context(|| {
-                        format!("could not read key from {pub_key:?}")
-                    })?
-                } else {
-                    let mut found = None;
-                    for k in keys.iter() {
-                        if k.to_openssh()?.contains(&pub_key) {
-                            if found.is_some() {
-                                bail!("multiple keys contain '{pub_key}'");
-                            }
-                            found = Some(k);
-                        }
-                    }
-                    let Some(found) = found else {
-                        bail!(
-                            "could not match '{pub_key}'; \
-                             use `faux-mgs monorail unlock --list` \
-                             to print keys"
-                        );
-                    };
-                    found.clone()
-                }
-            };
-
-            let mut data = data.as_bytes().to_vec();
-            let signer_nonce: [u8; 8] = rand::random();
-            data.extend(signer_nonce);
-
-            let signed = ssh_keygen_sign(socket, pub_key, &data)?;
-            debug!(log, "got signature {signed:?}");
-
-            let key_bytes =
-                signed.public_key().ecdsa().unwrap().as_sec1_bytes();
-            assert_eq!(key_bytes.len(), 65, "invalid key length");
-            let mut key = [0u8; 65];
-            key.copy_from_slice(key_bytes);
-
-            // Signature bytes are encoded per
-            // https://datatracker.ietf.org/doc/html/rfc5656#section-3.1.2
-            //
-            // They are a pair of `mpint` values, per
-            // https://datatracker.ietf.org/doc/html/rfc4251
-            //
-            // Each one is either 32 bytes or 33 bytes with a leading zero, so
-            // we'll awkwardly allow for both cases.
-            let mut r = std::io::Cursor::new(signed.signature_bytes());
-            use std::io::Read;
-            let mut signature = [0u8; 64];
-            for i in 0..2 {
-                let mut size = [0u8; 4];
-                r.read_exact(&mut size)?;
-                match u32::from_be_bytes(size) {
-                    32 => (),
-                    33 => r.read_exact(&mut [0u8])?, // eat the leading byte
-                    _ => bail!("invalid length {i}"),
-                }
-                r.read_exact(&mut signature[i * 32..][..32])?;
+                bail!(
+                    "don't know how to unlock tech port without ssh or permslip"
+                )
             }
-
-            UnlockResponse::EcdsaSha2Nistp256 { key, signer_nonce, signature }
         }
     };
     sp.component_action(
@@ -2013,6 +2519,129 @@ async fn monorail_unlock(
     .await?;
 
     Ok(())
+}
+
+fn unlock_permslip(
+    log: &Logger,
+    key_name: String,
+    challenge: UnlockChallenge,
+) -> Result<UnlockResponse> {
+    use std::env;
+    use std::process::{Command, Stdio};
+
+    let mut permslip = Command::new(
+        env::var("PERMSLIP").unwrap_or_else(|_| String::from("permslip")),
+    )
+    .arg("sign")
+    .arg(key_name)
+    .arg("--sshauth")
+    .arg("--kind=tech-port-unlock-challenge")
+    .stdin(Stdio::piped())
+    .stdout(Stdio::piped())
+    .stderr(Stdio::inherit())
+    .spawn()
+    .map_err(|_| {
+        anyhow!(
+            "Unable to execute `permslip`, is it in your PATH and executable? \
+             You may also override it with the PERMSLIP environment variable."
+        )
+    })?;
+
+    let mut input =
+        permslip.stdin.take().context("can't get permslip input")?;
+    input.write_all(serde_json::to_string(&challenge)?.as_bytes())?;
+    input.flush()?;
+    drop(input);
+
+    let output =
+        permslip.wait_with_output().context("can't read permslip output")?;
+    if output.status.success() {
+        let response =
+            serde_json::from_slice::<UnlockResponse>(&output.stdout)?;
+        debug!(log, "got response from permslip"; "response" => ?response);
+        Ok(response)
+    } else {
+        bail!("online signing with permslip failed");
+    }
+}
+
+fn unlock_ssh(
+    log: &Logger,
+    socket: PathBuf,
+    pub_key: Option<String>,
+    challenge: EcdsaSha2Nistp256Challenge,
+) -> Result<UnlockResponse> {
+    let keys = ssh_list_keys(&socket)?;
+    let pub_key = if keys.len() == 1 && pub_key.is_none() {
+        keys[0].clone()
+    } else {
+        let Some(pub_key) = pub_key else {
+            bail!(
+                "need --key for ECDSA challenge; \
+                 multiple keys are available"
+            );
+        };
+        if pub_key.ends_with(".pub") {
+            ssh_key::PublicKey::read_openssh_file(Path::new(&pub_key))
+                .with_context(|| {
+                    format!("could not read key from {pub_key:?}")
+                })?
+        } else {
+            let mut found = None;
+            for k in keys.iter() {
+                if k.to_openssh()?.contains(&pub_key) {
+                    if found.is_some() {
+                        bail!("multiple keys contain '{pub_key}'");
+                    }
+                    found = Some(k);
+                }
+            }
+            let Some(found) = found else {
+                bail!(
+                    "could not match '{pub_key}'; \
+                     use `faux-mgs monorail unlock --list` \
+                     to print keys"
+                );
+            };
+            found.clone()
+        }
+    };
+
+    let mut data = challenge.as_bytes().to_vec();
+    let signer_nonce: [u8; 8] = rand::random();
+    data.extend(signer_nonce);
+
+    let signed = ssh_keygen_sign(socket, pub_key, &data)?;
+    debug!(log, "got signature {signed:?}");
+
+    let key_bytes = signed.public_key().ecdsa().unwrap().as_sec1_bytes();
+    assert_eq!(key_bytes.len(), 65, "invalid key length");
+    let mut key = [0u8; 65];
+    key.copy_from_slice(key_bytes);
+
+    // Signature bytes are encoded per
+    // https://datatracker.ietf.org/doc/html/rfc5656#section-3.1.2
+    //
+    // They are a pair of `mpint` values, per
+    // https://datatracker.ietf.org/doc/html/rfc4251
+    //
+    // Each one is either 32 bytes or 33 bytes with a leading zero, so
+    // we'll awkwardly allow for both cases.
+    let mut r = std::io::Cursor::new(signed.signature_bytes());
+    use std::io::Read;
+    let mut signature = [0u8; 64];
+    for i in 0..2 {
+        let mut size = [0u8; 4];
+        r.read_exact(&mut size)?;
+        match u32::from_be_bytes(size) {
+            32 => (),
+            33 => r.read_exact(&mut [0u8])?, // eat the leading byte
+            _ => bail!("invalid length {i}"),
+        }
+        r.read_exact(&mut signature[i * 32..][..32])?;
+    }
+
+    Ok(UnlockResponse::EcdsaSha2Nistp256 { key, signer_nonce, signature })
 }
 
 fn ssh_keygen_sign(
@@ -2041,6 +2670,445 @@ fn ssh_keygen_sign(
         h => bail!("invalid hash algorithm {h:?}"),
     }
     Ok(sig)
+}
+
+async fn monorail_diagnose_one(
+    log: &Logger,
+    sp: &SingleSp,
+    sel: MonorailSelector,
+) -> Result<()> {
+    use gateway_messages::ComponentDetails;
+
+    let (monorail_port, ignition_target) = sel.get_targets(log);
+    info!(log, "got target {monorail_port}, {ignition_target}");
+    let get_mono_details = async || {
+        sp.component_details(SpComponent::MONORAIL)
+            .await?
+            .entries
+            .into_iter()
+            .find_map(|c| {
+                if let ComponentDetails::PortStatus(r) = c
+                    && let Ok(r) = r
+                    && r.port == u32::from(monorail_port)
+                {
+                    Some(r)
+                } else {
+                    None
+                }
+            })
+            .with_context(|| {
+                format!(
+                    "could not find component details for \
+                     monorail port {monorail_port}"
+                )
+            })
+    };
+    // Get two samples from monorail to check that counters are going up
+    let mono = get_mono_details().await?;
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+    let mono_later = get_mono_details().await?;
+    let igni = sp.ignition_state(ignition_target).await?;
+
+    monorail_diagnose_print(
+        sel,
+        monorail_port,
+        ignition_target,
+        Some(igni),
+        mono,
+        mono_later,
+    )
+}
+
+fn monorail_diagnose_print(
+    sel: MonorailSelector,
+    monorail_port: u8,
+    ignition_target: u8,
+    igni: Option<gateway_messages::IgnitionState>,
+    mono: gateway_messages::monorail_port_status::PortStatus,
+    mono_later: gateway_messages::monorail_port_status::PortStatus,
+) -> Result<()> {
+    use gateway_messages::{
+        ignition::{ReceiverStatus, SystemFaults, SystemPowerState},
+        monorail_port_status::LinkStatus,
+    };
+    let link_status = |s: LinkStatus| match s {
+        LinkStatus::Up => "up".green(),
+        LinkStatus::Down => "down".red(),
+        LinkStatus::Error => "error".red(),
+    };
+    println!("{sel}:");
+    println!("  monorail port: {monorail_port} ({})", mono.cfg.mode);
+    println!("    link status: {}", link_status(mono.link_status));
+    if let Some(phy) = mono.phy_status {
+        println!("    phy: {}", phy.ty);
+        println!("      mac status:   {}", link_status(phy.mac_link_up));
+        println!("      media status: {}", link_status(phy.media_link_up));
+    }
+    // Only check packet counters if we expect the link to be up
+    let check_counters = mono.link_status == LinkStatus::Up
+        && mono.phy_status.is_none_or(|p| {
+            p.mac_link_up == LinkStatus::Up && p.media_link_up == LinkStatus::Up
+        });
+    if check_counters {
+        println!(
+            "    rx counters: {}",
+            if mono_later.counters.rx.unicast > mono.counters.rx.unicast
+                || mono_later.counters.rx.multicast > mono.counters.rx.multicast
+                || mono_later.counters.rx.broadcast > mono.counters.rx.broadcast
+            {
+                "going up".green()
+            } else {
+                "not going up".red()
+            }
+        );
+    }
+
+    if let Some(igni) = igni {
+        let rx_status = |receiver: ReceiverStatus| {
+            format!(
+                "aligned: {}, locked: {}",
+                if receiver.aligned { "yes".green() } else { "no".red() },
+                if receiver.locked { "yes".green() } else { "no".red() },
+            )
+        };
+        println!("  ignition target: {ignition_target}");
+        println!("    {}", rx_status(igni.receiver));
+        if let Some(target) = igni.target {
+            println!("    target: {}", target.system_type);
+            println!(
+                "    power state: {}",
+                match target.power_state {
+                    SystemPowerState::Off => "off".red(),
+                    SystemPowerState::On => "on".green(),
+                    SystemPowerState::Aborted => "aborted".red(),
+                    SystemPowerState::PoweringOff => "powering off".red(),
+                    SystemPowerState::PoweringOn => "powering on".yellow(),
+                }
+            );
+            if target.power_reset_in_progress {
+                println!("    {}", "power reset in progress".red());
+            }
+            let SystemFaults { power_a3, power_a2, sp, rot } = target.faults;
+            if power_a3 | power_a2 | sp | rot {
+                print!("    faults: ");
+                let mut printed = false;
+                for (f, dev) in [
+                    (power_a3, ("A3 power")),
+                    (power_a2, "A2 power"),
+                    (sp, "SP"),
+                    (rot, "RoT"),
+                ] {
+                    if f {
+                        if printed {
+                            print!(" | ");
+                        }
+                        print!("{dev}");
+                        printed = true;
+                    }
+                }
+            } else {
+                println!("    {}", "no faults".green());
+            }
+            for (i, (present, status)) in [
+                (target.controller0_present, target.link0_receiver_status),
+                (target.controller1_present, target.link1_receiver_status),
+            ]
+            .into_iter()
+            .enumerate()
+            {
+                println!("    controller {i}:");
+                println!(
+                    "      {}",
+                    if present { "present".green() } else { "absent".red() }
+                );
+                println!("      {}", rx_status(status));
+            }
+        } else {
+            println!("    {}", "no target".red());
+        }
+    } else {
+        println!(
+            "  ignition: {} {}",
+            "unavailable".yellow(),
+            "(this is expected for old hardware)".dimmed(),
+        );
+    }
+    Ok(())
+}
+
+async fn monorail_diagnose_all(
+    log: &Logger,
+    sp: &SingleSp,
+    verbose: bool,
+) -> Result<()> {
+    use gateway_messages::{
+        ComponentDetails,
+        ignition::{IgnitionState, SystemPowerState},
+        monorail_port_status::{LinkStatus, PortStatus},
+    };
+
+    let targets = (0..32)
+        .map(MonorailSelector::Cubby)
+        .chain(
+            [SidecarSelector::Peer, SidecarSelector::Local]
+                .map(MonorailSelector::Sidecar),
+        )
+        .chain((0..2).map(MonorailSelector::Psc))
+        .collect::<Vec<_>>();
+
+    struct Info {
+        monorail_port: u8,
+        ignition_target: u8,
+        ignition_state: Option<IgnitionState>,
+        monorail_state: [PortStatus; 2],
+    }
+
+    #[derive(Copy, Clone)]
+    enum InfoState {
+        Okay,
+        Gone,
+        Error,
+    }
+
+    impl std::fmt::Display for InfoState {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            // Padded to fit columns
+            let s = match self {
+                InfoState::Error => "err     ",
+                InfoState::Okay => "okay    ",
+                InfoState::Gone => "gone    ",
+            };
+            write!(f, "{s}")
+        }
+    }
+
+    impl Info {
+        fn ignition_state(&self) -> Option<InfoState> {
+            let i = self.ignition_state?;
+            if i.target.is_none() && !i.receiver.aligned && !i.receiver.locked {
+                Some(InfoState::Gone)
+            } else if i.receiver.aligned
+                && i.receiver.locked
+                && let Some(t) = i.target
+                && !t.faults.sp
+                && !t.faults.power_a3
+                && !t.faults.power_a2
+                && !t.faults.rot
+                && t.power_state == SystemPowerState::On
+                && !t.power_reset_in_progress
+                && (t.controller0_present || t.controller1_present)
+            {
+                Some(InfoState::Okay)
+            } else {
+                Some(InfoState::Error)
+            }
+        }
+        fn monorail_state(&self) -> InfoState {
+            let m0 = self.monorail_state[0];
+            let m1 = self.monorail_state[1];
+            if m0.link_status == LinkStatus::Down
+                || (m0.link_status == LinkStatus::Up
+                    && m0.phy_status.is_some_and(|m| {
+                        m.mac_link_up == LinkStatus::Up
+                            && m.media_link_up == LinkStatus::Down
+                    }))
+            {
+                InfoState::Gone
+            } else if m0.link_status == LinkStatus::Up
+                && m0.phy_status.is_none_or(|p| {
+                    p.mac_link_up == LinkStatus::Up
+                        && p.media_link_up == LinkStatus::Up
+                })
+                && (m1.counters.rx.unicast > m0.counters.rx.unicast
+                    || m1.counters.rx.multicast > m0.counters.rx.multicast
+                    || m1.counters.rx.broadcast > m0.counters.rx.broadcast)
+            {
+                InfoState::Okay
+            } else {
+                InfoState::Error
+            }
+        }
+        fn is_okay(&self) -> bool {
+            // We don't need to print supplementary info if both ignition and
+            // monorail are either good or gone
+            matches!(
+                (self.ignition_state(), self.monorail_state()),
+                (None | Some(InfoState::Gone), InfoState::Gone)
+                    | (None | Some(InfoState::Okay), InfoState::Okay)
+            )
+        }
+        fn is_problematic(&self) -> bool {
+            !self.is_okay()
+        }
+    }
+
+    let mut info_map: BTreeMap<MonorailSelector, Info> = BTreeMap::new();
+
+    // Sample the monorail state now, then plan to sample again in 1 second
+    // (so that counters have time to go up)
+    let mono0 = sp.component_details(SpComponent::MONORAIL).await?.entries;
+    let now = tokio::time::Instant::now();
+    let sample_time = now + tokio::time::Duration::from_secs(1);
+
+    let mut ignition_map: BTreeMap<MonorailSelector, Option<IgnitionState>> =
+        BTreeMap::new();
+
+    // Get all of our ignition sampling done while we wait
+    //
+    // We could also use `bulk_ignition_state`, but then the mapping to
+    // selectors isn't as obvious (and we've got a whole second to kill, so
+    // might as well do the easy option).
+    for sel in &targets {
+        let (_, ignition_target) = sel.get_targets(log);
+        let ignition_state = match sp.ignition_state(ignition_target).await {
+            Ok(i) => Some(i),
+            Err(gateway_sp_comms::error::CommunicationError::SpError(
+                gateway_messages::SpError::Ignition(
+                    gateway_messages::ignition::IgnitionError::InvalidPort,
+                ),
+            )) if *sel == MonorailSelector::Sidecar(SidecarSelector::Local) => {
+                warn!(
+                    log,
+                    "cannot talk to local Sidecar SP over ignition; \
+                     this is expected for old Sidecar revisions"
+                );
+                None
+            }
+            Err(e) => return Err(e.into()),
+        };
+        ignition_map.insert(*sel, ignition_state);
+    }
+
+    // Get the second monorail sample
+    tokio::time::sleep_until(sample_time).await;
+    let mono1 = sp.component_details(SpComponent::MONORAIL).await?.entries;
+
+    // Now shove everything into an info map
+    for sel in &targets {
+        // Helper function to find matching monorail component details
+        let get_mono_details =
+            |monorail_port: u8, mono: &[ComponentDetails]| {
+                mono.iter()
+                    .find_map(|c| {
+                        if let ComponentDetails::PortStatus(r) = c
+                            && let Ok(r) = r
+                            && r.port == u32::from(monorail_port)
+                        {
+                            Some(*r)
+                        } else {
+                            None
+                        }
+                    })
+                    .with_context(|| {
+                        format!(
+                            "could not find component details for \
+                             monorail port {monorail_port}"
+                        )
+                    })
+            };
+        let (monorail_port, ignition_target) = sel.get_targets(log);
+        info_map.insert(
+            *sel,
+            Info {
+                ignition_target,
+                monorail_port,
+                ignition_state: ignition_map.remove(sel).unwrap(),
+                monorail_state: [
+                    get_mono_details(monorail_port, &mono0)?,
+                    get_mono_details(monorail_port, &mono1)?,
+                ],
+            },
+        );
+    }
+
+    if verbose {
+        for sel in &targets {
+            let info = &info_map[sel];
+            if matches!(info.ignition_state(), None | Some(InfoState::Gone))
+                && matches!(info.monorail_state(), InfoState::Gone)
+            {
+                println!("{sel} {}", "absent".dimmed());
+            } else {
+                monorail_diagnose_print(
+                    *sel,
+                    info.monorail_port,
+                    info.ignition_target,
+                    info.ignition_state,
+                    info.monorail_state[0],
+                    info.monorail_state[1],
+                )?;
+            }
+        }
+    } else {
+        println!(
+            "  {:<13} | {:<10} | {:<8} | {:<8}",
+            "POSITION", "TYPE", "IGNITION", "MONORAIL"
+        );
+        for sel in &targets {
+            let info = &info_map[sel];
+            let s = info
+                .ignition_state
+                .map(|i| {
+                    i.target
+                        .map(|t| format!("{}", t.system_type).into())
+                        .unwrap_or("[absent]".dimmed())
+                })
+                .unwrap_or("[unavail]".dimmed());
+            let mono = info.monorail_state();
+            let igni = info.ignition_state();
+            let m = mono.to_string();
+            let i = igni
+                .map(|i| i.to_string())
+                .unwrap_or_else(|| "unknown ".to_owned());
+            // Select colors for the table.  This is non-obvious: we can't just
+            // map Okay / Error / Gone, because Gone is only acceptable if both
+            // sides are Gone; otherwise, it indicates a problem!
+            let (m, i) = match (mono, igni) {
+                (InfoState::Okay, Some(InfoState::Okay)) => {
+                    (m.green(), i.green())
+                }
+                (InfoState::Okay, None) => (m.green(), i.dimmed()),
+                (InfoState::Okay, Some(InfoState::Gone | InfoState::Error)) => {
+                    (m.yellow(), i.red())
+                }
+                (InfoState::Error | InfoState::Gone, Some(InfoState::Okay)) => {
+                    (m.red(), i.yellow())
+                }
+                (InfoState::Error | InfoState::Gone, None) => {
+                    (m.red(), i.dimmed())
+                }
+                (InfoState::Gone, Some(InfoState::Gone)) => {
+                    (m.dimmed(), i.dimmed())
+                }
+                (InfoState::Gone, Some(InfoState::Error)) => {
+                    (m.yellow(), i.red())
+                }
+                (InfoState::Error, Some(InfoState::Gone)) => {
+                    (m.red(), i.yellow())
+                }
+                (InfoState::Error, Some(InfoState::Error)) => {
+                    (m.red(), i.red())
+                }
+            };
+            println!("  {:<13} | {s:<10} | {i} | {m}", sel.to_string());
+        }
+        let mut printed_header = false;
+        for (sel, i) in info_map.iter().filter(|(_sel, i)| i.is_problematic()) {
+            if !printed_header {
+                println!("\n{}", "Detailed info".bold());
+                printed_header = true
+            }
+            monorail_diagnose_print(
+                *sel,
+                i.monorail_port,
+                i.ignition_target,
+                i.ignition_state,
+                i.monorail_state[0],
+                i.monorail_state[1],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn handle_cxpa(
@@ -2241,6 +3309,10 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
     enum ComponentDetails {
         PortStatus(Result<PortStatus, PortStatusError>),
         Measurement(Measurement),
+        LastPostCode(u32),
+        PostCode(u32),
+        GpioToggleCount { edge_count: u32, cycles_since_last_edge: u32 },
+        Pcie { bar: u32, offset: u32, reg_result: Result<u32, u32> },
         Vpd(Result<VpdDetails, VpdError>),
     }
 
@@ -2266,62 +3338,412 @@ fn component_details_to_json(details: SpComponentDetails) -> serde_json::Value {
         pub value: Result<f32, MeasurementError>,
     }
 
-    let entries =
-        details
-            .entries
-            .into_iter()
-            .map(|d| match d {
-                gateway_messages::ComponentDetails::PortStatus(r) => {
-                    ComponentDetails::PortStatus(r)
+    let entries = details
+        .entries
+        .into_iter()
+        .map(|d| match d {
+            gateway_messages::ComponentDetails::PortStatus(r) => {
+                ComponentDetails::PortStatus(r)
+            }
+            gateway_messages::ComponentDetails::Measurement(m) => {
+                ComponentDetails::Measurement(Measurement {
+                    name: m.name,
+                    kind: m.kind,
+                    value: m.value,
+                })
+            }
+            gateway_messages::ComponentDetails::LastPostCode(code) => {
+                ComponentDetails::LastPostCode(code.0)
+            }
+            gateway_messages::ComponentDetails::PostCode(code) => {
+                ComponentDetails::PostCode(code.0)
+            }
+            gateway_messages::ComponentDetails::GpioToggleCount(n) => {
+                ComponentDetails::GpioToggleCount {
+                    edge_count: n.edge_count,
+                    cycles_since_last_edge: n.cycles_since_last_edge,
                 }
-                gateway_messages::ComponentDetails::Measurement(m) => {
-                    ComponentDetails::Measurement(Measurement {
-                        name: m.name,
-                        kind: m.kind,
-                        value: m.value,
-                    })
+            }
+            gateway_messages::ComponentDetails::Pcie(p) => {
+                ComponentDetails::Pcie {
+                    bar: p.bar,
+                    offset: p.offset,
+                    reg_result: p.reg_result,
                 }
-                gateway_messages::ComponentDetails::Vpd(Vpd::Oxide(
-                    OxideVpd { serial, part_number, rev },
-                )) => {
+            }
 
-                    let res = str::from_utf8(&serial)
-                        .map(str::to_owned).map_err(|e| {
-                            VpdError::InvalidString(
-                                format!("serial number {serial:?} not UTF-8: {e}")
-                            )
-                        }).and_then(|serial| {
-                            let part_number = str::from_utf8(&part_number)
-                                .map(str::to_owned)
-                                .map_err(|e| {
-                                    VpdError::InvalidString(
-                                        format!("part number {part_number:?} not UTF-8: {e}")
-                                    )
-                                })?;
-                            Ok(VpdDetails::Oxide { serial, part_number, rev })
+            gateway_messages::ComponentDetails::Vpd(Vpd::Oxide(
+                OxideVpd { serial, part_number, rev },
+            )) => {
+                let res = str::from_utf8(&serial)
+                    .map(str::to_owned).map_err(|e| {
+                        VpdError::InvalidString(
+                            format!("serial number {serial:?} not UTF-8: {e}")
+                        )
+                    }).and_then(|serial| {
+                        let part_number = str::from_utf8(&part_number)
+                            .map(str::to_owned)
+                            .map_err(|e| {
+                                VpdError::InvalidString(
+                                    format!("part number {part_number:?} not UTF-8: {e}")
+                                )
+                            })?;
+                        Ok(VpdDetails::Oxide { serial, part_number, rev })
 
-                        });
-                    ComponentDetails::Vpd(res)
-                }
-                gateway_messages::ComponentDetails::Vpd(Vpd::Mfg(MfgVpd {
-                    mfg,
-                    mpn,
-                    mfg_rev,
-                    serial,
-                })) => ComponentDetails::Vpd(Ok(VpdDetails::Mfg {
-                    mfg,
-                    part_number: mpn,
-                    rev: mfg_rev,
-                    serial,
-                })),
-                gateway_messages::ComponentDetails::Vpd(Vpd::Tmp117(vpd)) => {
-                    ComponentDetails::Vpd(Ok(VpdDetails::Tmp117(vpd)))
-                },
-                gateway_messages::ComponentDetails::Vpd(Vpd::Err(err)) => {
-                    ComponentDetails::Vpd(Err(VpdError::Read(err)))
-                },
-            })
-            .collect::<Vec<_>>();
+                    });
+                ComponentDetails::Vpd(res)
+            }
+            gateway_messages::ComponentDetails::Vpd(Vpd::Mfg(MfgVpd {
+                mfg,
+                mpn,
+                mfg_rev,
+                serial,
+            })) => ComponentDetails::Vpd(Ok(VpdDetails::Mfg {
+                mfg,
+                part_number: mpn,
+                rev: mfg_rev,
+                serial,
+            })),
+            gateway_messages::ComponentDetails::Vpd(Vpd::Tmp117(vpd)) => {
+                ComponentDetails::Vpd(Ok(VpdDetails::Tmp117(vpd)))
+            },
+            gateway_messages::ComponentDetails::Vpd(Vpd::Err(err)) => {
+                ComponentDetails::Vpd(Err(VpdError::Read(err)))
+            },
+        })
+        .collect::<Vec<_>>();
 
     json!({ "entries": entries })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::Parser;
+
+    /// Helper to parse args, prefixing with required global args.
+    fn parse_args(args: &[&str]) -> Result<Args, clap::Error> {
+        let mut full_args = vec!["faux-mgs", "--interface", "test0"];
+        full_args.extend(args);
+        Args::try_parse_from(full_args)
+    }
+
+    /// Helper to check that parsing succeeds and extract the Command.
+    fn parse_command(args: &[&str]) -> Command {
+        parse_args(args).expect("should parse successfully").command
+    }
+
+    /// Helper to check that parsing fails.
+    fn parse_should_fail(args: &[&str]) {
+        assert!(
+            parse_args(args).is_err(),
+            "expected parsing to fail for args: {:?}",
+            args
+        );
+    }
+
+    //
+    // Tests for pilot compatibility (these were broken by #385)
+    //
+
+    /// Pilot uses `component-active-slot host-boot-flash -s {slot}` for
+    /// transient updates. This must work without requiring --persist or
+    /// --transient.
+    #[test]
+    fn pilot_host_boot_flash_set_slot_transient_default() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "0",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, Some(0));
+                assert!(
+                    !persist,
+                    "should default to non-persistent (transient)"
+                );
+                assert!(!transient, "transient flag should not be set");
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    /// Pilot uses `component-active-slot host-boot-flash -s {slot} --persist`
+    /// for persistent updates.
+    #[test]
+    fn pilot_host_boot_flash_set_slot_persistent() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "1",
+            "--persist",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, Some(1));
+                assert!(persist, "persist flag should be set");
+                assert!(!transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    /// Pilot's operate.rs uses `component-active-slot {component} --set {slot}
+    /// --persist` with various components.
+    #[test]
+    fn pilot_operate_set_slot_persistent() {
+        for component_name in ["rot", "sp", "host-boot-flash", "stage0"] {
+            let cmd = parse_command(&[
+                "component-active-slot",
+                component_name,
+                "--set",
+                "0",
+                "--persist",
+            ]);
+            match cmd {
+                Command::ComponentActiveSlot { set, persist, .. } => {
+                    assert_eq!(set, Some(0));
+                    assert!(persist);
+                }
+                _ => panic!("expected ComponentActiveSlot command"),
+            }
+        }
+    }
+
+    //
+    // Tests for getting active slot (no -s flag)
+    //
+
+    #[test]
+    fn get_active_slot_rot() {
+        let cmd = parse_command(&["component-active-slot", "rot"]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::ROT);
+                assert_eq!(set, None);
+                assert!(!persist);
+                assert!(!transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn get_active_slot_host_boot_flash() {
+        let cmd = parse_command(&["component-active-slot", "host-boot-flash"]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component, set, persist, ..
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, None);
+                assert!(!persist);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn get_active_slot_sp() {
+        let cmd = parse_command(&["component-active-slot", "sp"]);
+        match cmd {
+            Command::ComponentActiveSlot { component, set, .. } => {
+                assert_eq!(component, SpComponent::SP_ITSELF);
+                assert_eq!(set, None);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    //
+    // Tests for getting persistent slot (-p, no -s flag)
+    //
+
+    #[test]
+    fn get_persistent_slot_rot() {
+        let cmd = parse_command(&["component-active-slot", "rot", "-p"]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::ROT);
+                assert_eq!(set, None);
+                assert!(persist);
+                assert!(!transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn get_persistent_slot_host_boot_flash() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "--persist",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, None);
+                assert!(persist);
+                assert!(!transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    //
+    // Tests for setting active slot with --transient
+    // (was broken: only allowed for 'rot' component)
+    //
+
+    #[test]
+    fn set_slot_transient_rot() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "--transient",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::ROT);
+                assert_eq!(set, Some(0));
+                assert!(!persist);
+                assert!(transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn set_slot_transient_host_boot_flash() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "1",
+            "-t",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot {
+                component,
+                set,
+                persist,
+                transient,
+            } => {
+                assert_eq!(component, SpComponent::HOST_CPU_BOOT_FLASH);
+                assert_eq!(set, Some(1));
+                assert!(!persist);
+                assert!(transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    #[test]
+    fn set_slot_transient_sp() {
+        let cmd = parse_command(&[
+            "component-active-slot",
+            "sp",
+            "-s",
+            "0",
+            "--transient",
+        ]);
+        match cmd {
+            Command::ComponentActiveSlot { component, transient, .. } => {
+                assert_eq!(component, SpComponent::SP_ITSELF);
+                assert!(transient);
+            }
+            _ => panic!("expected ComponentActiveSlot command"),
+        }
+    }
+
+    //
+    // Tests for invalid argument combinations
+    //
+
+    /// --transient requires --set
+    #[test]
+    fn transient_requires_set() {
+        parse_should_fail(&["component-active-slot", "rot", "--transient"]);
+        parse_should_fail(&["component-active-slot", "host-boot-flash", "-t"]);
+    }
+
+    /// --persist and --transient are mutually exclusive
+    #[test]
+    fn persist_and_transient_conflict() {
+        parse_should_fail(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "--persist",
+            "--transient",
+        ]);
+        parse_should_fail(&[
+            "component-active-slot",
+            "host-boot-flash",
+            "-s",
+            "0",
+            "-p",
+            "-t",
+        ]);
+    }
+
+    /// Cannot specify the same flag twice
+    #[test]
+    fn no_duplicate_flags() {
+        parse_should_fail(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "-p",
+            "-p",
+        ]);
+        parse_should_fail(&[
+            "component-active-slot",
+            "rot",
+            "-s",
+            "0",
+            "-t",
+            "-t",
+        ]);
+    }
 }

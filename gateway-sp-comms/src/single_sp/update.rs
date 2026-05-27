@@ -15,17 +15,19 @@ use futures::FutureExt;
 use gateway_messages::ComponentUpdatePrepare;
 use gateway_messages::MgsRequest;
 use gateway_messages::SpComponent;
+use gateway_messages::SpError;
 use gateway_messages::SpUpdatePrepare;
 use gateway_messages::UpdateChunk;
 use gateway_messages::UpdateId;
+use gateway_messages::UpdateInProgressStatus;
 use gateway_messages::UpdateStatus;
 use hubtools::Error as HubtoolsError;
 use hubtools::RawHubrisArchive;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::warn;
-use slog::Logger;
 use std::convert::TryInto;
 use std::io::Cursor;
 use std::io::Read;
@@ -102,13 +104,13 @@ pub(super) async fn start_sp_update(
     // here and log a warning if it is not. We should never see this, but if we
     // do it's likely something is about to go wrong, and it'd be nice to have a
     // breadcrumb.
-    if let Ok(final_bin) = archive.extract_file("img/final.bin") {
-        if sp_image != final_bin {
-            warn!(
-                log,
-                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
-            );
-        }
+    if let Ok(final_bin) = archive.extract_file("img/final.bin")
+        && sp_image != final_bin
+    {
+        warn!(
+            log,
+            "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+        );
     }
 
     // Extract the board from the image's caboose and check that this matches
@@ -220,6 +222,7 @@ async fn drive_sp_update(
     };
 
     // Send the aux flash image, if necessary.
+    let auxflash_size = aux_image.as_ref().map(|d| d.len()).unwrap_or(0);
     if !sp_matched_chck {
         // `poll_until_update_prep_complete` can only return `Ok(false)` if we
         // told it we had an aux flash update (i.e., if `aux_image.is_some()`).
@@ -230,6 +233,7 @@ async fn drive_sp_update(
             SpComponent::SP_AUX_FLASH,
             update_id,
             data,
+            UpdateStatusParams::auxflash_before_sp(sp_image.len()),
             &log,
         )
         .await
@@ -254,6 +258,7 @@ async fn drive_sp_update(
         SpComponent::SP_ITSELF,
         update_id,
         sp_image,
+        UpdateStatusParams::sp_after_auxflash(auxflash_size),
         &log,
     )
     .await
@@ -336,7 +341,10 @@ fn bootleby_from_old_style_archive(
                             return Ok(rot_image);
                         }
                         Err(err) => {
-                            error!(log, "cannot access bootleby.bin from zip file index {i}: {err}");
+                            error!(
+                                log,
+                                "cannot access bootleby.bin from zip file index {i}: {err}"
+                            );
                             return Err(UpdateError::InvalidArchive);
                         }
                     }
@@ -376,13 +384,12 @@ pub(super) async fn start_rot_update(
                     // is about to go wrong, and it'd be nice to have a
                     // breadcrumb.
                     if let Ok(final_bin) = archive.extract_file("img/final.bin")
+                        && rot_image != final_bin
                     {
-                        if rot_image != final_bin {
-                            warn!(
-                                log,
-                                "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
-                            );
-                        }
+                        warn!(
+                            log,
+                            "hubtools `image.to_binary()` DOES NOT MATCH `img/final.bin`",
+                        );
                     }
 
                     // Preflight check 1: Does the image name of this archive
@@ -394,7 +401,7 @@ pub(super) async fn start_rot_update(
                                 return Err(UpdateError::RotSlotMismatch {
                                     slot,
                                     image_name,
-                                })
+                                });
                             }
                         },
                         // At the time of this writing `image-name` is a recent
@@ -525,8 +532,15 @@ async fn drive_component_update(
     }
 
     // Deliver the update in chunks.
-    match send_update_in_chunks(&cmds_tx, component, update_id, image, &log)
-        .await
+    match send_update_in_chunks(
+        &cmds_tx,
+        component,
+        update_id,
+        image,
+        UpdateStatusParams::default_for(component),
+        &log,
+    )
+    .await
     {
         Ok(()) => {
             info!(log, "update complete"; "id" => %update_id);
@@ -649,6 +663,7 @@ async fn send_update_in_chunks(
     component: SpComponent,
     update_id: Uuid,
     data: Vec<u8>,
+    update_status_params: UpdateStatusParams,
     log: &Logger,
 ) -> Result<()> {
     let mut image = Cursor::new(data);
@@ -662,11 +677,50 @@ async fn send_update_in_chunks(
             "offset" => offset,
         );
 
-        image = send_single_update_chunk(cmds_tx, component, id, offset, image)
-            .await?;
+        let result;
+        (image, result) =
+            send_single_update_chunk(cmds_tx, component, id, offset, image)
+                .await;
 
-        // Update our offset according to how far our cursor advanced.
-        offset += (image.position() - prior_pos) as u32;
+        match result {
+            Ok(()) => {
+                // Update our offset according to how far our cursor advanced.
+                offset += (image.position() - prior_pos) as u32;
+            }
+            Err(
+                err @ CommunicationError::SpError(SpError::InvalidUpdateChunk),
+            ) => {
+                warn!(
+                    log,
+                    "received invalid update chunk from SP; attempting recovery"
+                );
+                // Ideally `InvalidUpdateChunk` would return the offset the SP
+                // wants. We could add a new error variant for that; fow now,
+                // try to recover by asking the SP what chunk it expected.
+                if let Some(sp_offset) =
+                    determine_update_resume_point_via_update_status(
+                        cmds_tx,
+                        update_id,
+                        image.get_ref().len(),
+                        update_status_params,
+                        log,
+                    )
+                    .await
+                {
+                    // Rewind both our offset and the cursor on the data.
+                    offset = sp_offset;
+                    image.set_position(u64::from(sp_offset));
+                } else {
+                    // `determine_update_resume_point_via_update_status()`
+                    // already logged any meaningful problems fetching the
+                    // status; all we can do is bail out.
+                    return Err(err);
+                }
+            }
+            Err(err) => {
+                return Err(err);
+            }
+        }
     }
     Ok(())
 }
@@ -681,7 +735,7 @@ async fn send_single_update_chunk(
     id: UpdateId,
     offset: u32,
     data: Cursor<Vec<u8>>,
-) -> Result<Cursor<Vec<u8>>> {
+) -> (Cursor<Vec<u8>>, Result<()>) {
     let update_chunk = UpdateChunk { component, id, offset };
     let (result, data) = super::rpc_with_trailing_data(
         cmds_tx,
@@ -690,7 +744,190 @@ async fn send_single_update_chunk(
     )
     .await;
 
-    result.and_then(expect_update_chunk_ack)?;
+    let result = result.and_then(expect_update_chunk_ack);
 
-    Ok(data)
+    (data, result)
+}
+
+/// Parameters to be used when requesting [`UpdateStatus`]
+#[derive(Copy, Clone, Debug)]
+pub(crate) struct UpdateStatusParams {
+    /// Component for which status should be requested
+    ///
+    /// This is usually the component being updated, with one exception: if
+    /// we're updating the SP's auxflash, we request the status for the
+    /// [`SP_ITSELF`](SpComponent::SP_ITSELF) component, which returns monotonic
+    /// progress for the combined auxflash and SP update.
+    component: SpComponent,
+
+    /// Value to subtract from the reported `bytes_received` value
+    ///
+    /// This is usually 0, but if we're updating the SP image and have an
+    /// auxflash image, then we must subtract the auxflash size (because the SP
+    /// image is delivered after the auxflash image, and `UpdateStatus` uses a
+    /// monotonic counter from 0 to `aux_len + sp_len`).
+    bytes_received_offset: usize,
+
+    /// Value to subtract from the reported `total_size` value
+    ///
+    /// This is usually 0, but if we're updating the SP image and it has an
+    /// auxflash image then `UpdateStatus` reports a combined size and we must
+    /// subtract the _other_ component's size.
+    total_size_delta: usize,
+}
+
+impl UpdateStatusParams {
+    /// Default parameters for a particular component
+    fn default_for(component: SpComponent) -> Self {
+        Self { component, bytes_received_offset: 0, total_size_delta: 0 }
+    }
+
+    /// Parameters for sending an auxflash image before sending the SP image
+    fn auxflash_before_sp(sp_image_len: usize) -> Self {
+        Self {
+            component: SpComponent::SP_ITSELF,
+            bytes_received_offset: 0,
+            total_size_delta: sp_image_len,
+        }
+    }
+
+    /// Parameters for sending an SP image after sending the auxflash image
+    fn sp_after_auxflash(auxflash_len: usize) -> Self {
+        Self {
+            component: SpComponent::SP_ITSELF,
+            bytes_received_offset: auxflash_len,
+            total_size_delta: auxflash_len,
+        }
+    }
+}
+
+/// Attempt to determine what offset the SP is expecting mid-update.
+///
+/// We use this when receiving an `InvalidUpdateChunk` from the SP, which
+/// indicates it's still expecting our update but we've gotten out of sync on
+/// how far along it is (e.g., via a lost packet containing an ACK from the SP
+/// for some successful chunk that we believe we need to resend).
+async fn determine_update_resume_point_via_update_status(
+    cmds_tx: &mpsc::Sender<InnerCommand>,
+    update_id: Uuid,
+    image_len: usize,
+    params: UpdateStatusParams,
+    log: &Logger,
+) -> Option<u32> {
+    // We can only recover if the SP still thinks this update is in progress.
+    let component = params.component;
+    let progress =
+        match super::rpc(cmds_tx, MgsRequest::UpdateStatus(component), None)
+            .await
+            .result
+            .and_then(expect_update_status)
+        {
+            Ok(UpdateStatus::InProgress(progress)) => progress,
+            Ok(other_status) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     SP update status is not in progress";
+                    "status" => ?other_status,
+                    "id" => %update_id,
+                );
+                return None;
+            }
+            Err(status_err) => {
+                error!(
+                    log,
+                    "invalid update chunk recovery failed: \
+                     could not get update status from SP";
+                    &status_err,
+                    "id" => %update_id,
+                );
+                return None;
+            }
+        };
+
+    let UpdateInProgressStatus { id, bytes_received, total_size } = progress;
+    let id = Uuid::from(id);
+
+    // This error check is not load-bearing; if we try to resume with our update
+    // ID and some other update is in progress, the SP will reject it with a
+    // different error (`InvalidUpdateId`). But it's easy enough to check here
+    // too to avoid that round trip in almost all cases, and it makes the
+    // "should never happen" cases below more sensible if we know the other
+    // fields relate to this same update ID.
+    if id != update_id {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             a different update is in progress";
+            "our_update_id" => %update_id,
+            "sp_update_id" => %id,
+        );
+        return None;
+    }
+
+    // Remap our position in the update to handle combined auxflash + SP counter
+    let Some(bytes_received) = usize::try_from(bytes_received)
+        .expect("u32 fits in usize")
+        .checked_sub(params.bytes_received_offset)
+    else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             could not apply offset to bytes received";
+            "offset" => params.bytes_received_offset,
+            "bytes_received" => bytes_received,
+            "id" => %update_id,
+        );
+        return None;
+    };
+    let Some(total_size) = usize::try_from(total_size)
+        .expect("u32 fits in usize")
+        .checked_sub(params.total_size_delta)
+    else {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             could not apply delta to total size";
+            "delta" => params.total_size_delta,
+            "total_size" => total_size,
+            "id" => %update_id,
+        );
+        return None;
+    };
+
+    // This should never happen; if the update ID matches, we and the SP should
+    // both know how long the image is.
+    if total_size != image_len {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             SP expects an incorrect image length";
+            "our_image_len" => image_len,
+            "sp_expects_len" => total_size,
+            "id" => %update_id,
+        );
+        return None;
+    }
+
+    // This should never happen; the SP should never claim to have received more
+    // bytes than the total image length.
+    if bytes_received > total_size {
+        error!(
+            log,
+            "invalid update chunk recovery failed: \
+             invalid update status from SP \
+             (bytes_received > total_size ?!)";
+            "bytes_received" => bytes_received,
+            "total_size" => total_size,
+            "id" => %update_id,
+        );
+        return None;
+    }
+
+    warn!(
+        log,
+        "invalid update chunk recovery: attempting to resume \
+         from offset {bytes_received}"
+    );
+    Some(u32::try_from(bytes_received).expect("round-trip conversion"))
 }

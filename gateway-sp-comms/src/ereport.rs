@@ -4,15 +4,15 @@
 
 // Copyright 2025 Oxide Computer Company
 
+use crate::SpRetryConfig;
 use crate::error::CommunicationError;
 use crate::error::EreportError;
 use crate::shared_socket;
 use crate::single_sp;
-use crate::SpRetryConfig;
 use async_trait::async_trait;
 use base64::{
-    engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
     Engine,
+    engine::general_purpose::{STANDARD_NO_PAD, URL_SAFE_NO_PAD},
 };
 pub use gateway_ereport_messages::Ena;
 use gateway_ereport_messages::Request;
@@ -335,7 +335,7 @@ fn decode_body_v0(
     //  As described in RFD 545 4.4:
     //  https://rfd.shared.oxide.computer/rfd/0545#_readresponse
     //
-    // V0 ereport packets consit of the following:
+    // V0 ereport packets consist of the following:
     //
     // - A CBOR map (using the "indefinite-length" encoding) of strings to
     //   CBOR values, containing metadata.
@@ -575,7 +575,18 @@ fn convert_cbor_value(value: CborValue) -> Result<JsonValue, CborToJsonError> {
             convert_cbor_object_into(cbor, &mut json)?;
             JsonValue::Object(json)
         }
-        CborValue::Text(s) => JsonValue::String(s),
+        CborValue::Text(s) => {
+            // Strip null bytes from the start and end of the string, in case it
+            // came from a null-padded byte array in Hubris. We do this
+            // conditionally on the presence of such bytes, because it should be
+            // unnecessary to reallocate if we aren't stripping nulls.
+            let s = if s.starts_with('\0') || s.ends_with('\0') {
+                s.trim_matches('\0').to_string()
+            } else {
+                s
+            };
+            JsonValue::String(s)
+        }
 
         // Per RFC 8949 section 6.1:
         //
@@ -784,8 +795,8 @@ mod test {
     const KEY_SERIAL: &str = "baseboard_serial";
     const KEY_ARCHIVE: &str = "hubris_archive_id";
 
-    fn serialize_ereport_list<'buf>(
-        buf: &'buf mut [u8],
+    fn serialize_ereport_list(
+        buf: &mut [u8],
         ereports: &[Vec<CborValue>],
     ) -> usize {
         use serde::ser::SerializeSeq;
@@ -807,10 +818,7 @@ mod test {
         cursor.position() as usize
     }
 
-    fn serialize_metadata<'buf>(
-        buf: &'buf mut [u8],
-        metadata: &JsonObject,
-    ) -> usize {
+    fn serialize_metadata(buf: &mut [u8], metadata: &JsonObject) -> usize {
         use serde::ser::SerializeMap;
 
         let mut cursor = Cursor::new(buf);
@@ -837,7 +845,7 @@ mod test {
             }
             eprint!("{:02x} ", byte);
         }
-        eprintln!("");
+        eprintln!();
     }
 
     #[track_caller]
@@ -853,7 +861,7 @@ mod test {
             Err(e) => panic!("header did not decode: {e:#?}"),
         };
         let EreportTranche { restart_id, ereports } =
-            match decode_body_v0(log, restart_id, &header, metadata, packet) {
+            match decode_body_v0(log, restart_id, header, metadata, packet) {
                 Ok(ereports) => ereports,
                 Err(e) => panic!("body did not decode: {e:#?}"),
             };

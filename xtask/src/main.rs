@@ -4,8 +4,8 @@
 
 // Copyright 2024 Oxide Computer Company
 
-use anyhow::ensure;
 use anyhow::Context;
+use anyhow::ensure;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use clap::Parser;

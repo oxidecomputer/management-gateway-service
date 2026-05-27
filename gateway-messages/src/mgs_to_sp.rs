@@ -4,7 +4,6 @@
 
 //! Types for messages sent from MGS to SPs.
 
-use crate::ignition::TransceiverSelect;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::RotRequest;
@@ -13,6 +12,7 @@ use crate::SensorRequest;
 use crate::SpComponent;
 use crate::SwitchDuration;
 use crate::UpdateId;
+use crate::ignition::TransceiverSelect;
 use hubpack::SerializedSize;
 use serde::Deserialize;
 use serde::Serialize;
@@ -96,7 +96,7 @@ pub enum MgsRequest {
     /// Clear any clearable state (e.g., event counters) on a component.
     ComponentClearStatus(SpComponent),
     /// For components with multiple slots (e.g., host boot flash), get the
-    /// currently-active slot.
+    /// currently-active slot. See also `ComponentGetPersistentSlot`.
     ComponentGetActiveSlot(SpComponent),
     /// For components with multiple slots (e.g., host boot flash), set the
     /// currently-active slot.
@@ -236,6 +236,11 @@ pub enum MgsRequest {
     GetHostFlashHash {
         slot: u16,
     },
+
+    /// For components with multiple slots (e.g., host boot flash), get the
+    /// current default slot as persisted in non-volatile memory. This may be
+    /// different than the current active slot (see `ComponentGetActiveSlot`).
+    ComponentGetPersistentSlot(SpComponent),
 }
 
 #[derive(
@@ -289,6 +294,7 @@ pub enum IgnitionCommand {
     PowerOn,
     PowerOff,
     PowerReset,
+    AlwaysTransmit { enabled: bool },
 }
 
 #[derive(
@@ -327,6 +333,7 @@ pub struct ComponentUpdatePrepare {
 pub enum ComponentAction {
     Led(LedComponentAction),
     Monorail(MonorailComponentAction),
+    Apob(ApobComponentAction),
 }
 
 /// Actions for LED components, i.e. components with `IS_LED` set
@@ -360,6 +367,15 @@ pub enum MonorailComponentAction {
 
     /// Relock the management network
     Lock,
+}
+
+/// Actions for the APOB stored in flash
+#[derive(
+    Copy, Clone, Serialize, SerializedSize, Deserialize, PartialEq, Eq, Debug,
+)]
+pub enum ApobComponentAction {
+    /// Clear the APOB so that it can't be used for future boots
+    Clear,
 }
 
 /// Challenge provided to the SP when someone wants to unlock it

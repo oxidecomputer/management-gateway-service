@@ -17,7 +17,7 @@ use serde::Serialize;
 use static_assertions::const_assert;
 
 pub use hubpack::error::Error as HubpackError;
-pub use hubpack::{deserialize, serialize, SerializedSize};
+pub use hubpack::{SerializedSize, deserialize, serialize};
 
 // Re-export all public types in our submodules for messages in either
 // direction.
@@ -69,7 +69,7 @@ pub const HF_PAGE_SIZE: usize = 256;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 20;
+    pub const CURRENT: u32 = 25;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;
@@ -300,10 +300,10 @@ impl Serialize for SpComponent {
     {
         // If we're serializing to a human-readable form (e.g., `faux-mgs --json
         // output`), serialize ourself as a string....
-        if serializer.is_human_readable() {
-            if let Some(s) = self.as_str() {
-                return serializer.serialize_str(s);
-            }
+        if serializer.is_human_readable()
+            && let Some(s) = self.as_str()
+        {
+            return serializer.serialize_str(s);
         }
 
         // ... otherwise, serialize our id array directly, which matches what
@@ -383,17 +383,37 @@ impl SpComponent {
     /// The `sp5` host CPU.
     pub const SP5_HOST_CPU: Self = Self { id: *b"sp5-host-cpu\0\0\0\0" };
 
+    /// The FPGA's buffer of POST codes emitted by the SP5 CPU
+    ///
+    /// This is deliberately a separate component from [`SP5_HOST_CPU`] because
+    /// it contains a dynamic (and large) number of component details, based
+    /// on how many POST codes have been recorded by the FPGA.
+    ///
+    /// For example, if the FPGA's buffer is empty, this reports 0 component
+    /// details; if the FPGA has seen 1K POST codes, then this component has 1K
+    /// component details and reports them in the order they were recorded.
+    pub const SP5_POST_CODES: Self = Self { id: *b"sp5-post-codes\0\0" };
+
     /// The host CPU boot flash.
     pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
 
+    /// The AMD PSP Output Blob for the host
+    pub const HOST_CPU_BOOT_APOB: Self = Self { id: *b"host-boot-apob\0\0" };
+
     /// The sidecar management network switch.
     pub const MONORAIL: Self = Self { id: *b"monorail\0\0\0\0\0\0\0\0" };
+
+    /// The Tofino on a sidecar SP
+    pub const TOFINO: Self = Self { id: *b"tofino\0\0\0\0\0\0\0\0\0\0" };
 
     // The RoT attached to the SP via SPI
     pub const ROT: Self = Self { id: *b"rot\0\0\0\0\0\0\0\0\0\0\0\0\0" };
 
     // The Stage0 bootloader for the RoT attached to the SP via SPI
     pub const STAGE0: Self = Self { id: *b"stage0\0\0\0\0\0\0\0\0\0\0" };
+
+    /// Thermal control loop
+    pub const FAN_CTRL: Self = Self { id: *b"fan-ctrl\0\0\0\0\0\0\0\0" };
 
     /// Prefix for devices that are identified generically by index (e.g.,
     /// `dev-17`).

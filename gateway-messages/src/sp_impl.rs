@@ -4,10 +4,6 @@
 
 //! Behavior implemented by both real and simulated SPs.
 
-use crate::ignition;
-use crate::ignition::LinkEvents;
-use crate::tlv;
-use crate::version;
 use crate::BadRequestReason;
 use crate::ComponentAction;
 use crate::ComponentActionResponse;
@@ -21,6 +17,7 @@ use crate::DumpRequest;
 use crate::DumpResponse;
 use crate::DumpSegment;
 use crate::DumpTask;
+use crate::HF_PAGE_SIZE;
 use crate::Header;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
@@ -31,6 +28,7 @@ use crate::MgsRequest;
 use crate::MgsResponse;
 use crate::PowerState;
 use crate::PowerStateTransition;
+use crate::ROT_PAGE_SIZE;
 use crate::RotBootInfo;
 use crate::RotRequest;
 use crate::RotResponse;
@@ -49,9 +47,11 @@ use crate::TlvPage;
 use crate::UpdateChunk;
 use crate::UpdateId;
 use crate::UpdateStatus;
-use crate::HF_PAGE_SIZE;
-use crate::ROT_PAGE_SIZE;
 use core::ops::ControlFlow;
+use crate::ignition;
+use crate::ignition::LinkEvents;
+use crate::tlv;
+use crate::version;
 use hubpack::error::Error as HubpackError;
 use hubpack::error::Result as HubpackResult;
 
@@ -302,6 +302,11 @@ pub trait SpHandler {
         persist: bool,
     ) -> Result<(), SpError>;
 
+    fn component_get_persistent_slot(
+        &mut self,
+        component: SpComponent,
+    ) -> Result<u16, SpError>;
+
     fn component_action(
         &mut self,
         sender: Sender<Self::VLanId>,
@@ -369,7 +374,7 @@ pub trait SpHandler {
     ) -> Result<RotResponse, SpError>;
 
     fn vpd_lock_status_all(&mut self, buf: &mut [u8])
-        -> Result<usize, SpError>;
+    -> Result<usize, SpError>;
 
     // On success, this method will return unless the reset
     // affects the SP_ITSELF.
@@ -795,14 +800,17 @@ fn handle_mgs_request<H: SpHandler>(
         }
         MgsRequest::BulkIgnitionState { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
-                let offset = u32::min(offset, port_count);
-                let iter = handler.bulk_ignition_state(offset)?;
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::BulkIgnitionState(iter));
-                Ok(SpResponse::BulkIgnitionState(TlvPage {
-                    offset,
-                    total: port_count,
-                }))
+                if offset >= port_count && offset != 0 {
+                    Err(SpError::RequestUnsupportedForComponent)
+                } else {
+                    let iter = handler.bulk_ignition_state(offset)?;
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::BulkIgnitionState(iter));
+                    Ok(SpResponse::BulkIgnitionState(TlvPage {
+                        offset,
+                        total: port_count,
+                    }))
+                }
             })
         }
         MgsRequest::IgnitionLinkEvents { target } => handler
@@ -810,14 +818,18 @@ fn handle_mgs_request<H: SpHandler>(
             .map(SpResponse::IgnitionLinkEvents),
         MgsRequest::BulkIgnitionLinkEvents { offset } => {
             handler.num_ignition_ports().and_then(|port_count| {
-                let offset = u32::min(offset, port_count);
-                let iter = handler.bulk_ignition_link_events(offset)?;
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::BulkIgnitionLinkEvents(iter));
-                Ok(SpResponse::BulkIgnitionLinkEvents(TlvPage {
-                    offset,
-                    total: port_count,
-                }))
+                if offset >= port_count && offset != 0 {
+                    Err(SpError::RequestUnsupportedForComponent)
+                } else {
+                    let iter = handler.bulk_ignition_link_events(offset)?;
+                    outgoing_trailing_data = Some(
+                        OutgoingTrailingData::BulkIgnitionLinkEvents(iter),
+                    );
+                    Ok(SpResponse::BulkIgnitionLinkEvents(TlvPage {
+                        offset,
+                        total: port_count,
+                    }))
+                }
             })
         }
         MgsRequest::ClearIgnitionLinkEvents { target, transceiver_select } => {
@@ -874,20 +886,24 @@ fn handle_mgs_request<H: SpHandler>(
             .reset_component_trigger(SpComponent::SP_ITSELF)
             .map(|()| SpResponse::ResetComponentTriggerAck),
         MgsRequest::Inventory { device_index } => {
+            // If a caller asks for an index past our end, return an error
+            // (but allow `device_index = 0` to get total device count)
             let total_devices = handler.num_devices();
-            // If a caller asks for an index past our end, clamp it.
-            let device_index = u32::min(device_index, total_devices);
-            // We need to pack TLV-encoded device descriptions as our outgoing
-            // trailing data.
-            outgoing_trailing_data =
-                Some(OutgoingTrailingData::DeviceInventory {
-                    device_index,
-                    total_devices,
-                });
-            Ok(SpResponse::Inventory(TlvPage {
-                offset: device_index,
-                total: total_devices,
-            }))
+            if device_index >= total_devices && device_index != 0 {
+                Err(SpError::RequestUnsupportedForComponent)
+            } else {
+                // We need to pack TLV-encoded device descriptions as our outgoing
+                // trailing data.
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::DeviceInventory {
+                        device_index,
+                        total_devices,
+                    });
+                Ok(SpResponse::Inventory(TlvPage {
+                    offset: device_index,
+                    total: total_devices,
+                }))
+            }
         }
         MgsRequest::GetStartupOptions => {
             handler.get_startup_options().map(SpResponse::StartupOptions)
@@ -896,21 +912,25 @@ fn handle_mgs_request<H: SpHandler>(
             .set_startup_options(startup_options)
             .map(|()| SpResponse::SetStartupOptionsAck),
         MgsRequest::ComponentDetails { component, offset } => {
-            handler.num_component_details(component).map(|total_items| {
-                // If a caller asks for an index past our end, clamp it.
-                let offset = u32::min(offset, total_items);
-                // We need to pack TLV-encoded component details as our
-                // outgoing trailing data.
-                outgoing_trailing_data =
-                    Some(OutgoingTrailingData::ComponentDetails {
-                        component,
+            handler.num_component_details(component).and_then(|total_items| {
+                // If a caller asks for an index past our end, return an error
+                // (but allow `offset = 0` to get total item count)
+                if offset >= total_items && offset != 0 {
+                    Err(SpError::RequestUnsupportedForComponent)
+                } else {
+                    // We need to pack TLV-encoded component details as our
+                    // outgoing trailing data.
+                    outgoing_trailing_data =
+                        Some(OutgoingTrailingData::ComponentDetails {
+                            component,
+                            offset,
+                            total: total_items,
+                        });
+                    Ok(SpResponse::ComponentDetails(TlvPage {
                         offset,
                         total: total_items,
-                    });
-                SpResponse::ComponentDetails(TlvPage {
-                    offset,
-                    total: total_items,
-                })
+                    }))
+                }
             })
         }
         MgsRequest::ComponentClearStatus(component) => handler
@@ -922,6 +942,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::ComponentSetActiveSlot { component, slot } => handler
             .component_set_active_slot(component, slot, false)
             .map(|()| SpResponse::ComponentSetActiveSlotAck),
+        MgsRequest::ComponentGetPersistentSlot(component) => handler
+            .component_get_persistent_slot(component)
+            .map(SpResponse::ComponentPersistentSlot),
         MgsRequest::ComponentSetAndPersistActiveSlot { component, slot } => {
             handler
                 .component_set_active_slot(component, slot, true)
@@ -1346,6 +1369,13 @@ mod tests {
             _slot: u16,
             _persist: bool,
         ) -> Result<(), SpError> {
+            unimplemented!()
+        }
+
+        fn component_get_persistent_slot(
+            &mut self,
+            _component: SpComponent,
+        ) -> Result<u16, SpError> {
             unimplemented!()
         }
 

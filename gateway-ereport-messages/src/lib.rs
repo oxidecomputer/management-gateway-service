@@ -21,8 +21,8 @@
 #![cfg_attr(not(test), no_std)]
 
 use zerocopy::{
-    byteorder::little_endian as le, FromBytes, Immutable, IntoBytes,
-    KnownLayout, TryFromBytes,
+    FromBytes, Immutable, IntoBytes, KnownLayout, TryFromBytes,
+    byteorder::little_endian as le,
 };
 
 /// An error numeric identifier (ENA).
@@ -411,7 +411,7 @@ mod tests {
         M: TryFromBytes + IntoBytes + Immutable + PartialEq + core::fmt::Debug,
     {
         let bytes = dbg!(&msg).as_bytes();
-        let msg2 = dbg!(M::try_read_from_bytes(&*dbg!(PrettyBytes(bytes))))
+        let msg2 = dbg!(M::try_read_from_bytes(&dbg!(PrettyBytes(bytes))))
             .expect("message should be valid");
         assert_eq!(msg, msg2);
     }

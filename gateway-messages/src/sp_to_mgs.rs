@@ -4,7 +4,6 @@
 
 //! Types for messages sent from SPs to MGS.
 
-use crate::tlv;
 use crate::BadRequestReason;
 use crate::PowerState;
 use crate::RotResponse;
@@ -14,6 +13,7 @@ use crate::SpComponent;
 use crate::StartupOptions;
 use crate::UnlockChallenge;
 use crate::UpdateId;
+use crate::tlv;
 use bitflags::bitflags;
 use core::fmt;
 use hubpack::SerializedSize;
@@ -22,14 +22,20 @@ use serde::Serialize;
 use serde_repr::Deserialize_repr;
 use serde_repr::Serialize_repr;
 
+pub mod host_cpu_details;
 pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
 pub mod vpd;
+pub mod tofino;
 
+pub use host_cpu_details::GpioToggleCount;
+pub use host_cpu_details::LastPostCode;
+pub use host_cpu_details::PostCode;
 pub use ignition::IgnitionState;
 pub use measurement::Measurement;
 pub use vpd::Vpd;
+pub use tofino::PcieRegisterRead;
 
 use ignition::IgnitionError;
 use measurement::MeasurementHeader;
@@ -179,6 +185,9 @@ pub enum SpResponse {
 
     /// sha2-256 hash of a flash bank
     HostFlashHash([u8; 32]),
+
+    /// Default slot as persisted in non-volatile memory
+    ComponentPersistentSlot(u16),
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -712,10 +721,16 @@ pub struct TlvPage {
 /// serialization traits; it only serves as an organizing collection of the
 /// possible types contained in a component details message. Each TLV-encoded
 /// struct corresponds to one of these cases.
+///
+/// As such, it is not part of the explicit message versioning scheme
 #[derive(Debug, Clone)]
 pub enum ComponentDetails<S> {
     PortStatus(Result<PortStatus, PortStatusError>),
     Measurement(Measurement),
+    LastPostCode(LastPostCode),
+    PostCode(PostCode),
+    GpioToggleCount(GpioToggleCount),
+    Pcie(PcieRegisterRead),
     Vpd(vpd::Vpd<S>),
 }
 
@@ -727,6 +742,10 @@ where
         match self {
             ComponentDetails::PortStatus(_) => PortStatus::TAG,
             ComponentDetails::Measurement(_) => MeasurementHeader::TAG,
+            ComponentDetails::LastPostCode(_) => LastPostCode::TAG,
+            ComponentDetails::PostCode(_) => PostCode::TAG,
+            ComponentDetails::GpioToggleCount(_) => GpioToggleCount::TAG,
+            ComponentDetails::Pcie(_) => PcieRegisterRead::TAG,
             ComponentDetails::Vpd(_) => Vpd::<S>::TAG,
         }
     }
@@ -749,6 +768,14 @@ where
                     Ok(n + m.name.len())
                 }
             }
+            ComponentDetails::LastPostCode(code) => {
+                hubpack::serialize(buf, code)
+            }
+            ComponentDetails::PostCode(code) => hubpack::serialize(buf, code),
+            ComponentDetails::GpioToggleCount(code) => {
+                hubpack::serialize(buf, code)
+            }
+            ComponentDetails::Pcie(p) => hubpack::serialize(buf, p),
             ComponentDetails::Vpd(vpd) => vpd.encode(buf),
         }
     }
@@ -760,6 +787,7 @@ where
 pub enum ComponentActionResponse {
     Ack,
     Monorail(MonorailComponentActionResponse),
+    Apob(ApobComponentActionResponse),
 }
 
 #[derive(
@@ -825,6 +853,16 @@ pub enum MonorailComponentActionResponse {
     RequestChallenge(UnlockChallenge),
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum ApobComponentActionResponse {
+    Success,
+    NotMuxedToSp,
+    NotImplemented,
+    InvalidState,
+}
+
 /// Header for the description of a single device.
 ///
 /// Always packed into a [`tlv`] triple containing:
@@ -876,10 +914,17 @@ bitflags! {
         const HAS_MEASUREMENT_CHANNELS = 1 << 1;
         const HAS_SERIAL_CONSOLE = 1 << 2;
         const IS_LED = 1 << 3;
-        /// Indicates that this device has its own vital product data (e.g. part
-        /// number/serial number) which can be read by requesting the device's
-        /// details.
+        /// The device has vital product data, such as a part number and serial
+        /// number
         const HAS_VPD = 1 << 4;
+        /// This is a PMBus device.
+        ///
+        /// Typically, PMBus devices will also advertise the `HAS_VPD` and
+        /// `HAS_MEASUREMENT_CHANNELS` capabilities. However, it is generally
+        /// recommended that client code prefer using those bits to detect those
+        /// capabilities, rather than assuming that they will be present if a
+        /// device `IS_PMBUS`.
+        const IS_PMBUS = 1 << 5;
         // MGS has a placeholder API for powering off an individual component;
         // do we want to keep that? If so, add a bit for "can be powered on and
         // off".
@@ -1052,8 +1097,15 @@ pub enum SpError {
     /// An update is already in progress with the specified amount of data
     /// already provided. MGS should resume the update at that offset.
     UpdateInProgress(UpdateStatus),
-    /// Received an invalid update chunk; the in-progress update must be
-    /// aborted and restarted.
+    /// Received an invalid update chunk; the SP was expecting an update chunk
+    /// with a different offset.
+    ///
+    /// This error may indicate packet loss from the SP to MGS (e.g., MGS will
+    /// resend an already-received-by-the-SP update chunk if it missed an ACK).
+    /// This error should be recoverable by asking the SP for its update status
+    /// to determine which chunk it wants and resuming from there. MGS and
+    /// faux-mgs attempt this automatically, so this error should only bubble
+    /// out to users if that recovery process has failed.
     InvalidUpdateChunk,
     /// An update operation failed with the associated code.
     UpdateFailed(u32),
@@ -1170,7 +1222,10 @@ impl fmt::Display for SpError {
                 write!(f, "power state error (code {}))", code)
             }
             Self::ResetTriggerWithoutPrepare => {
-                write!(f, "sys reset trigger requested without a preceding sys reset prepare")
+                write!(
+                    f,
+                    "sys reset trigger requested without a preceding sys reset prepare"
+                )
             }
             Self::InvalidSlotForComponent => {
                 write!(f, "invalid slot number for component")
@@ -1212,10 +1267,16 @@ impl fmt::Display for SpError {
                 write!(f, "could not find the board in the image caboose")
             }
             Self::ImageBoardMismatch => {
-                write!(f, "the image has a board that doesn't match the current image")
+                write!(
+                    f,
+                    "the image has a board that doesn't match the current image"
+                )
             }
             Self::ResetComponentTriggerWithoutPrepare => {
-                write!(f, "reset component trigger requested without a preceding reset component prepare")
+                write!(
+                    f,
+                    "reset component trigger requested without a preceding reset component prepare"
+                )
             }
             Self::SwitchDefaultImageError(code) => {
                 write!(f, "switch default image failed with code {code}")

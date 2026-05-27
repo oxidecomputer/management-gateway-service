@@ -6,6 +6,9 @@
 
 //! Interface for communicating with a single SP.
 
+use crate::SharedSocket;
+use crate::SwitchPortConfig;
+use crate::VersionedSpState;
 use crate::ereport;
 use crate::error::CommunicationError;
 use crate::error::EreportError;
@@ -14,16 +17,8 @@ use crate::shared_socket::SingleSpHandle;
 use crate::shared_socket::SingleSpHandleError;
 use crate::shared_socket::SingleSpMessage;
 use crate::sp_response_expect::*;
-use crate::SharedSocket;
-use crate::SwitchPortConfig;
-use crate::VersionedSpState;
 use async_trait::async_trait;
 use backoff::backoff::Backoff;
-use gateway_messages::ignition::LinkEvents;
-use gateway_messages::ignition::TransceiverSelect;
-use gateway_messages::tlv;
-use gateway_messages::version;
-use gateway_messages::version::WATCHDOG_VERSION;
 use gateway_messages::BadRequestReason;
 use gateway_messages::CfpaPage;
 use gateway_messages::ComponentAction;
@@ -35,15 +30,18 @@ use gateway_messages::DevicePresence;
 use gateway_messages::DumpCompression;
 use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
+use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::Header;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
+use gateway_messages::MIN_TRAILING_DATA_LEN;
 use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::MonorailError;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
+use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotRequest;
 use gateway_messages::SensorReading;
@@ -59,16 +57,18 @@ use gateway_messages::SprotProtocolError;
 use gateway_messages::StartupOptions;
 use gateway_messages::TlvPage;
 use gateway_messages::UpdateStatus;
-use gateway_messages::HF_PAGE_SIZE;
-use gateway_messages::MIN_TRAILING_DATA_LEN;
-use gateway_messages::ROT_PAGE_SIZE;
+use gateway_messages::ignition::LinkEvents;
+use gateway_messages::ignition::TransceiverSelect;
+use gateway_messages::tlv;
+use gateway_messages::version;
+use gateway_messages::version::WATCHDOG_VERSION;
 use serde::Serialize;
+use slog::Logger;
 use slog::debug;
 use slog::error;
 use slog::info;
 use slog::trace;
 use slog::warn;
-use slog::Logger;
 use std::collections::BTreeMap;
 use std::io::Cursor;
 use std::io::Seek;
@@ -110,11 +110,10 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 // (getting back multiple triples per call, hopefully, but that's fully in the
 // SP's control). The number of triples is a u32; if an SP claimed to have an
 // absurdly large number, we'd be stuck fetching that many (and building up a
-// Vec of them in memory). We set a "we never expect this many devices" cap
-// here; 1024 is over 10x our current gimlet rev-c device inventory count, so
-// this should be plenty of buffer. If it needs to increase in the future, that
-// will require an MGS update.
-const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 1024;
+// Vec of them in memory). We set a "we never expect this many items" cap here;
+// our current winner is the dynamic POST code buffer on Cosmo, which can return
+// up to 4096 POST codes.
+const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 16384;
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
@@ -614,6 +613,16 @@ impl SingleSp {
         })
     }
 
+    /// Get the default slot of a particular component.
+    pub async fn component_persistent_slot(
+        &self,
+        component: SpComponent,
+    ) -> Result<u16> {
+        self.rpc(MgsRequest::ComponentGetPersistentSlot(component))
+            .await
+            .and_then(expect_component_persistent_slot)
+    }
+
     /// Request that the status of a component be cleared (e.g., resetting
     /// counters).
     pub async fn component_clear_status(
@@ -692,8 +701,7 @@ impl SingleSp {
                 // Are we expecting this chunk?
                 if entries.len() >= total {
                     return Err(CommunicationError::TlvPagination {
-                        reason:
-                            "SP returned more entries than its reported total",
+                        reason: "SP returned more entries than its reported total",
                     });
                 }
 
@@ -1572,11 +1580,15 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
         tag: tlv::Tag,
         value: &[u8],
     ) -> Result<Option<Self::Item>> {
+        use gateway_messages::host_cpu_details::GpioToggleCount;
+        use gateway_messages::host_cpu_details::LastPostCode;
+        use gateway_messages::host_cpu_details::PostCode;
         use gateway_messages::measurement::Measurement;
         use gateway_messages::measurement::MeasurementHeader;
         use gateway_messages::monorail_port_status::PortStatus;
         use gateway_messages::monorail_port_status::PortStatusError;
         use gateway_messages::vpd::Vpd;
+        use gateway_messages::tofino::PcieRegisterRead;
 
         match tag {
             PortStatus::TAG => {
@@ -1622,6 +1634,72 @@ impl TlvRpc for ComponentDetailsTlvRpc<'_> {
                     kind: header.kind,
                     value: header.value,
                 })))
+            }
+            LastPostCode::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<LastPostCode>(value)
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in LastPostCode TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::LastPostCode(result)))
+            }
+            PostCode::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<PostCode>(value).map_err(
+                        |err| CommunicationError::TlvDeserialize { tag, err },
+                    )?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in PostCode TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::PostCode(result)))
+            }
+            GpioToggleCount::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<GpioToggleCount>(value)
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in GpioToggleCount TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::GpioToggleCount(result)))
+            }
+            PcieRegisterRead::TAG => {
+                let (result, leftover) =
+                    gateway_messages::deserialize::<PcieRegisterRead>(value)
+                        .map_err(|err| CommunicationError::TlvDeserialize {
+                            tag,
+                            err,
+                        })?;
+
+                if !leftover.is_empty() {
+                    info!(
+                        self.log,
+                        "ignoring unexpected data in PCIe TLV entry"
+                    );
+                }
+
+                Ok(Some(ComponentDetails::Pcie(result)))
             }
             Vpd::<String>::TAG => {
                 let vpd = gateway_messages::Vpd::decode_body(value).map_err(
@@ -2592,7 +2670,7 @@ impl<T: InnerSocket<SingleSpMessage>> Inner<T> {
                         peer,
                         response,
                         sp_trailing_data.to_vec(),
-                    )))
+                    )));
                 }
             }
         }
@@ -2778,8 +2856,8 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn rpc_call_one_attempt_times_out_while_receiving_host_request_updates(
-    ) {
+    async fn rpc_call_one_attempt_times_out_while_receiving_host_request_updates()
+     {
         let (sp_addr_tx, _sp_addr_rx) = watch::channel(None);
         let (_cmds_tx, cmds_rx) = mpsc::channel(128);
         let (socket, socket_tx) =

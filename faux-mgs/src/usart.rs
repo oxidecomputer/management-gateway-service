@@ -7,12 +7,12 @@
 use anyhow::Context;
 use anyhow::Result;
 use gateway_messages::BadRequestReason;
+use gateway_messages::SERIAL_CONSOLE_IDLE_TIMEOUT;
 use gateway_messages::SpComponent;
 use gateway_messages::SpError;
-use gateway_messages::SERIAL_CONSOLE_IDLE_TIMEOUT;
-use gateway_sp_comms::error::CommunicationError;
 use gateway_sp_comms::AttachedSerialConsoleSend;
 use gateway_sp_comms::SingleSp;
+use gateway_sp_comms::error::CommunicationError;
 use slog::error;
 use slog::info;
 use slog::warn;

@@ -8,12 +8,12 @@
 use core::fmt;
 use core::iter;
 use core::mem;
-use zerocopy::byteorder::LittleEndian;
-use zerocopy::byteorder::U32;
 use zerocopy::FromBytes;
 use zerocopy::Immutable;
 use zerocopy::IntoBytes;
 use zerocopy::KnownLayout;
+use zerocopy::byteorder::LittleEndian;
+use zerocopy::byteorder::U32;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EncodeError<E> {
