@@ -5,6 +5,7 @@
 //! Types for messages sent from SPs to MGS.
 
 use crate::BadRequestReason;
+use crate::PowerRailName;
 use crate::PowerState;
 use crate::RotResponse;
 use crate::RotSlotId;
@@ -186,6 +187,17 @@ pub enum SpResponse {
 
     /// Default slot as persisted in non-volatile memory
     ComponentPersistentSlot(u16),
+
+    /// PMBus status of a given rail
+    PmbusStatus(PMBusStatusResponse),
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct PMBusStatusResponse {
+    pub rail: PowerRailName,
+    pub result: Result<PmbusStatus, PmbusStatusError>,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -710,6 +722,27 @@ pub struct TlvPage {
     pub offset: u32,
     /// Total number of structures in this data set.
     pub total: u32,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum PmbusStatusError {}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct PmbusStatus {
+    pub status_word: u16,
+    pub status_vout: Result<u8, PmbusStatusError>,
+    pub status_iout: Result<u8, PmbusStatusError>,
+    pub status_temperature: Result<u8, PmbusStatusError>,
+    pub status_cml: Result<u8, PmbusStatusError>,
+    pub status_other: Result<u8, PmbusStatusError>,
+    pub status_input: Result<u8, PmbusStatusError>,
+    pub status_mfr_specific: Result<u8, PmbusStatusError>,
+    pub status_fans_1_2: Result<u8, PmbusStatusError>,
+    pub status_fans_3_4: Result<u8, PmbusStatusError>,
 }
 
 /// Types of component details that can be included in the TLV-encoded data of

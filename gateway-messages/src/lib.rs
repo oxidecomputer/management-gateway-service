@@ -649,6 +649,71 @@ impl TryFrom<&str> for SpComponent {
     }
 }
 
+/// Identifier for a single power rail.
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct PowerRailName {
+    name: nullstr::NullStr<{ Self::MAX_NAME_LENGTH }>,
+}
+
+impl core::fmt::Display for PowerRailName {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        self.name.fmt(f)
+    }
+}
+
+impl PowerRailName {
+    /// Maximum number of bytes for a Power Rail Name.
+    pub const MAX_NAME_LENGTH: usize = 32;
+
+    /// Interpret the power rail name as a human-readable string.
+    ///
+    /// Our current expectation of power rail names is that this should never
+    /// fail (i.e., we're always storing power rail names as human-readable
+    /// strings), but because we reconstitute components from network messages
+    /// we still need to check.
+    #[inline]
+    pub fn as_str(&self) -> Option<&str> {
+        self.name.as_str()
+    }
+
+    /// Interpret the power rail name as a human-readable string in a `const`
+    /// context, panicking if the string is not human readable.
+    ///
+    /// This function should only be used in const contexts when the caller
+    /// knows the component is valid (e.g., one of this type's associated
+    /// constants); for component names parsed or constructed at runtime, prefer
+    /// [`PowerRailName::as_str()`] which performs runtime validation.
+    #[inline]
+    pub const fn const_as_str(&self) -> &str {
+        self.name.const_as_str()
+    }
+
+    #[inline]
+    pub const fn from_const(val: &str) -> Self {
+        Self { name: nullstr::NullStr::from_const(val) }
+    }
+
+    #[inline]
+    pub fn id(&self) -> &[u8; Self::MAX_NAME_LENGTH] {
+        self.name.contents()
+    }
+}
+
+impl fmt::Debug for PowerRailName {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut debug = f.debug_struct("PowerRailName");
+        if let Some(s) = self.as_str() {
+            debug.field("name", &s);
+        } else {
+            debug.field("name", self.name.contents());
+        }
+        debug.finish()
+    }
+}
+
 /// Minimum guaranteed space for trailing data in a single packet.
 ///
 /// Depending on the [`Message`] payload, there may be more space for trailing
@@ -765,6 +830,35 @@ mod tests {
             hubpack::deserialize::<SpComponent>(expected_value.contents())
                 .unwrap(),
             (component, &[] as &[u8])
+        );
+    }
+
+    #[test]
+    fn test_human_readable_power_rail() {
+        let rail = const { PowerRailName::from_const("V0P96_NIC_VDD_A0HP") };
+        let expected_value =
+            serde_json::Value::String("V0P96_NIC_VDD_A0HP".to_string());
+
+        assert_eq!(serde_json::to_value(rail).unwrap(), expected_value);
+        assert_eq!(
+            serde_json::from_value::<PowerRailName>(expected_value).unwrap(),
+            rail
+        );
+    }
+
+    #[test]
+    fn test_non_human_readable_power_rail() {
+        let rail = const { PowerRailName::from_const("V0P96_NIC_VDD_A0HP") };
+        let expected_value = rail.name;
+
+        let mut out = [0; PowerRailName::MAX_SIZE];
+        let n = hubpack::serialize(&mut out, &rail).unwrap();
+        assert_eq!(&out[..n], expected_value.contents());
+
+        assert_eq!(
+            hubpack::deserialize::<PowerRailName>(expected_value.contents())
+                .unwrap(),
+            (rail, &[] as &[u8])
         );
     }
 }
