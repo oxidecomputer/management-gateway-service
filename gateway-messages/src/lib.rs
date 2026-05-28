@@ -279,8 +279,237 @@ impl From<UpdateId> for uuid::Uuid {
     }
 }
 
+mod nullstr {
+    use super::*;
+
+    /// A reusable type that implements a fixed-max-capacity string where the
+    /// unused capacity is always guaranteed to be zero-filled. This is used
+    /// for strings sent over the wire using [`hubpack`], which requires fixed-size
+    /// items.
+    ///
+    /// This type does NOT guarantee that the contents are null-*terminated*, only
+    /// null-*padded*. If the contained string is exactly the length of the container,
+    /// there will be no null bytes present.
+    ///
+    /// It is not intended for this type to be part of the public API, see
+    /// [`SpComponent`] for usage guidance.
+    #[derive(Clone, Copy, PartialEq, Eq, Hash, SerializedSize)]
+    pub struct NullStr<const N: usize> {
+        contents: [u8; N],
+    }
+
+    impl<const N: usize> NullStr<N> {
+        /// Interpret the content as a human-readable string.
+        ///
+        /// Our current expectation of contents is that this should never
+        /// fail (i.e., we're always storing contents as human-readable
+        /// strings), but because we reconstitute components from network messages
+        /// we still need to check.
+        pub fn as_str(&self) -> Option<&str> {
+            let n = self.contents.iter().position(|&c| c == 0).unwrap_or(N);
+            str::from_utf8(&self.contents[..n]).ok()
+        }
+
+        /// Const function to create a zero-padded [`NullStr`] from a given [`str`].
+        ///
+        /// Panics if `src` exceeds the capacity of `N`. This should generally only be
+        /// used in const context where panics become compilation errors.
+        pub const fn from_const(src: &str) -> Self {
+            let mut buf = [0u8; N];
+            assert!(src.len() <= N);
+            let mut idx = 0;
+            while idx < src.len() {
+                buf[idx] = src.as_bytes()[idx];
+                idx += 1;
+            }
+
+            Self { contents: buf }
+        }
+
+        /// Interpret the contents as a human-readable string in a `const`
+        /// context, panicking if the string is not human readable.
+        ///
+        /// This function should only be used in const contexts when the caller
+        /// knows the contents is valid (e.g., one of this type's associated
+        /// constants); for contents names parsed or constructed at runtime, prefer
+        /// [`SpComponent::as_str()`] which performs runtime validation.
+        pub const fn const_as_str(&self) -> &str {
+            // const-equivalent of
+            // ```
+            // let n =
+            //    self.contents.iter().position(|&c| c == 0)
+            //      .unwrap_or(Self::MAX_ID_LENGTH);
+            // ```
+            let mut n = 0;
+            while n < self.contents.len() {
+                if self.contents[n] == 0 {
+                    break;
+                }
+                n += 1;
+            }
+
+            // const-equivalent of `let s = &self.contents[..n]`.
+            //
+            // SAFETY: We really want to say `&self.contents[..n]` here, but we're not
+            // allowed to use the indexing operator inside a `const fn`. We know
+            // from the loop above that `n <= self.contents.len()`, turning the following
+            // into a manual `&self.contents[..n]` without a bounds check.
+            let s = unsafe {
+                core::slice::from_raw_parts(self.contents.as_ptr(), n)
+            };
+
+            // const-equivalent of `str::from_utf8(s).unwrap_lite()`.
+            match str::from_utf8(s) {
+                Ok(s) => s,
+                Err(_) => panic!("invalid NullStr (not a utf8 string)"),
+            }
+        }
+
+        /// Obtain a view of the internal null-padded array of bytes.
+        pub fn contents(&self) -> &[u8; N] {
+            &self.contents
+        }
+    }
+
+    impl<const N: usize> Serialize for NullStr<N> {
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            // NOTE: We are implicitly performing an action here similar to `serde(transparent)`,
+            // serializing the inner field directly rather than as a struct field. This is aesthetically
+            // pleasing for JSON, and not impactful for `hubpack`.
+            //
+            // If we're serializing to a human-readable form (e.g., `faux-mgs --json
+            // output`), serialize ourself as a string....
+            if serializer.is_human_readable()
+                && let Some(s) = self.as_str()
+            {
+                return serializer.serialize_str(s);
+            }
+
+            // ... otherwise, serialize our id array directly, which matches what
+            // hubpack expects from serde's derived impl.
+            //
+            // NOTE: We use `serde_big_array` as we are const-generic over the
+            // length, and serde's implementation is *not* generic, and only provides
+            // manual impls up to N=32.
+            <[u8; N] as serde_big_array::BigArray<'static, u8>>::serialize(
+                &self.contents,
+                serializer,
+            )
+        }
+    }
+
+    impl<'de, const N: usize> Deserialize<'de> for NullStr<N> {
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'de>,
+        {
+            use serde::de::Visitor;
+            // NOTE: We are implicitly performing an action here similar to `serde(transparent)`,
+            // deserializing the inner field directly rather than as a struct field. This is aesthetically
+            // pleasing for JSON, and not impactful for `hubpack`.
+            //
+            // Inverse of our serialize method: if we're deserializing from a
+            // human-readable form, deserialize a string...
+            if deserializer.is_human_readable() {
+                struct StrVisitor<const N: usize>;
+                impl<const N: usize> Visitor<'_> for StrVisitor<N> {
+                    type Value = NullStr<N>;
+
+                    fn expecting(
+                        &self,
+                        formatter: &mut fmt::Formatter,
+                    ) -> fmt::Result {
+                        write!(formatter, "a string of at most {} bytes", N)
+                    }
+
+                    fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+                    where
+                        E: serde::de::Error,
+                    {
+                        NullStr::try_from(v).map_err(|NullStrTooLong| {
+                            E::invalid_length(
+                                v.len(),
+                                &"contents within capacity",
+                            )
+                        })
+                    }
+                }
+
+                deserializer.deserialize_str(StrVisitor)
+            } else {
+                // ... otherwise, deserialize an array just like the derived serde
+                // impl would do.
+                //
+                // NOTE: We use `serde_big_array` as we are const-generic over the
+                // length, and serde's implementation is *not* generic, and only provides
+                // manual impls up to N=32.
+                let contents = <[u8; N] as serde_big_array::BigArray<
+                    'de,
+                    u8,
+                >>::deserialize(deserializer)?;
+                Ok(Self { contents })
+            }
+        }
+    }
+
+    /// Error type returned from `TryFrom<&str> for SpComponent` if the provided ID
+    /// is too long.
+    #[derive(Debug)]
+    pub struct NullStrTooLong;
+
+    impl<const N: usize> TryFrom<&str> for NullStr<N> {
+        type Error = NullStrTooLong;
+
+        fn try_from(value: &str) -> Result<Self, Self::Error> {
+            if value.len() > N {
+                return Err(NullStrTooLong);
+            }
+
+            let mut me = Self { contents: [0; N] };
+
+            // should we sanity check that `value` doesn't contain any nul bytes?
+            // seems like overkill; probably fine to omit
+            me.contents[..value.len()].copy_from_slice(value.as_bytes());
+
+            Ok(me)
+        }
+    }
+
+    impl<const N: usize> fmt::Debug for NullStr<N> {
+        fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+            let mut debug = f.debug_struct("NullStr");
+            if let Some(s) = self.as_str() {
+                debug.field("contents", &s);
+            } else {
+                debug.field("contents", &self.contents);
+            }
+            debug.finish()
+        }
+    }
+
+    impl<const N: usize> core::fmt::Display for NullStr<N> {
+        fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+            if let Some(s) = self.as_str() {
+                write!(f, "{s}")
+            } else {
+                write!(f, "{self:?}")
+            }
+        }
+    }
+}
+
 /// Identifier for a single component managed by an SP.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, SerializedSize)]
+//
+// NOTE: `serde(transparent)` is used to provide a "flattening" here. This
+// is aesthetically intentional for JSON, and not impactful for non self describing
+// formats like hubpack.
+#[derive(
+    Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,
+)]
+#[serde(transparent)]
 pub struct SpComponent {
     /// The ID of the component.
     ///
@@ -290,80 +519,12 @@ pub struct SpComponent {
     ///
     /// An `SpComponent` can be created via its `TryFrom<&str>` implementation,
     /// which appends the appropriate padding.
-    pub id: [u8; Self::MAX_ID_LENGTH],
-}
-
-impl Serialize for SpComponent {
-    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-    where
-        S: serde::Serializer,
-    {
-        // If we're serializing to a human-readable form (e.g., `faux-mgs --json
-        // output`), serialize ourself as a string....
-        if serializer.is_human_readable()
-            && let Some(s) = self.as_str()
-        {
-            return serializer.serialize_str(s);
-        }
-
-        // ... otherwise, serialize our id array directly, which matches what
-        // hubpack expects from serde's derived impl.
-        self.id.serialize(serializer)
-    }
-}
-
-impl<'de> Deserialize<'de> for SpComponent {
-    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-    where
-        D: serde::Deserializer<'de>,
-    {
-        use serde::de::Visitor;
-
-        // Inverse of our serialize method: if we're deserializing from a
-        // human-readable form, deserialize a string...
-        if deserializer.is_human_readable() {
-            struct StrVisitor;
-            impl Visitor<'_> for StrVisitor {
-                type Value = SpComponent;
-
-                fn expecting(
-                    &self,
-                    formatter: &mut fmt::Formatter,
-                ) -> fmt::Result {
-                    write!(
-                        formatter,
-                        "a string of at most {} bytes",
-                        SpComponent::MAX_ID_LENGTH
-                    )
-                }
-
-                fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
-                where
-                    E: serde::de::Error,
-                {
-                    SpComponent::try_from(v).map_err(|SpComponentIdTooLong| {
-                        E::invalid_length(v.len(), &"16")
-                    })
-                }
-            }
-
-            deserializer.deserialize_str(StrVisitor)
-        } else {
-            // ... otherwise, deserialize an array just like the derived serde
-            // impl would do.
-            let id = <[u8; Self::MAX_ID_LENGTH]>::deserialize(deserializer)?;
-            Ok(Self { id })
-        }
-    }
+    id: nullstr::NullStr<{ Self::MAX_ID_LENGTH }>,
 }
 
 impl core::fmt::Display for SpComponent {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        if let Some(s) = self.as_str() {
-            write!(f, "{s}")
-        } else {
-            write!(f, "{self:?}")
-        }
+        self.id.fmt(f)
     }
 }
 
@@ -372,16 +533,16 @@ impl SpComponent {
     pub const MAX_ID_LENGTH: usize = 16;
 
     /// The SP itself.
-    pub const SP_ITSELF: Self = Self { id: *b"sp\0\0\0\0\0\0\0\0\0\0\0\0\0\0" };
+    pub const SP_ITSELF: Self = Self::from_const("sp");
 
     /// The SP's auxiliary flash.
-    pub const SP_AUX_FLASH: Self = Self { id: *b"sp-aux-flash\0\0\0\0" };
+    pub const SP_AUX_FLASH: Self = Self::from_const("sp-aux-flash");
 
     /// The `sp3` host CPU.
-    pub const SP3_HOST_CPU: Self = Self { id: *b"sp3-host-cpu\0\0\0\0" };
+    pub const SP3_HOST_CPU: Self = Self::from_const("sp3-host-cpu");
 
     /// The `sp5` host CPU.
-    pub const SP5_HOST_CPU: Self = Self { id: *b"sp5-host-cpu\0\0\0\0" };
+    pub const SP5_HOST_CPU: Self = Self::from_const("sp5-host-cpu");
 
     /// The FPGA's buffer of POST codes emitted by the SP5 CPU
     ///
@@ -392,35 +553,35 @@ impl SpComponent {
     /// For example, if the FPGA's buffer is empty, this reports 0 component
     /// details; if the FPGA has seen 1K POST codes, then this component has 1K
     /// component details and reports them in the order they were recorded.
-    pub const SP5_POST_CODES: Self = Self { id: *b"sp5-post-codes\0\0" };
+    pub const SP5_POST_CODES: Self = Self::from_const("sp5-post-codes");
 
     /// The host CPU boot flash.
-    pub const HOST_CPU_BOOT_FLASH: Self = Self { id: *b"host-boot-flash\0" };
+    pub const HOST_CPU_BOOT_FLASH: Self = Self::from_const("host-boot-flash");
 
     /// The AMD PSP Output Blob for the host
-    pub const HOST_CPU_BOOT_APOB: Self = Self { id: *b"host-boot-apob\0\0" };
+    pub const HOST_CPU_BOOT_APOB: Self = Self::from_const("host-boot-apob");
 
     /// The sidecar management network switch.
-    pub const MONORAIL: Self = Self { id: *b"monorail\0\0\0\0\0\0\0\0" };
+    pub const MONORAIL: Self = Self::from_const("monorail");
 
     /// The Tofino on a sidecar SP
-    pub const TOFINO: Self = Self { id: *b"tofino\0\0\0\0\0\0\0\0\0\0" };
+    pub const TOFINO: Self = Self::from_const("tofino");
 
     // The RoT attached to the SP via SPI
-    pub const ROT: Self = Self { id: *b"rot\0\0\0\0\0\0\0\0\0\0\0\0\0" };
+    pub const ROT: Self = Self::from_const("rot");
 
     // The Stage0 bootloader for the RoT attached to the SP via SPI
-    pub const STAGE0: Self = Self { id: *b"stage0\0\0\0\0\0\0\0\0\0\0" };
+    pub const STAGE0: Self = Self::from_const("stage0");
 
     /// Thermal control loop
-    pub const FAN_CTRL: Self = Self { id: *b"fan-ctrl\0\0\0\0\0\0\0\0" };
+    pub const FAN_CTRL: Self = Self::from_const("fan-ctrl");
 
     /// Prefix for devices that are identified generically by index (e.g.,
     /// `dev-17`).
     pub const GENERIC_DEVICE_PREFIX: &'static str = "dev-";
 
     /// System attention LED (of which there is one per system)
-    pub const SYSTEM_LED: Self = Self { id: *b"system-led\0\0\0\0\0\0" };
+    pub const SYSTEM_LED: Self = Self::from_const("system-led");
 
     /// Interpret the component name as a human-readable string.
     ///
@@ -428,10 +589,9 @@ impl SpComponent {
     /// fail (i.e., we're always storing component names as human-readable
     /// strings), but because we reconstitute components from network messages
     /// we still need to check.
+    #[inline]
     pub fn as_str(&self) -> Option<&str> {
-        let n =
-            self.id.iter().position(|&c| c == 0).unwrap_or(Self::MAX_ID_LENGTH);
-        str::from_utf8(&self.id[..n]).ok()
+        self.id.as_str()
     }
 
     /// Interpret the component name as a human-readable string in a `const`
@@ -441,34 +601,19 @@ impl SpComponent {
     /// knows the component is valid (e.g., one of this type's associated
     /// constants); for component names parsed or constructed at runtime, prefer
     /// [`SpComponent::as_str()`] which performs runtime validation.
+    #[inline]
     pub const fn const_as_str(&self) -> &str {
-        // const-equivalent of
-        // ```
-        // let n =
-        //    self.id.iter().position(|&c| c == 0)
-        //      .unwrap_or(Self::MAX_ID_LENGTH);
-        // ```
-        let mut n = 0;
-        while n < self.id.len() {
-            if self.id[n] == 0 {
-                break;
-            }
-            n += 1;
-        }
+        self.id.const_as_str()
+    }
 
-        // const-equivalent of `let s = &self.id[..n]`.
-        //
-        // SAFETY: We really want to say `&self.id[..n]` here, but we're not
-        // allowed to use the indexing operator inside a `const fn`. We know
-        // from the loop above that `n <= self.id.len()`, turning the following
-        // into a manual `&self.id[..n]` without a bounds check.
-        let s = unsafe { core::slice::from_raw_parts(self.id.as_ptr(), n) };
+    #[inline]
+    pub const fn from_const(val: &str) -> Self {
+        Self { id: nullstr::NullStr::from_const(val) }
+    }
 
-        // const-equivalent of `str::from_utf8(s).unwrap_lite()`.
-        match str::from_utf8(s) {
-            Ok(s) => s,
-            Err(_) => panic!("invalid SpComponent ID (not a utf8 string)"),
-        }
+    #[inline]
+    pub fn id(&self) -> &[u8; Self::MAX_ID_LENGTH] {
+        self.id.contents()
     }
 }
 
@@ -478,7 +623,7 @@ impl fmt::Debug for SpComponent {
         if let Some(s) = self.as_str() {
             debug.field("id", &s);
         } else {
-            debug.field("id", &self.id);
+            debug.field("id", self.id.contents());
         }
         debug.finish()
     }
@@ -489,21 +634,18 @@ impl fmt::Debug for SpComponent {
 #[derive(Debug)]
 pub struct SpComponentIdTooLong;
 
+impl From<nullstr::NullStrTooLong> for SpComponentIdTooLong {
+    #[inline(always)]
+    fn from(_value: nullstr::NullStrTooLong) -> Self {
+        SpComponentIdTooLong
+    }
+}
+
 impl TryFrom<&str> for SpComponent {
     type Error = SpComponentIdTooLong;
 
     fn try_from(value: &str) -> Result<Self, Self::Error> {
-        if value.len() > Self::MAX_ID_LENGTH {
-            return Err(SpComponentIdTooLong);
-        }
-
-        let mut component = SpComponent { id: [0; Self::MAX_ID_LENGTH] };
-
-        // should we sanity check that `value` doesn't contain any nul bytes?
-        // seems like overkill; probably fine to omit
-        component.id[..value.len()].copy_from_slice(value.as_bytes());
-
-        Ok(component)
+        Ok(Self { id: nullstr::NullStr::try_from(value)? })
     }
 }
 
@@ -617,10 +759,11 @@ mod tests {
 
         let mut out = [0; SpComponent::MAX_SIZE];
         let n = hubpack::serialize(&mut out, &component).unwrap();
-        assert_eq!(&out[..n], expected_value);
+        assert_eq!(&out[..n], expected_value.contents());
 
         assert_eq!(
-            hubpack::deserialize::<SpComponent>(&expected_value).unwrap(),
+            hubpack::deserialize::<SpComponent>(expected_value.contents())
+                .unwrap(),
             (component, &[] as &[u8])
         );
     }
