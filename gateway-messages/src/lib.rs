@@ -306,8 +306,18 @@ mod nullstr {
         /// strings), but because we reconstitute components from network messages
         /// we still need to check.
         pub fn as_str(&self) -> Option<&str> {
-            let n = self.contents.iter().position(|&c| c == 0).unwrap_or(N);
-            str::from_utf8(&self.contents[..n]).ok()
+            str::from_utf8(self.as_bstr()).ok()
+        }
+
+        /// Get the raw "binary string" version of the nullstr, e.g. the contents
+        /// prior to the first null byte, or the entire string if no null bytes
+        /// are present.
+        ///
+        /// This is guaranteed to never contain a `0`.
+        pub fn as_bstr(&self) -> &[u8] {
+            // `next()` can only be "None" if `N == 0`. Otherwise, split will
+            // always yield at least item.
+            self.contents.split(|x| *x == 0).next().unwrap_or(&[])
         }
 
         /// Const function to create a zero-padded [`NullStr`] from a given [`str`].
@@ -582,6 +592,16 @@ impl SpComponent {
 
     /// System attention LED (of which there is one per system)
     pub const SYSTEM_LED: Self = Self::from_const("system-led");
+
+    /// Get the raw "binary string" version of the component name, e.g. the
+    /// contents prior to the first null byte, or the entire string if no null bytes
+    /// are present.
+    ///
+    /// This is guaranteed to never contain a `0`.
+    #[inline]
+    pub fn as_bstr(&self) -> &[u8] {
+        self.id.as_bstr()
+    }
 
     /// Interpret the component name as a human-readable string.
     ///
