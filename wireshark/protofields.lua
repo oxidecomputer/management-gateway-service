@@ -95,7 +95,7 @@ M.mgs_request.names = {
     [48] = "StartHostFlashHash",
     [49] = "GetHostFlashHash",
     [50] = "ComponentGetPersistentSlot",
-    [51] = "GetPmBusStatus",
+    [51] = "GetPmbusStatus",
 }
 M.mgs_request.handlers = {
     [0] = "dissect_discover",
@@ -149,7 +149,7 @@ M.mgs_request.handlers = {
     [48] = "dissect_start_host_flash_hash",
     [49] = "dissect_get_host_flash_hash",
     [50] = "dissect_component_get_persistent_slot",
-    [51] = "dissect_get_pm_bus_status",
+    [51] = "dissect_get_pmbus_status",
 }
 M.mgs_request.field = ProtoField.uint8(
     "mgs.mgs_request",
@@ -215,6 +215,7 @@ M.sp_error.names = {
     [36] = "Monorail",
     [37] = "Dump",
     [38] = "Hf",
+    [39] = "PmbusStatus",
 }
 M.sp_error.handlers = {
     [0] = "dissect_busy",
@@ -256,6 +257,7 @@ M.sp_error.handlers = {
     [36] = "dissect_monorail",
     [37] = "dissect_dump",
     [38] = "dissect_hf",
+    [39] = "dissect_pmbus_status",
 }
 M.sp_error.field = ProtoField.uint8(
     "mgs.sp_error",

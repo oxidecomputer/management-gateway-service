@@ -745,6 +745,16 @@ impl PowerRailName {
         self.name.as_str()
     }
 
+    /// Get the raw "binary string" version of the rail name, e.g. the
+    /// contents prior to the first null byte, or the entire string if no null
+    /// bytes are present.
+    ///
+    /// This is guaranteed to never contain a `0`.
+    #[inline]
+    pub fn as_bstr(&self) -> &[u8] {
+        self.name.as_bstr()
+    }
+
     /// Interpret the power rail name as a human-readable string in a `const`
     /// context, panicking if the string is not human readable.
     ///
@@ -757,13 +767,33 @@ impl PowerRailName {
         self.name.const_as_str()
     }
 
+    /// Create an [`PowerRailName`] from the given slice.
+    ///
+    /// This function has some Interesting Details:
+    ///
+    /// 1. If `src` exceeds the length of `N`, only the first `N` bytes will be
+    ///    copied in
+    /// 2. If `src` contains null bytes, these will be copied in
+    ///
+    /// You might ask yourself, why isn't this unsafe? Why doesn't it violate
+    /// any invariants? Well, we implement `Deserialize`, which means we might
+    /// obtain garbage off the wire anyway! So, morally, this is not
+    /// particularly worse to support.
+    ///
+    /// This is *primarily* intended to be done when re-magicking from a code
+    /// generated string.
+    #[inline]
+    pub fn from_bstr_unchecked(src: &[u8]) -> Self {
+        Self { name: nullstr::NullStr::from_bstr_unchecked(src) }
+    }
+
     #[inline]
     pub const fn from_const(val: &str) -> Self {
         Self { name: nullstr::NullStr::from_const(val) }
     }
 
     #[inline]
-    pub fn id(&self) -> &[u8; Self::MAX_NAME_LENGTH] {
+    pub fn name(&self) -> &[u8; Self::MAX_NAME_LENGTH] {
         self.name.contents()
     }
 }

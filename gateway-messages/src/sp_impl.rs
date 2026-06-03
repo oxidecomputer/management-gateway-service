@@ -26,9 +26,8 @@ use crate::MessageKind;
 use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
-use crate::PMBusStatusResponse;
 use crate::PmbusStatus;
-use crate::PmbusStatusError;
+use crate::PmbusStatusResponse;
 use crate::PowerRailName;
 use crate::PowerState;
 use crate::PowerStateTransition;
@@ -430,7 +429,7 @@ pub trait SpHandler {
     fn get_pmbus_status(
         &mut self,
         rail: &PowerRailName,
-    ) -> Result<Result<PmbusStatus, PmbusStatusError>, SpError>;
+    ) -> Result<PmbusStatus, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -1064,11 +1063,11 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::GetHostFlashHash { slot } => {
             handler.get_host_flash_hash(slot).map(SpResponse::HostFlashHash)
         }
-        MgsRequest::GetPMBusStatus(power_rail_name) => {
+        MgsRequest::GetPmbusStatus(power_rail_name) => {
             handler.get_pmbus_status(&power_rail_name).map(|res| {
-                SpResponse::PmbusStatus(PMBusStatusResponse {
+                SpResponse::PmbusStatus(PmbusStatusResponse {
                     rail: power_rail_name,
-                    result: res,
+                    status: res,
                 })
             })
         }
@@ -1508,7 +1507,7 @@ mod tests {
         fn get_pmbus_status(
             &mut self,
             _rail: &PowerRailName,
-        ) -> Result<Result<PmbusStatus, PmbusStatusError>, SpError> {
+        ) -> Result<PmbusStatus, SpError> {
             unimplemented!()
         }
     }

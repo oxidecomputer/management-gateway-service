@@ -244,7 +244,7 @@ pub enum MgsRequest {
     ComponentGetPersistentSlot(SpComponent),
 
     /// Request the STATUS registers of a PMBus device, indexed by Power Rail Name
-    GetPMBusStatus(PowerRailName),
+    GetPmbusStatus(PowerRailName),
 }
 
 #[derive(

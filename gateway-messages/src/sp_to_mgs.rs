@@ -189,15 +189,15 @@ pub enum SpResponse {
     ComponentPersistentSlot(u16),
 
     /// PMBus status of a given rail
-    PmbusStatus(PMBusStatusResponse),
+    PmbusStatus(PmbusStatusResponse),
 }
 
 #[derive(
     Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SerializedSize,
 )]
-pub struct PMBusStatusResponse {
+pub struct PmbusStatusResponse {
     pub rail: PowerRailName,
-    pub result: Result<PmbusStatus, PmbusStatusError>,
+    pub status: PmbusStatus,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -727,22 +727,67 @@ pub struct TlvPage {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
-pub enum PmbusStatusError {}
+pub enum PmbusStatusError {
+    /// Attempted to query a rail which was unknown to the SP
+    UnknownRail,
+    /// Failed while attempting to read `STATUS_WORD`
+    FailedStatusWord(PmbusStatusReadError),
+}
 
+impl fmt::Display for PmbusStatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let msg = match self {
+            PmbusStatusError::UnknownRail => "Unknown PMBus Rail Name",
+            PmbusStatusError::FailedStatusWord(reason) => {
+                return write!(f, "Failed to read STATUS_WORD: {reason}");
+            }
+        };
+
+        f.write_str(msg)
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum PmbusStatusReadError {
+    /// Failed while attempting to communicate with I2C driver
+    DriverReadFailed { response_code: u8 },
+    /// Received unexpected data on the I2C bus
+    InvalidBusData,
+}
+
+impl fmt::Display for PmbusStatusReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let msg = match self {
+            PmbusStatusReadError::DriverReadFailed { response_code } => {
+                return write!(f, "I2C Driver Error: {response_code}");
+            }
+            PmbusStatusReadError::InvalidBusData => "Bad I2C Bus Data",
+        };
+
+        f.write_str(msg)
+    }
+}
+
+/// A report representing all PMBus Status Registers
+///
+/// Sub-status fields may contain errors, either due to ephemeral i2c issues,
+/// or due to the field not being supported on the requested device.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
 )]
 pub struct PmbusStatus {
     pub status_word: u16,
-    pub status_vout: Result<u8, PmbusStatusError>,
-    pub status_iout: Result<u8, PmbusStatusError>,
-    pub status_temperature: Result<u8, PmbusStatusError>,
-    pub status_cml: Result<u8, PmbusStatusError>,
-    pub status_other: Result<u8, PmbusStatusError>,
-    pub status_input: Result<u8, PmbusStatusError>,
-    pub status_mfr_specific: Result<u8, PmbusStatusError>,
-    pub status_fans_1_2: Result<u8, PmbusStatusError>,
-    pub status_fans_3_4: Result<u8, PmbusStatusError>,
+    pub status_vout: Result<u8, PmbusStatusReadError>,
+    pub status_iout: Result<u8, PmbusStatusReadError>,
+    pub status_temperature: Result<u8, PmbusStatusReadError>,
+    pub status_cml: Result<u8, PmbusStatusReadError>,
+    pub status_other: Result<u8, PmbusStatusReadError>,
+    pub status_input: Result<u8, PmbusStatusReadError>,
+    pub status_mfr_specific: Result<u8, PmbusStatusReadError>,
+    pub status_fans_1_2: Result<u8, PmbusStatusReadError>,
+    pub status_fans_3_4: Result<u8, PmbusStatusReadError>,
 }
 
 /// Types of component details that can be included in the TLV-encoded data of
@@ -1192,6 +1237,7 @@ pub enum SpError {
     Monorail(MonorailError),
     Dump(DumpError),
     Hf(HfError),
+    PmbusStatus(PmbusStatusError),
 }
 
 impl fmt::Display for SpError {
@@ -1316,6 +1362,7 @@ impl fmt::Display for SpError {
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
             Self::Hf(e) => write!(f, "hf: {}", e),
+            Self::PmbusStatus(e) => write!(f, "pmbus stat: {}", e),
         }
     }
 }
