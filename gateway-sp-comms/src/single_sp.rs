@@ -39,6 +39,8 @@ use gateway_messages::Message;
 use gateway_messages::MessageKind;
 use gateway_messages::MgsRequest;
 use gateway_messages::MonorailError;
+use gateway_messages::PmbusStatusResponse;
+use gateway_messages::PowerRailName;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
 use gateway_messages::ROT_PAGE_SIZE;
@@ -1446,6 +1448,15 @@ impl SingleSp {
         self.rpc(MgsRequest::GetHostFlashHash { slot })
             .await
             .and_then(expect_host_flash_hash)
+    }
+
+    pub async fn get_pmbus_status(
+        &self,
+        rail: PowerRailName,
+    ) -> Result<PmbusStatusResponse> {
+        self.rpc(MgsRequest::GetPmbusStatus(rail))
+            .await
+            .and_then(expect_pmbus_status)
     }
 }
 

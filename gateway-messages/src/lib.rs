@@ -810,6 +810,26 @@ impl fmt::Debug for PowerRailName {
     }
 }
 
+/// Error type returned from `TryFrom<&str> for PowerRailName` if the provided ID
+/// is too long.
+#[derive(Debug)]
+pub struct PowerRailNameTooLong;
+
+impl From<nullstr::NullStrTooLong> for PowerRailNameTooLong {
+    #[inline(always)]
+    fn from(_value: nullstr::NullStrTooLong) -> Self {
+        PowerRailNameTooLong
+    }
+}
+
+impl TryFrom<&str> for PowerRailName {
+    type Error = PowerRailNameTooLong;
+
+    fn try_from(value: &str) -> Result<Self, Self::Error> {
+        Ok(Self { name: nullstr::NullStr::try_from(value)? })
+    }
+}
+
 /// Minimum guaranteed space for trailing data in a single packet.
 ///
 /// Depending on the [`Message`] payload, there may be more space for trailing
