@@ -284,12 +284,12 @@ mod nullstr {
 
     /// A reusable type that implements a fixed-max-capacity string where the
     /// unused capacity is always guaranteed to be zero-filled. This is used
-    /// for strings sent over the wire using [`hubpack`], which requires fixed-size
-    /// items.
+    /// for strings sent over the wire using [`hubpack`], which requires fixed
+    /// size items.
     ///
-    /// This type does NOT guarantee that the contents are null-*terminated*, only
-    /// null-*padded*. If the contained string is exactly the length of the container,
-    /// there will be no null bytes present.
+    /// This type does NOT guarantee that the contents are null-*terminated*,
+    /// only null-*padded*. If the contained string is exactly the length of the
+    /// container, there will be no null bytes present.
     ///
     /// It is not intended for this type to be part of the public API, see
     /// [`SpComponent`] for usage guidance.
@@ -299,19 +299,40 @@ mod nullstr {
     }
 
     impl<const N: usize> NullStr<N> {
-        /// Interpret the content as a human-readable string.
+        /// Create a [`NullStr`] from the given slice.
+        ///
+        /// This function has some Interesting Details:
+        ///
+        /// 1. If `src` exceeds the length of `N`, only the first `N` bytes will
+        ///    be copied in
+        /// 2. If `src` contains null bytes, these will be copied in
+        ///
+        /// You might ask yourself, why isn't this unsafe? Why doesn't it
+        /// violate any invariants? Well, we implement `Deserialize`, which
+        /// means we might obtain garbage off the wire anyway! So, morally, this
+        /// is not particularly worse to support.
+        ///
+        /// This is *primarily* intended to be done when re-magicking from a
+        /// code-generated string.
+        pub fn from_bstr_unchecked(src: &[u8]) -> Self {
+            let mut buf = [0u8; N];
+            buf.iter_mut().zip(src.iter()).for_each(|(w, r)| *w = *r);
+            Self { contents: buf }
+        }
+
+        /// Interpret the content as a UTF-8 string.
         ///
         /// Our current expectation of contents is that this should never
-        /// fail (i.e., we're always storing contents as human-readable
-        /// strings), but because we reconstitute components from network messages
-        /// we still need to check.
+        /// fail (i.e., we're always storing contents as UTF-8 strings), but
+        /// because we reconstitute components from network messages we still
+        /// need to check.
         pub fn as_str(&self) -> Option<&str> {
             str::from_utf8(self.as_bstr()).ok()
         }
 
-        /// Get the raw "binary string" version of the nullstr, e.g. the contents
-        /// prior to the first null byte, or the entire string if no null bytes
-        /// are present.
+        /// Get the raw "binary string" version of the nullstr, e.g. the
+        /// contents prior to the first null byte, or the entire string if no
+        /// null bytes are present.
         ///
         /// This is guaranteed to never contain a `0`.
         pub fn as_bstr(&self) -> &[u8] {
@@ -320,10 +341,12 @@ mod nullstr {
             self.contents.split(|x| *x == 0).next().unwrap_or(&[])
         }
 
-        /// Const function to create a zero-padded [`NullStr`] from a given [`str`].
+        /// Const function to create a zero-padded [`NullStr`] from a given
+        /// [`str`].
         ///
-        /// Panics if `src` exceeds the capacity of `N`. This should generally only be
-        /// used in const context where panics become compilation errors.
+        /// Panics if `src` exceeds the capacity of `N`. This should generally
+        /// only be used in const context where panics become compilation
+        /// errors.
         pub const fn from_const(src: &str) -> Self {
             let mut buf = [0u8; N];
             assert!(src.len() <= N);
@@ -336,13 +359,13 @@ mod nullstr {
             Self { contents: buf }
         }
 
-        /// Interpret the contents as a human-readable string in a `const`
-        /// context, panicking if the string is not human readable.
+        /// Interpret the contents as a UTF-8 string in a `const` context,
+        /// panicking if the string is not valid.
         ///
         /// This function should only be used in const contexts when the caller
         /// knows the contents is valid (e.g., one of this type's associated
-        /// constants); for contents names parsed or constructed at runtime, prefer
-        /// [`SpComponent::as_str()`] which performs runtime validation.
+        /// constants); for contents names parsed or constructed at runtime,
+        /// prefer [`SpComponent::as_str()`] which performs runtime validation.
         pub const fn const_as_str(&self) -> &str {
             // const-equivalent of
             // ```
@@ -360,10 +383,11 @@ mod nullstr {
 
             // const-equivalent of `let s = &self.contents[..n]`.
             //
-            // SAFETY: We really want to say `&self.contents[..n]` here, but we're not
-            // allowed to use the indexing operator inside a `const fn`. We know
-            // from the loop above that `n <= self.contents.len()`, turning the following
-            // into a manual `&self.contents[..n]` without a bounds check.
+            // SAFETY: We really want to say `&self.contents[..n]` here, but
+            // we're not allowed to use the indexing operator inside a
+            // `const fn`. We know from the loop above that
+            // `n <= self.contents.len()`, turning the following into a manual
+            // `&self.contents[..n]` without a bounds check.
             let s = unsafe {
                 core::slice::from_raw_parts(self.contents.as_ptr(), n)
             };
@@ -386,24 +410,25 @@ mod nullstr {
         where
             S: serde::Serializer,
         {
-            // NOTE: We are implicitly performing an action here similar to `serde(transparent)`,
-            // serializing the inner field directly rather than as a struct field. This is aesthetically
-            // pleasing for JSON, and not impactful for `hubpack`.
+            // NOTE: We are implicitly performing an action here similar to
+            // `serde(transparent)`, serializing the inner field directly rather
+            // than as a struct field. This is aesthetically pleasing for JSON,
+            // and not impactful for `hubpack`.
             //
-            // If we're serializing to a human-readable form (e.g., `faux-mgs --json
-            // output`), serialize ourself as a string....
+            // If we're serializing to a human-readable form (e.g.,
+            // `faux-mgs --json output`), serialize ourself as a string....
             if serializer.is_human_readable()
                 && let Some(s) = self.as_str()
             {
                 return serializer.serialize_str(s);
             }
 
-            // ... otherwise, serialize our id array directly, which matches what
-            // hubpack expects from serde's derived impl.
+            // ... otherwise, serialize our id array directly, which matches
+            // what hubpack expects from serde's derived impl.
             //
             // NOTE: We use `serde_big_array` as we are const-generic over the
-            // length, and serde's implementation is *not* generic, and only provides
-            // manual impls up to N=32.
+            // length, and serde's implementation is *not* generic, and only
+            // provides manual impls up to N=32.
             <[u8; N] as serde_big_array::BigArray<'static, u8>>::serialize(
                 &self.contents,
                 serializer,
@@ -417,9 +442,10 @@ mod nullstr {
             D: serde::Deserializer<'de>,
         {
             use serde::de::Visitor;
-            // NOTE: We are implicitly performing an action here similar to `serde(transparent)`,
-            // deserializing the inner field directly rather than as a struct field. This is aesthetically
-            // pleasing for JSON, and not impactful for `hubpack`.
+            // NOTE: We are implicitly performing an action here similar to
+            // `serde(transparent)`, deserializing the inner field directly
+            // rather than as a struct field. This is aesthetically pleasing for
+            // JSON, and not impactful for `hubpack`.
             //
             // Inverse of our serialize method: if we're deserializing from a
             // human-readable form, deserialize a string...
@@ -450,12 +476,12 @@ mod nullstr {
 
                 deserializer.deserialize_str(StrVisitor)
             } else {
-                // ... otherwise, deserialize an array just like the derived serde
-                // impl would do.
+                // ... otherwise, deserialize an array just like the derived
+                // serde impl would do.
                 //
-                // NOTE: We use `serde_big_array` as we are const-generic over the
-                // length, and serde's implementation is *not* generic, and only provides
-                // manual impls up to N=32.
+                // NOTE: We use `serde_big_array` as we are const-generic over
+                // the length, and serde's implementation is *not* generic, and
+                // only provides manual impls up to N=32.
                 let contents = <[u8; N] as serde_big_array::BigArray<
                     'de,
                     u8,
@@ -465,8 +491,8 @@ mod nullstr {
         }
     }
 
-    /// Error type returned from `TryFrom<&str> for SpComponent` if the provided ID
-    /// is too long.
+    /// Error type returned from `TryFrom<&str> for SpComponent` if the provided
+    /// ID is too long.
     #[derive(Debug)]
     pub struct NullStrTooLong;
 
@@ -480,8 +506,8 @@ mod nullstr {
 
             let mut me = Self { contents: [0; N] };
 
-            // should we sanity check that `value` doesn't contain any nul bytes?
-            // seems like overkill; probably fine to omit
+            // should we sanity check that `value` doesn't contain any nul
+            // bytes? seems like overkill; probably fine to omit
             me.contents[..value.len()].copy_from_slice(value.as_bytes());
 
             Ok(me)
@@ -514,8 +540,8 @@ mod nullstr {
 /// Identifier for a single component managed by an SP.
 //
 // NOTE: `serde(transparent)` is used to provide a "flattening" here. This
-// is aesthetically intentional for JSON, and not impactful for non self describing
-// formats like hubpack.
+// is aesthetically intentional for JSON, and not impactful for non self
+// describing formats like hubpack.
 #[derive(
     Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,
 )]
@@ -594,8 +620,8 @@ impl SpComponent {
     pub const SYSTEM_LED: Self = Self::from_const("system-led");
 
     /// Get the raw "binary string" version of the component name, e.g. the
-    /// contents prior to the first null byte, or the entire string if no null bytes
-    /// are present.
+    /// contents prior to the first null byte, or the entire string if no null
+    /// bytes are present.
     ///
     /// This is guaranteed to never contain a `0`.
     #[inline]
@@ -603,10 +629,10 @@ impl SpComponent {
         self.id.as_bstr()
     }
 
-    /// Interpret the component name as a human-readable string.
+    /// Interpret the component name as a UTF-8 string.
     ///
     /// Our current expectation of component names is that this should never
-    /// fail (i.e., we're always storing component names as human-readable
+    /// fail (i.e., we're always storing component names as valid UTF-8
     /// strings), but because we reconstitute components from network messages
     /// we still need to check.
     #[inline]
@@ -614,8 +640,8 @@ impl SpComponent {
         self.id.as_str()
     }
 
-    /// Interpret the component name as a human-readable string in a `const`
-    /// context, panicking if the string is not human readable.
+    /// Interpret the component name as a UTF-8 string in a `const`
+    /// context, panicking if the string is not valid.
     ///
     /// This function should only be used in const contexts when the caller
     /// knows the component is valid (e.g., one of this type's associated
@@ -624,6 +650,26 @@ impl SpComponent {
     #[inline]
     pub const fn const_as_str(&self) -> &str {
         self.id.const_as_str()
+    }
+
+    /// Create an [`SpComponent`] from the given slice.
+    ///
+    /// This function has some Interesting Details:
+    ///
+    /// 1. If `src` exceeds the length of `N`, only the first `N` bytes will be
+    ///    copied in
+    /// 2. If `src` contains null bytes, these will be copied in
+    ///
+    /// You might ask yourself, why isn't this unsafe? Why doesn't it violate
+    /// any invariants? Well, we implement `Deserialize`, which means we might
+    /// obtain garbage off the wire anyway! So, morally, this is not
+    /// particularly worse to support.
+    ///
+    /// This is *primarily* intended to be done when re-magicking from a code
+    /// generated string.
+    #[inline]
+    pub fn from_bstr_unchecked(src: &[u8]) -> Self {
+        Self { id: nullstr::NullStr::from_bstr_unchecked(src) }
     }
 
     #[inline]

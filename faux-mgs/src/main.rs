@@ -2366,12 +2366,41 @@ async fn run_command(
             lines.push(String::new());
             lines.push("ereports:".to_string());
 
+            const WRONG_TYPE: &str = "<wrong type>";
+            const NULL: &str = "<null>";
+            const MAX_UPTIME_DIGITS: usize = 12;
+            const MAX_ENA_DIGITS: usize = 18;
+            const MAX_CLASS: usize =
+                79 - MAX_UPTIME_DIGITS - MAX_ENA_DIGITS - 4;
+            let header = format!(
+                "{:<MAX_UPTIME_DIGITS$} {:<MAX_CLASS$} {:<MAX_ENA_DIGITS$}",
+                "TIME", "CLASS", "ENA"
+            );
+
             for ereport in ereports {
+                lines.push(header.clone());
+                let uptime: &dyn std::fmt::Display =
+                    match ereport.data.get("hubris_uptime_ms") {
+                        Some(serde_json::Value::Number(n)) => {
+                            &n.as_u64().unwrap_or(u64::MAX)
+                        }
+                        Some(_) => &WRONG_TYPE,
+                        None => &NULL,
+                    };
+                let class = match ereport.data.get("k") {
+                    Some(serde_json::Value::String(c)) => c.as_str(),
+                    Some(_) => WRONG_TYPE,
+                    None => NULL,
+                };
                 lines.push(format!(
-                    "{:#x}: {:#?}\n",
+                    "{uptime:<MAX_UPTIME_DIGITS$} {class:<MAX_CLASS$} \
+                     {:<#0MAX_ENA_DIGITS$x}",
                     ereport.ena.into_u64(),
-                    ereport.data
                 ));
+                lines.push(String::new());
+                let data = serde_json::Value::Object(ereport.data);
+                let pretty = erebor::Displayer::new(&data).to_string();
+                lines.push(pretty);
             }
 
             Ok(Output::Lines(lines))
