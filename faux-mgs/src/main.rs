@@ -536,7 +536,7 @@ enum Command {
     GetHostFlashHash {
         slot: u16,
     },
-    /// Get the PMBus Status values for a given Power Rail
+    /// Get the PMBus status registers for a given Power Rail
     GetPmbusStatus {
         /// Power rail name, as referred to in the App TOML
         #[clap(value_parser = parse_power_rail_name)]
@@ -2480,49 +2480,49 @@ async fn run_command(
         Command::GetPmbusStatus { rail } => {
             let result = sp.get_pmbus_status(rail).await?;
             if json {
-                Ok(Output::Json(json!(result)))
-            } else {
-                let name = result.rail.as_str().unwrap();
-                let PmbusStatus {
-                    status_word,
-                    status_vout,
-                    status_iout,
-                    status_temperature,
-                    status_cml,
-                    status_other,
-                    status_input,
-                    status_mfr_specific,
-                    status_fans_1_2,
-                    status_fans_3_4,
-                } = result.status;
-
-                let mut lines = vec![];
-                lines.push(format!("Rail '{name}':"));
-                lines.push(format!("WORD          0x{status_word:04x}"));
-                let data = [
-                    ("VOUT          ", status_vout),
-                    ("IOUT          ", status_iout),
-                    ("TEMPERATURE   ", status_temperature),
-                    ("CML           ", status_cml),
-                    ("OTHER         ", status_other),
-                    ("INPUT         ", status_input),
-                    ("MFR_SPECIFIC  ", status_mfr_specific),
-                    ("FANS_1_2      ", status_fans_1_2),
-                    ("FANS_3_4      ", status_fans_3_4),
-                ];
-
-                use std::fmt::Write;
-                for (n, v) in data {
-                    let mut l = n.to_string();
-                    match v {
-                        Ok(b) => write!(&mut l, "0x{b:02x}")?,
-                        Err(e) => write!(&mut l, "Err({e:?})")?,
-                    }
-                    lines.push(l);
-                }
-
-                Ok(Output::Lines(lines))
+                return Ok(Output::Json(json!(result)));
             }
+
+            let name = result.rail.as_str().unwrap();
+            let PmbusStatus {
+                status_word,
+                status_vout,
+                status_iout,
+                status_temperature,
+                status_cml,
+                status_other,
+                status_input,
+                status_mfr_specific,
+                status_fans_1_2,
+                status_fans_3_4,
+            } = result.status;
+
+            let mut lines = vec![];
+            lines.push(format!("Rail '{name}':"));
+            lines.push(format!("WORD          0x{status_word:04x}"));
+            let data = [
+                ("VOUT          ", status_vout),
+                ("IOUT          ", status_iout),
+                ("TEMPERATURE   ", status_temperature),
+                ("CML           ", status_cml),
+                ("OTHER         ", status_other),
+                ("INPUT         ", status_input),
+                ("MFR_SPECIFIC  ", status_mfr_specific),
+                ("FANS_1_2      ", status_fans_1_2),
+                ("FANS_3_4      ", status_fans_3_4),
+            ];
+
+            use std::fmt::Write;
+            for (n, v) in data {
+                let mut l = n.to_string();
+                match v {
+                    Ok(b) => write!(&mut l, "0x{b:02x}")?,
+                    Err(e) => write!(&mut l, "Err({e:?})")?,
+                }
+                lines.push(l);
+            }
+
+            Ok(Output::Lines(lines))
         }
     }
 }

@@ -1362,7 +1362,7 @@ impl fmt::Display for SpError {
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
             Self::Hf(e) => write!(f, "hf: {}", e),
-            Self::PmbusStatus(e) => write!(f, "pmbus stat: {}", e),
+            Self::PmbusStatus(e) => write!(f, "pmbus status: {}", e),
         }
     }
 }

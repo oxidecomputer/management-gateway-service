@@ -734,10 +734,10 @@ impl PowerRailName {
     /// Maximum number of bytes for a Power Rail Name.
     pub const MAX_NAME_LENGTH: usize = 32;
 
-    /// Interpret the power rail name as a human-readable string.
+    /// Interpret the power rail name as a UTF-8 string.
     ///
     /// Our current expectation of power rail names is that this should never
-    /// fail (i.e., we're always storing power rail names as human-readable
+    /// fail (i.e., we're always storing power rail names as UTF-8
     /// strings), but because we reconstitute components from network messages
     /// we still need to check.
     #[inline]
@@ -755,7 +755,7 @@ impl PowerRailName {
         self.name.as_bstr()
     }
 
-    /// Interpret the power rail name as a human-readable string in a `const`
+    /// Interpret the power rail name as a UTF-8 string in a `const`
     /// context, panicking if the string is not human readable.
     ///
     /// This function should only be used in const contexts when the caller
