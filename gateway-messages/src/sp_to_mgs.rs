@@ -752,18 +752,37 @@ impl fmt::Display for PmbusStatusError {
 )]
 pub enum PmbusStatusReadError {
     /// Failed while attempting to communicate with I2C driver
-    DriverReadFailed { response_code: u8 },
-    /// Received unexpected data on the I2C bus
-    InvalidBusData,
+    DriverReadFailed {
+        /// If `true`, the SP believes that retrying this query may yield
+        /// success in the future. If `false`, the SP believes that this query
+        /// will always fail.
+        retry_hint: bool,
+        /// The raw I2C driver code reported when this query failed. This value
+        /// is not stable across versions of the SP firmware, and should only
+        /// be logged or used for interactive or post-mortem debugging.
+        /// Requires knowledge of the exact firmware revision to meaningfully
+        /// decode.
+        raw_response_code: u8,
+    },
+    /// This device does not support this status register, and it was not
+    /// queried by the SP.
+    Unsupported,
 }
 
 impl fmt::Display for PmbusStatusReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
-            PmbusStatusReadError::DriverReadFailed { response_code } => {
-                return write!(f, "I2C Driver Error: {response_code}");
+            PmbusStatusReadError::DriverReadFailed {
+                retry_hint,
+                raw_response_code,
+            } => {
+                let diagnosis = if !*retry_hint { "fatal" } else { "retry" };
+                return write!(
+                    f,
+                    "I2C Driver Error Code: {raw_response_code}, {diagnosis}"
+                );
             }
-            PmbusStatusReadError::InvalidBusData => "Bad I2C Bus Data",
+            PmbusStatusReadError::Unsupported => "Unsupported status field",
         };
 
         f.write_str(msg)

@@ -566,6 +566,9 @@ impl core::fmt::Display for SpComponent {
 
 impl SpComponent {
     /// Maximum number of bytes for a component ID.
+    ///
+    /// Note: Some methods like `Self::from_const` will panic if the given
+    /// string exceeds this length.
     pub const MAX_ID_LENGTH: usize = 16;
 
     /// The SP itself.
@@ -732,6 +735,9 @@ impl core::fmt::Display for PowerRailName {
 
 impl PowerRailName {
     /// Maximum number of bytes for a Power Rail Name.
+    ///
+    /// Note: Some methods like `Self::from_const` will panic if the given
+    /// string exceeds this length.
     pub const MAX_NAME_LENGTH: usize = 32;
 
     /// Interpret the power rail name as a UTF-8 string.
@@ -756,7 +762,7 @@ impl PowerRailName {
     }
 
     /// Interpret the power rail name as a UTF-8 string in a `const`
-    /// context, panicking if the string is not human readable.
+    /// context, panicking if the string is not valid UTF-8.
     ///
     /// This function should only be used in const contexts when the caller
     /// knows the component is valid (e.g., one of this type's associated
