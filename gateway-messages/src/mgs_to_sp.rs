@@ -5,6 +5,7 @@
 //! Types for messages sent from MGS to SPs.
 
 use crate::BadRequestReason;
+use crate::PowerRailName;
 use crate::PowerState;
 use crate::RotRequest;
 use crate::RotSlotId;
@@ -241,6 +242,9 @@ pub enum MgsRequest {
     /// current default slot as persisted in non-volatile memory. This may be
     /// different than the current active slot (see `ComponentGetActiveSlot`).
     ComponentGetPersistentSlot(SpComponent),
+
+    /// Request the STATUS registers of a PMBus device, indexed by power rail name.
+    GetPmbusStatus(PowerRailName),
 }
 
 #[derive(
