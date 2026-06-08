@@ -280,8 +280,6 @@ impl From<UpdateId> for uuid::Uuid {
 }
 
 mod nullstr {
-    use std::fmt::Write;
-
     use super::*;
 
     /// A reusable type that implements a fixed-max-capacity string where the
