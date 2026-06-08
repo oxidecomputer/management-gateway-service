@@ -737,9 +737,9 @@ pub enum PmbusStatusError {
 impl fmt::Display for PmbusStatusError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let msg = match self {
-            PmbusStatusError::UnknownRail => "Unknown PMBus Rail Name",
+            PmbusStatusError::UnknownRail => "unknown PMBus rail name",
             PmbusStatusError::FailedStatusWord(reason) => {
-                return write!(f, "Failed to read STATUS_WORD: {reason}");
+                return write!(f, "failed to read STATUS_WORD: {reason}");
             }
         };
 
@@ -776,13 +776,13 @@ impl fmt::Display for PmbusStatusReadError {
                 retry_hint,
                 raw_response_code,
             } => {
-                let diagnosis = if !*retry_hint { "fatal" } else { "retry" };
+                let diagnosis = if !*retry_hint { "fatal" } else { "retryable" };
                 return write!(
                     f,
-                    "I2C Driver Error Code: {raw_response_code}, {diagnosis}"
+                    "I2C driver error code: {raw_response_code} ({diagnosis})"
                 );
             }
-            PmbusStatusReadError::Unsupported => "Unsupported status field",
+            PmbusStatusReadError::Unsupported => "unsupported status field",
         };
 
         f.write_str(msg)
@@ -1381,7 +1381,7 @@ impl fmt::Display for SpError {
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
             Self::Hf(e) => write!(f, "hf: {}", e),
-            Self::PmbusStatus(e) => write!(f, "pmbus status: {}", e),
+            Self::PmbusStatus(e) => write!(f, "PMBus status: {}", e),
         }
     }
 }

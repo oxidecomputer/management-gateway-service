@@ -243,7 +243,7 @@ pub enum MgsRequest {
     /// different than the current active slot (see `ComponentGetActiveSlot`).
     ComponentGetPersistentSlot(SpComponent),
 
-    /// Request the STATUS registers of a PMBus device, indexed by Power Rail Name
+    /// Request the STATUS registers of a PMBus device, indexed by power rail name.
     GetPmbusStatus(PowerRailName),
 }
 
