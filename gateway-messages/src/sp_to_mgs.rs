@@ -771,21 +771,22 @@ pub enum PmbusStatusReadError {
 
 impl fmt::Display for PmbusStatusReadError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let msg = match self {
+        match self {
             PmbusStatusReadError::DriverReadFailed {
                 retry_hint,
                 raw_response_code,
             } => {
-                let diagnosis = if !*retry_hint { "fatal" } else { "retryable" };
-                return write!(
+                let diagnosis =
+                    if !*retry_hint { "fatal" } else { "retryable" };
+                write!(
                     f,
                     "I2C driver error code: {raw_response_code} ({diagnosis})"
-                );
+                )
             }
-            PmbusStatusReadError::Unsupported => "unsupported status field",
-        };
-
-        f.write_str(msg)
+            PmbusStatusReadError::Unsupported => {
+                f.write_str("unsupported status field")
+            }
+        }
     }
 }
 

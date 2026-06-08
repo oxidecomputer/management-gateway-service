@@ -280,6 +280,8 @@ impl From<UpdateId> for uuid::Uuid {
 }
 
 mod nullstr {
+    use std::fmt::Write;
+
     use super::*;
 
     /// A reusable type that implements a fixed-max-capacity string where the
@@ -516,23 +518,19 @@ mod nullstr {
 
     impl<const N: usize> fmt::Debug for NullStr<N> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-            let mut debug = f.debug_struct("NullStr");
             if let Some(s) = self.as_str() {
-                debug.field("contents", &s);
+                f.write_char('"')?;
+                f.write_str(s)?;
+                f.write_char('"')
             } else {
-                debug.field("contents", &self.contents);
+                write!(f, "{:?}", self.contents)
             }
-            debug.finish()
         }
     }
 
     impl<const N: usize> core::fmt::Display for NullStr<N> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            if let Some(s) = self.as_str() {
-                write!(f, "{s}")
-            } else {
-                write!(f, "{self:?}")
-            }
+            <Self as fmt::Debug>::fmt(self, f)
         }
     }
 }
@@ -543,7 +541,15 @@ mod nullstr {
 // is aesthetically intentional for JSON, and not impactful for non self
 // describing formats like hubpack.
 #[derive(
-    Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    SerializedSize,
+    Serialize,
+    Deserialize,
 )]
 #[serde(transparent)]
 pub struct SpComponent {
@@ -686,18 +692,6 @@ impl SpComponent {
     }
 }
 
-impl fmt::Debug for SpComponent {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut debug = f.debug_struct("SpComponent");
-        if let Some(s) = self.as_str() {
-            debug.field("id", &s);
-        } else {
-            debug.field("id", self.id.contents());
-        }
-        debug.finish()
-    }
-}
-
 /// Error type returned from `TryFrom<&str> for SpComponent` if the provided ID
 /// is too long.
 #[derive(Debug)]
@@ -720,7 +714,15 @@ impl TryFrom<&str> for SpComponent {
 
 /// Identifier for a single power rail.
 #[derive(
-    Clone, Copy, PartialEq, Eq, Hash, SerializedSize, Serialize, Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    SerializedSize,
+    Serialize,
+    Deserialize,
 )]
 #[serde(transparent)]
 pub struct PowerRailName {
@@ -801,18 +803,6 @@ impl PowerRailName {
     #[inline]
     pub fn name(&self) -> &[u8; Self::MAX_NAME_LENGTH] {
         self.name.contents()
-    }
-}
-
-impl fmt::Debug for PowerRailName {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let mut debug = f.debug_struct("PowerRailName");
-        if let Some(s) = self.as_str() {
-            debug.field("name", &s);
-        } else {
-            debug.field("name", self.name.contents());
-        }
-        debug.finish()
     }
 }
 
