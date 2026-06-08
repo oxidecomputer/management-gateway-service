@@ -519,11 +519,9 @@ mod nullstr {
     impl<const N: usize> fmt::Debug for NullStr<N> {
         fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
             if let Some(s) = self.as_str() {
-                f.write_char('"')?;
-                f.write_str(s)?;
-                f.write_char('"')
+                s.fmt(f)
             } else {
-                write!(f, "{:?}", self.contents)
+                write!(f, "{:02x?}", self.contents)
             }
         }
     }

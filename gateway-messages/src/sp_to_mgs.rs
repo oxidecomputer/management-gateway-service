@@ -784,7 +784,7 @@ impl fmt::Display for PmbusStatusReadError {
                 )
             }
             PmbusStatusReadError::Unsupported => {
-                f.write_str("unsupported status field")
+                f.write_str("unsupported status register")
             }
         }
     }
