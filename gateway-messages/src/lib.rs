@@ -530,7 +530,11 @@ mod nullstr {
 
     impl<const N: usize> core::fmt::Display for NullStr<N> {
         fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-            <Self as fmt::Debug>::fmt(self, f)
+            if let Some(s) = self.as_str() {
+                f.write_str(s)
+            } else {
+                write!(f, "{:?}", self.contents)
+            }
         }
     }
 }
