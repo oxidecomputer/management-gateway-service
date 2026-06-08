@@ -529,7 +529,7 @@ mod nullstr {
             if let Some(s) = self.as_str() {
                 f.write_str(s)
             } else {
-                write!(f, "{:?}", self.contents)
+                write!(f, "{:02x?}", self.contents)
             }
         }
     }
