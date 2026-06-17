@@ -471,6 +471,8 @@ bitflags::bitflags! {
         const STARTUP_BOOT_RAMDISK = 1 << 6;
         const STARTUP_BOOT_NET = 1 << 7;
         const STARTUP_VERBOSE = 1 << 8;
+        const STARTUP_POWERDET = 1 << 9;
+        const STARTUP_NOCC6 = 1 << 10;
     }
 }
 
