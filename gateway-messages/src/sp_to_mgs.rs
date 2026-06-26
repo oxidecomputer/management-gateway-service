@@ -5,6 +5,7 @@
 //! Types for messages sent from SPs to MGS.
 
 use crate::BadRequestReason;
+use crate::PowerRailName;
 use crate::PowerState;
 use crate::RotResponse;
 use crate::RotSlotId;
@@ -187,6 +188,9 @@ pub enum SpResponse {
     /// Default slot as persisted in non-volatile memory
     ComponentPersistentSlot(u16),
 
+    /// PMBus status of a given rail
+    PmbusStatus(PmbusStatusResponse),
+
     /// Host Panic Payload. Metadata here, payload in trailing data
     HostPanicPayload {
         total_len: u32,
@@ -199,6 +203,14 @@ pub enum SpResponse {
         index: u32,
         reason: u8,
     },
+}
+
+#[derive(
+    Clone, Copy, Debug, PartialEq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct PmbusStatusResponse {
+    pub rail: PowerRailName,
+    pub status: PmbusStatus,
 }
 
 /// Identifier for one of of an SP's KSZ8463 management-network-facing ports.
@@ -725,6 +737,92 @@ pub struct TlvPage {
     pub total: u32,
 }
 
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum PmbusStatusError {
+    /// Attempted to query a rail which was unknown to the SP
+    UnknownRail,
+    /// Failed while attempting to read `STATUS_WORD`
+    FailedStatusWord(PmbusStatusReadError),
+}
+
+impl fmt::Display for PmbusStatusError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let msg = match self {
+            PmbusStatusError::UnknownRail => "unknown PMBus rail name",
+            PmbusStatusError::FailedStatusWord(reason) => {
+                return write!(f, "failed to read STATUS_WORD: {reason}");
+            }
+        };
+
+        f.write_str(msg)
+    }
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum PmbusStatusReadError {
+    /// Failed while attempting to communicate with I2C driver
+    DriverReadFailed {
+        /// If `true`, the SP believes that retrying this query may yield
+        /// success in the future. If `false`, the SP believes that this query
+        /// will always fail.
+        retry_hint: bool,
+        /// The raw I2C driver code reported when this query failed. This value
+        /// is not stable across versions of the SP firmware, and should only
+        /// be logged or used for interactive or post-mortem debugging.
+        /// Requires knowledge of the exact firmware revision to meaningfully
+        /// decode.
+        raw_response_code: u8,
+    },
+    /// This device does not support this status register, and it was not
+    /// queried by the SP.
+    Unsupported,
+}
+
+impl fmt::Display for PmbusStatusReadError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            PmbusStatusReadError::DriverReadFailed {
+                retry_hint,
+                raw_response_code,
+            } => {
+                let diagnosis =
+                    if !*retry_hint { "fatal" } else { "retryable" };
+                write!(
+                    f,
+                    "I2C driver error code: {raw_response_code} ({diagnosis})"
+                )
+            }
+            PmbusStatusReadError::Unsupported => {
+                f.write_str("unsupported status register")
+            }
+        }
+    }
+}
+
+/// A report representing all PMBus Status Registers
+///
+/// Sub-status fields may contain errors, either due to ephemeral i2c issues,
+/// or due to the field not being supported on the requested device.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct PmbusStatus {
+    pub status_word: u16,
+    pub status_vout: Result<u8, PmbusStatusReadError>,
+    pub status_iout: Result<u8, PmbusStatusReadError>,
+    pub status_temperature: Result<u8, PmbusStatusReadError>,
+    pub status_cml: Result<u8, PmbusStatusReadError>,
+    pub status_other: Result<u8, PmbusStatusReadError>,
+    pub status_input: Result<u8, PmbusStatusReadError>,
+    pub status_mfr_specific: Result<u8, PmbusStatusReadError>,
+    pub status_fans_1_2: Result<u8, PmbusStatusReadError>,
+    pub status_fans_3_4: Result<u8, PmbusStatusReadError>,
+}
+
 /// Types of component details that can be included in the TLV-encoded data of
 /// an [`SpResponse::ComponentDetails(_)`] message.
 ///
@@ -1172,6 +1270,7 @@ pub enum SpError {
     Monorail(MonorailError),
     Dump(DumpError),
     Hf(HfError),
+    PmbusStatus(PmbusStatusError),
     HostPanic(HostPanicError),
     HostBootfail(HostBootfailError),
 }
@@ -1298,6 +1397,7 @@ impl fmt::Display for SpError {
             Self::Monorail(e) => write!(f, "monorail: {}", e),
             Self::Dump(e) => write!(f, "dump: {}", e),
             Self::Hf(e) => write!(f, "hf: {}", e),
+            Self::PmbusStatus(e) => write!(f, "PMBus status: {}", e),
             Self::HostPanic(e) => write!(f, "hostpanic: {}", e),
             Self::HostBootfail(e) => write!(f, "hostbootfail: {}", e),
         }

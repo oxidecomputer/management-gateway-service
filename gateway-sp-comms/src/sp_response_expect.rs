@@ -8,6 +8,7 @@ use gateway_messages::ComponentActionResponse;
 use gateway_messages::DiscoverResponse;
 use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::IgnitionState;
+use gateway_messages::PmbusStatusResponse;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
 use gateway_messages::ROT_PAGE_SIZE;
@@ -195,6 +196,7 @@ pub(crate) fn expect_host_flash_read(
 
 expect_fn!(StartHostFlashHashAck);
 expect_fn!(HostFlashHash(h) -> [u8; 32]);
+expect_fn!(PmbusStatus(resp) -> PmbusStatusResponse);
 
 ////////////////////////////////////////////////////////////////////////////////
 // Some `SpResponse` types require special handling, manually implemented below

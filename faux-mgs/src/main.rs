@@ -25,6 +25,8 @@ use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::MonorailComponentAction;
 use gateway_messages::MonorailComponentActionResponse;
+use gateway_messages::PmbusStatus;
+use gateway_messages::PowerRailName;
 use gateway_messages::PowerState;
 use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
@@ -533,6 +535,12 @@ enum Command {
     },
     GetHostFlashHash {
         slot: u16,
+    },
+    /// Get the PMBus status registers for a given Power Rail
+    GetPmbusStatus {
+        /// Power rail name, as referred to in the App TOML
+        #[clap(value_parser = parse_power_rail_name)]
+        rail: PowerRailName,
     },
 }
 
@@ -1087,6 +1095,11 @@ fn parse_tlvc_key(key: &str) -> Result<[u8; 4]> {
 fn parse_sp_component(component: &str) -> Result<SpComponent> {
     SpComponent::try_from(component)
         .map_err(|_| anyhow!("invalid component name: {component}"))
+}
+
+fn parse_power_rail_name(name: &str) -> Result<PowerRailName> {
+    PowerRailName::try_from(name)
+        .map_err(|_| anyhow!("invalid power rail name: {name}"))
 }
 
 fn parse_bulk_targets_shim(s: &str) -> Result<IgnitionBulkTargets> {
@@ -2366,12 +2379,41 @@ async fn run_command(
             lines.push(String::new());
             lines.push("ereports:".to_string());
 
+            const WRONG_TYPE: &str = "<wrong type>";
+            const NULL: &str = "<null>";
+            const MAX_UPTIME_DIGITS: usize = 12;
+            const MAX_ENA_DIGITS: usize = 18;
+            const MAX_CLASS: usize =
+                79 - MAX_UPTIME_DIGITS - MAX_ENA_DIGITS - 4;
+            let header = format!(
+                "{:<MAX_UPTIME_DIGITS$} {:<MAX_CLASS$} {:<MAX_ENA_DIGITS$}",
+                "TIME", "CLASS", "ENA"
+            );
+
             for ereport in ereports {
+                lines.push(header.clone());
+                let uptime: &dyn std::fmt::Display =
+                    match ereport.data.get("hubris_uptime_ms") {
+                        Some(serde_json::Value::Number(n)) => {
+                            &n.as_u64().unwrap_or(u64::MAX)
+                        }
+                        Some(_) => &WRONG_TYPE,
+                        None => &NULL,
+                    };
+                let class = match ereport.data.get("k") {
+                    Some(serde_json::Value::String(c)) => c.as_str(),
+                    Some(_) => WRONG_TYPE,
+                    None => NULL,
+                };
                 lines.push(format!(
-                    "{:#x}: {:#?}\n",
+                    "{uptime:<MAX_UPTIME_DIGITS$} {class:<MAX_CLASS$} \
+                     {:<#0MAX_ENA_DIGITS$x}",
                     ereport.ena.into_u64(),
-                    ereport.data
                 ));
+                lines.push(String::new());
+                let data = serde_json::Value::Object(ereport.data);
+                let pretty = erebor::Displayer::new(&data).to_string();
+                lines.push(pretty);
             }
 
             Ok(Output::Lines(lines))
@@ -2434,6 +2476,53 @@ async fn run_command(
         Command::GetHostFlashHash { slot } => {
             let result = sp.get_host_flash_hash(slot).await?;
             Ok(Output::Lines(vec![format!("{result:x?}")]))
+        }
+        Command::GetPmbusStatus { rail } => {
+            let result = sp.get_pmbus_status(rail).await?;
+            if json {
+                return Ok(Output::Json(json!(result)));
+            }
+
+            let name = result.rail.as_str().unwrap();
+            let PmbusStatus {
+                status_word,
+                status_vout,
+                status_iout,
+                status_temperature,
+                status_cml,
+                status_other,
+                status_input,
+                status_mfr_specific,
+                status_fans_1_2,
+                status_fans_3_4,
+            } = result.status;
+
+            let mut lines = vec![];
+            lines.push(format!("Rail '{name}':"));
+            lines.push(format!("WORD          0x{status_word:04x}"));
+            let data = [
+                ("VOUT          ", status_vout),
+                ("IOUT          ", status_iout),
+                ("TEMPERATURE   ", status_temperature),
+                ("CML           ", status_cml),
+                ("OTHER         ", status_other),
+                ("INPUT         ", status_input),
+                ("MFR_SPECIFIC  ", status_mfr_specific),
+                ("FANS_1_2      ", status_fans_1_2),
+                ("FANS_3_4      ", status_fans_3_4),
+            ];
+
+            use std::fmt::Write;
+            for (n, v) in data {
+                let mut l = n.to_string();
+                match v {
+                    Ok(b) => write!(&mut l, "0x{b:02x}")?,
+                    Err(e) => write!(&mut l, "Err({e:?})")?,
+                }
+                lines.push(l);
+            }
+
+            Ok(Output::Lines(lines))
         }
     }
 }

@@ -95,8 +95,9 @@ M.mgs_request.names = {
     [48] = "StartHostFlashHash",
     [49] = "GetHostFlashHash",
     [50] = "ComponentGetPersistentSlot",
-    [51] = "GetHostPanicPayload",
-    [52] = "GetHostBootfailPayload",
+    [51] = "GetPmbusStatus",
+    [52] = "GetHostPanicPayload",
+    [53] = "GetHostBootfailPayload",
 }
 M.mgs_request.handlers = {
     [0] = "dissect_discover",
@@ -150,8 +151,9 @@ M.mgs_request.handlers = {
     [48] = "dissect_start_host_flash_hash",
     [49] = "dissect_get_host_flash_hash",
     [50] = "dissect_component_get_persistent_slot",
-    [51] = "dissect_get_host_panic_payload",
-    [52] = "dissect_get_host_bootfail_payload",
+    [51] = "dissect_get_pmbus_status",
+    [52] = "dissect_get_host_panic_payload",
+    [53] = "dissect_get_host_bootfail_payload",
 }
 M.mgs_request.field = ProtoField.uint8(
     "mgs.mgs_request",
@@ -217,8 +219,9 @@ M.sp_error.names = {
     [36] = "Monorail",
     [37] = "Dump",
     [38] = "Hf",
-    [39] = "HostPanic",
-    [40] = "HostBootfail",
+    [39] = "PmbusStatus",
+    [40] = "HostPanic",
+    [41] = "HostBootfail",
 }
 M.sp_error.handlers = {
     [0] = "dissect_busy",
@@ -260,8 +263,9 @@ M.sp_error.handlers = {
     [36] = "dissect_monorail",
     [37] = "dissect_dump",
     [38] = "dissect_hf",
-    [39] = "dissect_host_panic",
-    [40] = "dissect_host_bootfail",
+    [39] = "dissect_pmbus_status",
+    [40] = "dissect_host_panic",
+    [41] = "dissect_host_bootfail",
 }
 M.sp_error.field = ProtoField.uint8(
     "mgs.sp_error",
@@ -341,8 +345,9 @@ M.sp_response.names = {
     [50] = "StartHostFlashHashAck",
     [51] = "HostFlashHash",
     [52] = "ComponentPersistentSlot",
-    [53] = "HostPanicPayload",
-    [54] = "HostBootfailPayload",
+    [53] = "PmbusStatus",
+    [54] = "HostPanicPayload",
+    [55] = "HostBootfailPayload",
 }
 M.sp_response.handlers = {
     [0] = "dissect_discover",
@@ -398,8 +403,9 @@ M.sp_response.handlers = {
     [50] = "dissect_start_host_flash_hash_ack",
     [51] = "dissect_host_flash_hash",
     [52] = "dissect_component_persistent_slot",
-    [53] = "dissect_host_panic_payload",
-    [54] = "dissect_host_bootfail_payload",
+    [53] = "dissect_pmbus_status",
+    [54] = "dissect_host_panic_payload",
+    [55] = "dissect_host_bootfail_payload",
 }
 M.sp_response.field = ProtoField.uint8(
     "mgs.sp_response",

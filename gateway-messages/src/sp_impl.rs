@@ -29,6 +29,9 @@ use crate::MessageKind;
 use crate::MgsError;
 use crate::MgsRequest;
 use crate::MgsResponse;
+use crate::PmbusStatus;
+use crate::PmbusStatusResponse;
+use crate::PowerRailName;
 use crate::PowerState;
 use crate::PowerStateTransition;
 use crate::ROT_PAGE_SIZE;
@@ -425,6 +428,11 @@ pub trait SpHandler {
     fn start_host_flash_hash(&mut self, slot: u16) -> Result<(), SpError>;
 
     fn get_host_flash_hash(&mut self, slot: u16) -> Result<[u8; 32], SpError>;
+
+    fn get_pmbus_status(
+        &mut self,
+        rail: &PowerRailName,
+    ) -> Result<PmbusStatus, SpError>;
 
     fn get_host_panic_payload(
         &mut self,
@@ -1072,6 +1080,14 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::GetHostFlashHash { slot } => {
             handler.get_host_flash_hash(slot).map(SpResponse::HostFlashHash)
         }
+        MgsRequest::GetPmbusStatus(power_rail_name) => {
+            handler.get_pmbus_status(&power_rail_name).map(|res| {
+                SpResponse::PmbusStatus(PmbusStatusResponse {
+                    rail: power_rail_name,
+                    status: res,
+                })
+            })
+        }
         MgsRequest::GetHostPanicPayload { request, len } => handler
             .get_host_panic_payload(request, len, trailing_tx_buf)
             .map(|data| {
@@ -1523,6 +1539,13 @@ mod tests {
             &mut self,
             _slot: u16,
         ) -> Result<[u8; 32], SpError> {
+            unimplemented!()
+        }
+
+        fn get_pmbus_status(
+            &mut self,
+            _rail: &PowerRailName,
+        ) -> Result<PmbusStatus, SpError> {
             unimplemented!()
         }
 

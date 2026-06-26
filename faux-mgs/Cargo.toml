@@ -10,6 +10,7 @@ async-trait.workspace = true
 camino.workspace = true
 clap.workspace = true
 colored.workspace = true
+erebor.workspace = true
 futures.workspace = true
 glob.workspace = true
 hex.workspace = true
