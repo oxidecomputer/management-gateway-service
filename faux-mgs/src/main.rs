@@ -2543,10 +2543,11 @@ async fn run_command(
             let res = sp.get_host_panic_payload(None, 512).await?;
 
             let mut total = res.contents;
-            let ttl_bytes = res.total_len;
-            let index = res.index;
+            let ttl_bytes = dbg!(res.total_len);
+            let index = dbg!(res.index);
+            total.truncate(ttl_bytes);
 
-            while ttl_bytes != total.len() {
+            while total.len() < ttl_bytes {
                 // Get the NEXT chunk of data, after the part(s) that we already
                 // have received.
                 let res = sp
@@ -2575,6 +2576,8 @@ async fn run_command(
                 total.extend_from_slice(&res.contents);
             }
 
+            total.truncate(ttl_bytes);
+
             let Ok(text) = std::str::from_utf8(&total) else { todo!() };
 
             let mut out = vec![];
@@ -2597,10 +2600,11 @@ async fn run_command(
             let res = sp.get_host_bootfail_payload(None, 512).await?;
 
             let mut total = res.contents;
-            let ttl_bytes = res.total_len;
-            let index = res.index;
+            let ttl_bytes = dbg!(res.total_len);
+            let index = dbg!(res.index);
+            total.truncate(ttl_bytes);
 
-            while ttl_bytes != total.len() {
+            while total.len() < ttl_bytes {
                 // Get the NEXT chunk of data, after the part(s) that we already
                 // have received.
                 let res = sp
@@ -2614,7 +2618,7 @@ async fn run_command(
                     .await?;
 
                 // TODO: If either of these change, it would mean that the host
-                // bootfail'd RIGHT as we were asking about it. The simpler
+                // failed RIGHT as we were asking about it. The simpler route
                 // is to just panic, if we wanted to be really fancy we could
                 // put this whole match arm in an outer loop and gracefully
                 // retry. If you are taking this impl for real control plane
@@ -2622,12 +2626,14 @@ async fn run_command(
                 // retries!
                 //
                 // The SP can only store one bootfail at a time, so there's
-                // no way to retrieve an older bootfail after it has been
+                // no way to retrieve an older panic after it has been
                 // overwritten.
                 assert_eq!(index, res.index);
                 assert_eq!(ttl_bytes, res.total_len);
                 total.extend_from_slice(&res.contents);
             }
+
+            total.truncate(ttl_bytes);
 
             let Ok(text) = std::str::from_utf8(&total) else { todo!() };
 
