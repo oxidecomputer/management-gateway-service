@@ -21,6 +21,7 @@ use gateway_messages::ApobComponentActionResponse;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
 use gateway_messages::EcdsaSha2Nistp256Challenge;
+use gateway_messages::HostInfoRequest;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::MonorailComponentAction;
@@ -542,6 +543,10 @@ enum Command {
         #[clap(value_parser = parse_power_rail_name)]
         rail: PowerRailName,
     },
+    /// Get the Host Panic Payload
+    GetHostPanic,
+    /// Get the Host Boot Failure message
+    GetBootFail,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2524,6 +2529,61 @@ async fn run_command(
 
             Ok(Output::Lines(lines))
         }
+        Command::GetHostPanic => {
+            // Get the first segment, if any
+            //
+            // TODO: buffer sizing? We have a normal sized UDP frame (15xx
+            // bytes?), with some overhead, 1k might be reasonable here, but
+            // there's probably not that much speed benefit to halving the
+            // number of frames sent as this isn't done in a "hot" loop.
+            //
+            // TODO: Handle "this SP doesn't have that" or "we support that but
+            // don't have any panic data right now" more elegantly than just
+            // returning the error here?
+            let res = sp.get_host_panic_payload(None, 512).await?;
+
+            let mut total = res.contents;
+            let ttl_bytes = res.total_len;
+            let index = res.index;
+
+            while ttl_bytes != total.len() {
+                // Get the NEXT chunk of data, after the part(s) that we already
+                // have received.
+                let res = sp
+                    .get_host_panic_payload(
+                        Some(HostInfoRequest {
+                            offset: total.len() as u32,
+                            index,
+                        }),
+                        512,
+                    )
+                    .await?;
+
+                // TODO: If either of these change, it would mean that the host
+                // panicked RIGHT as we were asking about it. The simpler route
+                // is to just panic, if we wanted to be really fancy we could
+                // put this whole match arm in an outer loop and gracefully
+                // retry. If you are taking this impl for real control plane
+                // things, consider doing that, maybe with some upper bound of
+                // retries!
+                //
+                // The SP can only store one host panic at a time, so there's
+                // no way to retrieve an older panic after it has been
+                // overwritten.
+                assert_eq!(index, res.index);
+                assert_eq!(ttl_bytes, res.total_len);
+                total.extend_from_slice(&res.contents);
+            }
+
+            let Ok(text) = std::str::from_utf8(&total) else { todo!() };
+
+            let mut out = vec![];
+            out.push("Panic Text:".to_string());
+            // TODO: Is this necessary? Just push as one to_string?
+            out.extend(text.lines().map(str::to_string));
+            Ok(Output::Lines(out))
+        }
+        Command::GetBootFail => todo!(),
     }
 }
 

@@ -74,6 +74,15 @@ pub enum SpRequest {
 }
 
 #[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+/// Host Panic Payload. Metadata here, payload in trailing data
+pub struct HostPanicPayload {
+    pub total_len: u32,
+    pub index: u32,
+}
+
+#[derive(
     Debug,
     Clone,
     Copy,
@@ -191,11 +200,7 @@ pub enum SpResponse {
     /// PMBus status of a given rail
     PmbusStatus(PmbusStatusResponse),
 
-    /// Host Panic Payload. Metadata here, payload in trailing data
-    HostPanicPayload {
-        total_len: u32,
-        index: u32,
-    },
+    HostPanicPayload(HostPanicPayload),
 
     /// Host Boot Failure Payload. Metadata here, payload in trailing data
     HostBootfailPayload {

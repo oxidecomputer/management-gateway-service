@@ -21,6 +21,7 @@ use crate::HF_PAGE_SIZE;
 use crate::Header;
 use crate::HostBootfailPayloadData;
 use crate::HostInfoRequest;
+use crate::HostPanicPayload;
 use crate::HostPanicPayloadData;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
@@ -1093,10 +1094,10 @@ fn handle_mgs_request<H: SpHandler>(
             .map(|data| {
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::ShiftFromTail(data.len));
-                SpResponse::HostPanicPayload {
+                SpResponse::HostPanicPayload(HostPanicPayload {
                     total_len: data.total_len,
                     index: data.index,
-                }
+                })
             }),
         MgsRequest::GetHostBootfailPayload { request, len } => handler
             .get_host_bootfail_payload(request, len, trailing_tx_buf)

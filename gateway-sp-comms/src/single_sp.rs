@@ -32,6 +32,7 @@ use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
 use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::Header;
+use gateway_messages::HostInfoRequest;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
@@ -1458,6 +1459,22 @@ impl SingleSp {
             .await
             .and_then(expect_pmbus_status)
     }
+
+    pub async fn get_host_panic_payload(
+        &self,
+        request: Option<HostInfoRequest>,
+        len: u32,
+    ) -> Result<HostPanicPayloadChunk> {
+        self.rpc(MgsRequest::GetHostBootfailPayload { request, len })
+            .await
+            .and_then(expect_host_panic_payload)
+    }
+}
+
+pub struct HostPanicPayloadChunk {
+    pub total_len: usize,
+    pub index: u32,
+    pub contents: Vec<u8>,
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)
