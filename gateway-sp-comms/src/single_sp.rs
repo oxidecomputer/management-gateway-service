@@ -1465,13 +1465,29 @@ impl SingleSp {
         request: Option<HostInfoRequest>,
         len: u32,
     ) -> Result<HostPanicPayloadChunk> {
-        self.rpc(MgsRequest::GetHostBootfailPayload { request, len })
+        self.rpc(MgsRequest::GetHostPanicPayload { request, len })
             .await
             .and_then(expect_host_panic_payload)
+    }
+
+    pub async fn get_host_bootfail_payload(
+        &self,
+        request: Option<HostInfoRequest>,
+        len: u32,
+    ) -> Result<HostBootfailPayloadChunk> {
+        self.rpc(MgsRequest::GetHostBootfailPayload { request, len })
+            .await
+            .and_then(expect_host_bootfail_payload)
     }
 }
 
 pub struct HostPanicPayloadChunk {
+    pub total_len: usize,
+    pub index: u32,
+    pub contents: Vec<u8>,
+}
+
+pub struct HostBootfailPayloadChunk {
     pub total_len: usize,
     pub index: u32,
     pub contents: Vec<u8>,

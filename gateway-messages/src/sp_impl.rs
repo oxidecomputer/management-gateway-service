@@ -19,6 +19,7 @@ use crate::DumpSegment;
 use crate::DumpTask;
 use crate::HF_PAGE_SIZE;
 use crate::Header;
+use crate::HostBootfailPayload;
 use crate::HostBootfailPayloadData;
 use crate::HostInfoRequest;
 use crate::HostPanicPayload;
@@ -1104,11 +1105,11 @@ fn handle_mgs_request<H: SpHandler>(
             .map(|data| {
                 outgoing_trailing_data =
                     Some(OutgoingTrailingData::ShiftFromTail(data.len));
-                SpResponse::HostBootfailPayload {
+                SpResponse::HostBootfailPayload(HostBootfailPayload {
                     total_len: data.total_len,
                     index: data.index,
                     reason: data.reason,
-                }
+                })
             }),
     };
 

@@ -73,13 +73,23 @@ pub enum SpRequest {
     HostPhase2Data { hash: [u8; 32], offset: u64 },
 }
 
+/// Host Panic Payload. Metadata here, payload in trailing data
 #[derive(
     Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
-/// Host Panic Payload. Metadata here, payload in trailing data
 pub struct HostPanicPayload {
     pub total_len: u32,
     pub index: u32,
+}
+
+/// Host Boot Failure Payload. Metadata here, payload in trailing data
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct HostBootfailPayload {
+    pub total_len: u32,
+    pub index: u32,
+    pub reason: u8,
 }
 
 #[derive(
@@ -202,12 +212,7 @@ pub enum SpResponse {
 
     HostPanicPayload(HostPanicPayload),
 
-    /// Host Boot Failure Payload. Metadata here, payload in trailing data
-    HostBootfailPayload {
-        total_len: u32,
-        index: u32,
-        reason: u8,
-    },
+    HostBootfailPayload(HostBootfailPayload),
 }
 
 #[derive(
