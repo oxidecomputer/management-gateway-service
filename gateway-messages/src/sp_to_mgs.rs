@@ -1969,7 +1969,7 @@ impl fmt::Display for HfError {
 pub enum HostPanicError {
     NoHostInfo,
     InvalidOffset,
-    InvalidIndex,
+    InvalidSeqNo,
     ServerRestarted,
 }
 
@@ -1978,8 +1978,8 @@ impl fmt::Display for HostPanicError {
         let s = match self {
             Self::NoHostInfo => "No Host Panic Available",
             Self::InvalidOffset => "Invalid Host Panic data offset request",
-            Self::InvalidIndex => {
-                "Incorrect Host Panic index (new panic occurred)"
+            Self::InvalidSeqNo => {
+                "Incorrect Host Panic sequence number (new panic occurred)"
             }
             Self::ServerRestarted => "Failed to retrieve Host Panic",
         };
@@ -1996,7 +1996,7 @@ impl fmt::Display for HostPanicError {
 pub enum HostBootfailError {
     NoHostInfo,
     InvalidOffset,
-    InvalidIndex,
+    InvalidSeqNo,
     ServerRestarted,
 }
 
@@ -2005,8 +2005,8 @@ impl fmt::Display for HostBootfailError {
         let s = match self {
             Self::NoHostInfo => "No Boot Failure Available",
             Self::InvalidOffset => "Invalid Boot Failure data offset request",
-            Self::InvalidIndex => {
-                "Incorrect Boot Failure index (new panic occurred)"
+            Self::InvalidSeqNo => {
+                "Incorrect Boot Failure sequence number (new panic occurred)"
             }
             Self::ServerRestarted => "Failed to retrieve Boot Failure",
         };
