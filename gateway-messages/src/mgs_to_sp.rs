@@ -268,12 +268,16 @@ pub enum MgsRequest {
     },
 }
 
+/// Request information for Host Bootfail or Host Panic data
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Deserialize, Serialize, SerializedSize,
 )]
 pub struct HostInfoRequest {
+    /// The offset, in bytes, from the start of the data
     pub offset: u32,
-    pub index: u32,
+    /// The specific data sequence number that uniquely identifies the requested
+    /// data
+    pub seqno: u32,
 }
 
 #[derive(

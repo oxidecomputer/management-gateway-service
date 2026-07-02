@@ -78,8 +78,10 @@ pub enum SpRequest {
     Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct HostPanicPayload {
+    /// The length of the total host panic data, in bytes
     pub total_len: u32,
-    pub index: u32,
+    /// The specific identifier of this host panic payload data
+    pub seqno: u32,
 }
 
 /// Host Boot Failure Payload. Metadata here, payload in trailing data
@@ -87,8 +89,11 @@ pub struct HostPanicPayload {
     Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct HostBootfailPayload {
+    /// The length of the total Host Bootfail data, in bytes
     pub total_len: u32,
-    pub index: u32,
+    /// The specific identifier of this host bootfail payload data
+    pub seqno: u32,
+    /// The "reason" code presented on boot failure
     pub reason: u8,
 }
 
@@ -210,8 +215,10 @@ pub enum SpResponse {
     /// PMBus status of a given rail
     PmbusStatus(PmbusStatusResponse),
 
+    /// Host Panic data, received over IPCC from the host
     HostPanicPayload(HostPanicPayload),
 
+    /// Host Bootfail data, received over IPCC from the host
     HostBootfailPayload(HostBootfailPayload),
 }
 
@@ -2007,15 +2014,17 @@ impl fmt::Display for HostBootfailError {
     }
 }
 
+/// Helper host panic type used in public API, but not on the wire
 pub struct HostPanicPayloadData {
     pub len: usize,
-    pub index: u32,
+    pub seqno: u32,
     pub total_len: u32,
 }
 
+/// Helper host bootfail type used in public API, but not on the wire
 pub struct HostBootfailPayloadData {
     pub len: usize,
-    pub index: u32,
+    pub seqno: u32,
     pub total_len: u32,
     pub reason: u8,
 }

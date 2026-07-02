@@ -1481,15 +1481,17 @@ impl SingleSp {
     }
 }
 
+/// Helper type that contains the owned host panic data
 pub struct HostPanicPayloadChunk {
     pub total_len: usize,
-    pub index: u32,
+    pub seqno: u32,
     pub contents: Vec<u8>,
 }
 
+/// Helper type that contains the owned host bootfail data
 pub struct HostBootfailPayloadChunk {
     pub total_len: usize,
-    pub index: u32,
+    pub seqno: u32,
     pub contents: Vec<u8>,
 }
 

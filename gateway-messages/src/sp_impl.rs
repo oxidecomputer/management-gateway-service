@@ -1097,7 +1097,7 @@ fn handle_mgs_request<H: SpHandler>(
                     Some(OutgoingTrailingData::ShiftFromTail(data.len));
                 SpResponse::HostPanicPayload(HostPanicPayload {
                     total_len: data.total_len,
-                    index: data.index,
+                    seqno: data.seqno,
                 })
             }),
         MgsRequest::GetHostBootfailPayload { request, len } => handler
@@ -1107,7 +1107,7 @@ fn handle_mgs_request<H: SpHandler>(
                     Some(OutgoingTrailingData::ShiftFromTail(data.len));
                 SpResponse::HostBootfailPayload(HostBootfailPayload {
                     total_len: data.total_len,
-                    index: data.index,
+                    seqno: data.seqno,
                     reason: data.reason,
                 })
             }),

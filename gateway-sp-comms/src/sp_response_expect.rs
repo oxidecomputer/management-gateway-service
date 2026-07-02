@@ -210,7 +210,7 @@ pub(crate) fn expect_host_panic_payload(
     let (response, data) = expect_host_panic_payload(r)?;
     Ok(HostPanicPayloadChunk {
         total_len: response.total_len as usize,
-        index: response.index,
+        seqno: response.seqno,
         contents: data.to_vec(),
     })
 }
@@ -223,7 +223,7 @@ pub(crate) fn expect_host_bootfail_payload(
     let (response, data) = expect_host_bootfail_payload(r)?;
     Ok(HostBootfailPayloadChunk {
         total_len: response.total_len as usize,
-        index: response.index,
+        seqno: response.seqno,
         contents: data.to_vec(),
     })
 }

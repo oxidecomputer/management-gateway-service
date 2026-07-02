@@ -2544,7 +2544,7 @@ async fn run_command(
 
             let mut total = res.contents;
             let ttl_bytes = dbg!(res.total_len);
-            let index = dbg!(res.index);
+            let seqno = dbg!(res.seqno);
             total.truncate(ttl_bytes);
 
             while total.len() < ttl_bytes {
@@ -2554,7 +2554,7 @@ async fn run_command(
                     .get_host_panic_payload(
                         Some(HostInfoRequest {
                             offset: total.len() as u32,
-                            index,
+                            seqno,
                         }),
                         512,
                     )
@@ -2571,7 +2571,7 @@ async fn run_command(
                 // The SP can only store one host panic at a time, so there's
                 // no way to retrieve an older panic after it has been
                 // overwritten.
-                assert_eq!(index, res.index);
+                assert_eq!(seqno, res.seqno);
                 assert_eq!(ttl_bytes, res.total_len);
                 total.extend_from_slice(&res.contents);
             }
@@ -2601,7 +2601,7 @@ async fn run_command(
 
             let mut total = res.contents;
             let ttl_bytes = dbg!(res.total_len);
-            let index = dbg!(res.index);
+            let seqno = dbg!(res.seqno);
             total.truncate(ttl_bytes);
 
             while total.len() < ttl_bytes {
@@ -2611,7 +2611,7 @@ async fn run_command(
                     .get_host_bootfail_payload(
                         Some(HostInfoRequest {
                             offset: total.len() as u32,
-                            index,
+                            seqno,
                         }),
                         512,
                     )
@@ -2628,7 +2628,7 @@ async fn run_command(
                 // The SP can only store one bootfail at a time, so there's
                 // no way to retrieve an older panic after it has been
                 // overwritten.
-                assert_eq!(index, res.index);
+                assert_eq!(seqno, res.seqno);
                 assert_eq!(ttl_bytes, res.total_len);
                 total.extend_from_slice(&res.contents);
             }
