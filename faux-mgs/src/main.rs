@@ -2536,17 +2536,18 @@ async fn run_command(
             // bytes?), with some overhead, 1k might be reasonable here, but
             // there's probably not that much speed benefit to halving the
             // number of frames sent as this isn't done in a "hot" loop.
-            //
-            // TODO: Handle "this SP doesn't have that" or "we support that but
-            // don't have any panic data right now" more elegantly than just
-            // returning the error here?
             let res = sp.get_host_panic_payload(None, 512).await?;
 
             let mut total = res.contents;
-            let ttl_bytes = dbg!(res.total_len);
-            let seqno = dbg!(res.seqno);
+            let ttl_bytes = res.total_len;
+            let seqno = res.seqno;
+
+            // Truncate the payload (which potentially contains *more* bytes
+            // than were actually used!) if the total message bytes fit into
+            // a single frame. This is a no-op if ttl_bytes > total.len().
             total.truncate(ttl_bytes);
 
+            // Request the entire contents, one chunk at a time
             while total.len() < ttl_bytes {
                 // Get the NEXT chunk of data, after the part(s) that we already
                 // have received.
@@ -2576,15 +2577,24 @@ async fn run_command(
                 total.extend_from_slice(&res.contents);
             }
 
+            // Again, truncate `total`, to handle any extra bytes in the last
+            // received frame.
             total.truncate(ttl_bytes);
 
-            let Ok(text) = std::str::from_utf8(&total) else { todo!() };
-
             let mut out = vec![];
-            out.push("Panic Text:".to_string());
-            // TODO: Is this necessary? Just push as one to_string?
-            out.extend(text.lines().map(str::to_string));
-            Ok(Output::Lines(out))
+            if let Ok(text) = std::str::from_utf8(&total) {
+                out.push("Panic Text:".to_string());
+                // TODO: Is this necessary? Just push as one to_string?
+                out.extend(text.lines().map(str::to_string));
+                Ok(Output::Lines(out))
+            } else {
+                out.push(
+                    "Panic Text was not a valid UTF-8 string.".to_string(),
+                );
+                out.push("Panic Text bytes (hex):".to_string());
+                out.push(format!("{total:02X?}"));
+                Ok(Output::Lines(out))
+            }
         }
         Command::GetBootFail => {
             // Get the first segment, if any
@@ -2593,17 +2603,18 @@ async fn run_command(
             // bytes?), with some overhead, 1k might be reasonable here, but
             // there's probably not that much speed benefit to halving the
             // number of frames sent as this isn't done in a "hot" loop.
-            //
-            // TODO: Handle "this SP doesn't have that" or "we support that but
-            // don't have any bootfail data right now" more elegantly than just
-            // returning the error here?
             let res = sp.get_host_bootfail_payload(None, 512).await?;
 
             let mut total = res.contents;
-            let ttl_bytes = dbg!(res.total_len);
-            let seqno = dbg!(res.seqno);
+            let ttl_bytes = res.total_len;
+            let seqno = res.seqno;
+
+            // Truncate the payload (which potentially contains *more* bytes
+            // than were actually used!) if the total message bytes fit into
+            // a single frame. This is a no-op if ttl_bytes > total.len().
             total.truncate(ttl_bytes);
 
+            // Request the entire contents, one chunk at a time
             while total.len() < ttl_bytes {
                 // Get the NEXT chunk of data, after the part(s) that we already
                 // have received.
@@ -2633,15 +2644,25 @@ async fn run_command(
                 total.extend_from_slice(&res.contents);
             }
 
+            // Again, truncate `total`, to handle any extra bytes in the last
+            // received frame.
             total.truncate(ttl_bytes);
 
-            let Ok(text) = std::str::from_utf8(&total) else { todo!() };
-
             let mut out = vec![];
-            out.push("Boot Failure Text:".to_string());
-            // TODO: Is this necessary? Just push as one to_string?
-            out.extend(text.lines().map(str::to_string));
-            Ok(Output::Lines(out))
+            if let Ok(text) = std::str::from_utf8(&total) {
+                out.push("Boot Failure Text:".to_string());
+                // TODO: Is this necessary? Just push as one to_string?
+                out.extend(text.lines().map(str::to_string));
+                Ok(Output::Lines(out))
+            } else {
+                out.push(
+                    "Boot Failure Text was not a valid UTF-8 string."
+                        .to_string(),
+                );
+                out.push("Boot Failure Text bytes (hex):".to_string());
+                out.push(format!("{total:02X?}"));
+                Ok(Output::Lines(out))
+            }
         }
     }
 }
