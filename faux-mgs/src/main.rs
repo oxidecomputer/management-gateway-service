@@ -2540,6 +2540,7 @@ async fn run_command(
             out.push("Got Panic Data:".to_string());
             out.push(format!("  total bytes:     {}", panic_payload.total_len));
             out.push(format!("  sequence number: {}", panic_payload.seqno));
+            out.push(format!("  boot slot:       {:?}", panic_payload.slot));
             out.push("  contents:".to_string());
             out.push(String::new());
             out.extend(format!("{panic_msg:#?}").lines().map(str::to_string));
@@ -2563,6 +2564,7 @@ async fn run_command(
             out.push(format!("  total bytes:     {}", bf_payload.total_len));
             out.push(format!("  sequence number: {}", bf_payload.seqno));
             out.push(format!("  reason:          {reason}"));
+            out.push(format!("  boot slot:       {:?}", bf_payload.slot));
             out.push("  contents:".to_string());
             out.push(String::new());
 

@@ -211,6 +211,7 @@ pub(crate) fn expect_host_panic_payload(
     Ok(HostPanicPayloadData {
         total_len: response.total_len as usize,
         seqno: response.seqno,
+        slot: response.slot,
         contents: data.to_vec(),
     })
 }
@@ -224,6 +225,7 @@ pub(crate) fn expect_host_bootfail_payload(
     Ok(HostBootfailPayloadData {
         total_len: response.total_len as usize,
         seqno: response.seqno,
+        slot: response.slot,
         reason: response.reason,
         contents: data.to_vec(),
     })

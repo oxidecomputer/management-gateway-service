@@ -103,6 +103,7 @@ fn get_host_panic_payload_response() {
     let response = SpResponse::HostPanicPayload(HostPanicPayload {
         total_len: 0x01020304,
         seqno: 0xF0E0D0C0,
+        slot: None,
     });
     #[rustfmt::skip]
     let expected = &[
@@ -111,7 +112,9 @@ fn get_host_panic_payload_response() {
         // 0x01020304
         0x04, 0x03, 0x02, 0x01,
         // 0xF0E0D0C0
-        0xC0, 0xD0, 0xE0, 0xF0
+        0xC0, 0xD0, 0xE0, 0xF0,
+        // None
+        0x00,
     ];
     assert_serialized(expected, &response);
 }
@@ -122,6 +125,7 @@ fn get_host_bootfail_payload_response() {
         total_len: 0x01020304,
         seqno: 0xF0E0D0C0,
         reason: 0xAB,
+        slot: Some(0x4321),
     });
     #[rustfmt::skip]
     let expected = &[
@@ -133,6 +137,8 @@ fn get_host_bootfail_payload_response() {
         0xC0, 0xD0, 0xE0, 0xF0,
         // 0xAB
         0xAB,
+        // Some 0x4321
+        0x01, 0x21, 0x43,
     ];
     assert_serialized(expected, &response);
 }

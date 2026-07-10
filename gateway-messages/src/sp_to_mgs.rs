@@ -82,6 +82,11 @@ pub struct HostPanicPayload {
     pub total_len: u32,
     /// The specific identifier of this host panic payload data
     pub seqno: u32,
+    /// the slot used to boot this host. When "None", the SP was unable to
+    /// determine which slot was used. This is not necessarily the CURRENTLY
+    /// selected slot, but instead the slot that was used to boot the host when
+    /// the panic occurred.
+    pub slot: Option<u16>,
 }
 
 /// Host Boot Failure Payload. Metadata here, payload in trailing data
@@ -95,6 +100,11 @@ pub struct HostBootfailPayload {
     pub seqno: u32,
     /// The "reason" code presented on boot failure
     pub reason: u8,
+    /// the slot used to boot this host. When "None", the SP was unable to
+    /// determine which slot was used. This is not necessarily the CURRENTLY
+    /// selected slot, but instead the slot that was used to boot the host when
+    /// the bootfail occurred.
+    pub slot: Option<u16>,
 }
 
 #[derive(
@@ -2019,6 +2029,7 @@ pub struct HostPanicPayloadData {
     pub len: usize,
     pub seqno: u32,
     pub total_len: u32,
+    pub slot: Option<u16>,
 }
 
 /// Helper host bootfail type used in public API, but not on the wire
@@ -2027,4 +2038,5 @@ pub struct HostBootfailPayloadData {
     pub seqno: u32,
     pub total_len: u32,
     pub reason: u8,
+    pub slot: Option<u16>,
 }

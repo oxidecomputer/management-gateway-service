@@ -1472,6 +1472,7 @@ impl SingleSp {
         let mut total = res.contents;
         let ttl_bytes = res.total_len;
         let seqno = res.seqno;
+        let slot = res.slot;
 
         // Truncate the payload (which potentially contains *more* bytes
         // than were actually used!) if the total message bytes fit into
@@ -1500,7 +1501,9 @@ impl SingleSp {
             // reason the SP panicked as well (and reset its sequence number),
             // and then the host panicked again, the total length could
             // theoretically change as well.
-            let changed = (seqno != res.seqno) || (ttl_bytes != res.total_len);
+            let changed = (seqno != res.seqno)
+                || (ttl_bytes != res.total_len)
+                || (slot != res.slot);
             if changed {
                 return Err(CommunicationError::HostDataSequenceChanged);
             }
@@ -1515,6 +1518,7 @@ impl SingleSp {
             total_len: ttl_bytes,
             seqno,
             contents: total,
+            slot,
         })
     }
 
@@ -1544,6 +1548,7 @@ impl SingleSp {
         let ttl_bytes = res.total_len;
         let seqno = res.seqno;
         let reason = res.reason;
+        let slot = res.slot;
 
         // Truncate the payload (which potentially contains *more* bytes
         // than were actually used!) if the total message bytes fit into
@@ -1574,7 +1579,8 @@ impl SingleSp {
             // theoretically change as well. Same for reason.
             let changed = (seqno != res.seqno)
                 || (ttl_bytes != res.total_len)
-                || (reason != res.reason);
+                || (reason != res.reason)
+                || (slot != res.slot);
             if changed {
                 return Err(CommunicationError::HostDataSequenceChanged);
             }
@@ -1590,6 +1596,7 @@ impl SingleSp {
             seqno,
             reason,
             contents: total,
+            slot,
         })
     }
 
@@ -1608,6 +1615,7 @@ impl SingleSp {
 pub struct HostPanicPayloadData {
     pub total_len: usize,
     pub seqno: u32,
+    pub slot: Option<u16>,
     pub contents: Vec<u8>,
 }
 
@@ -1616,6 +1624,7 @@ pub struct HostBootfailPayloadData {
     pub total_len: usize,
     pub seqno: u32,
     pub reason: u8,
+    pub slot: Option<u16>,
     pub contents: Vec<u8>,
 }
 

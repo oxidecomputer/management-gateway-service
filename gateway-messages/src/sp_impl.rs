@@ -1098,6 +1098,7 @@ fn handle_mgs_request<H: SpHandler>(
                 SpResponse::HostPanicPayload(HostPanicPayload {
                     total_len: data.total_len,
                     seqno: data.seqno,
+                    slot: data.slot,
                 })
             }),
         MgsRequest::GetHostBootfailPayload { request, len } => handler
@@ -1109,6 +1110,7 @@ fn handle_mgs_request<H: SpHandler>(
                     total_len: data.total_len,
                     seqno: data.seqno,
                     reason: data.reason,
+                    slot: data.slot,
                 })
             }),
     };
