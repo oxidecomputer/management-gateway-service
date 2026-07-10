@@ -33,6 +33,7 @@ mod v24;
 mod v25;
 mod v26;
 
+#[track_caller]
 pub fn assert_serialized<T: Serialize + SerializedSize + std::fmt::Debug>(
     expected: &[u8],
     item: &T,

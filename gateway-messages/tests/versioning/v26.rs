@@ -18,8 +18,8 @@
 use std::iter::repeat_n;
 
 use gateway_messages::{
-    MgsRequest, PmbusStatus, PmbusStatusReadError, PmbusStatusResponse,
-    PowerRailName, SpResponse,
+    MgsRequest, PmbusStatus, PmbusStatusError, PmbusStatusReadError,
+    PmbusStatusResponse, PowerRailName, SpError, SpResponse,
 };
 
 use super::assert_serialized;
@@ -93,4 +93,31 @@ fn get_pmbus_status_response() {
         0x01, 0x00, 0x01, 0xd2,
     ];
     assert_serialized(expected, &response);
+}
+
+#[test]
+fn get_pmbus_status_error() {
+    let errors: [(_, &[u8]); _] = [
+        (PmbusStatusError::UnknownRail, &[39, 0]),
+        (
+            PmbusStatusError::FailedStatusWord(
+                PmbusStatusReadError::Unsupported,
+            ),
+            &[39, 1, 1],
+        ),
+        (
+            PmbusStatusError::FailedStatusWord(
+                PmbusStatusReadError::DriverReadFailed {
+                    retry_hint: true,
+                    raw_response_code: 0xAB,
+                },
+            ),
+            &[39, 1, 0, 0x01, 0xAB],
+        ),
+    ];
+
+    for (e, bytes) in errors {
+        let error = SpError::PmbusStatus(e);
+        assert_serialized(bytes, &error);
+    }
 }
