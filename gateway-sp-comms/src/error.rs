@@ -69,6 +69,8 @@ pub enum CommunicationError {
         "Trailing data decompression failed: expected {expected}, got {got}"
     )]
     BadDecompressionSize { expected: usize, got: usize },
+    #[error("Host data sequence number changed while obtaining")]
+    HostDataSequenceChanged,
 }
 
 impl From<SingleSpHandleError> for CommunicationError {

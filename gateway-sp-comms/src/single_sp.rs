@@ -1460,11 +1460,70 @@ impl SingleSp {
             .and_then(expect_pmbus_status)
     }
 
-    pub async fn get_host_panic_payload(
+    pub async fn get_host_panic_payload(&self) -> Result<HostPanicPayloadData> {
+        // Get the first segment, if any
+        //
+        // TODO: minmax buffer sizing? We have a normal sized UDP frame (15xx
+        // bytes?), with some overhead, 1k might be reasonable here, but
+        // there's probably not that much speed benefit to halving the
+        // number of frames sent as this isn't done in a "hot" loop.
+        let res = self.get_host_panic_payload_raw(None, 512).await?;
+
+        let mut total = res.contents;
+        let ttl_bytes = res.total_len;
+        let seqno = res.seqno;
+
+        // Truncate the payload (which potentially contains *more* bytes
+        // than were actually used!) if the total message bytes fit into
+        // a single frame. This is a no-op if ttl_bytes > total.len().
+        total.truncate(ttl_bytes);
+
+        // Request the entire contents, one chunk at a time
+        while total.len() < ttl_bytes {
+            // Get the NEXT chunk of data, after the part(s) that we already
+            // have received.
+            let res = self
+                .get_host_panic_payload_raw(
+                    Some(HostInfoRequest { offset: total.len() as u32, seqno }),
+                    512,
+                )
+                .await?;
+
+            // If either of these change, it would mean that the host panicked
+            // RIGHT as we were asking about it.
+            //
+            // The SP can only store one host panic at a time, so there's
+            // no way to retrieve an older panic after it has been
+            // overwritten. The caller should retry until this succeeds.
+            //
+            // Usually, the sequence number should change, but if for some
+            // reason the SP panicked as well (and reset its sequence number),
+            // and then the host panicked again, the total length could
+            // theoretically change as well.
+            let changed = (seqno != res.seqno) || (ttl_bytes != res.total_len);
+            if changed {
+                return Err(CommunicationError::HostDataSequenceChanged);
+            }
+            total.extend_from_slice(&res.contents);
+        }
+
+        // Again, truncate `total`, to handle any extra bytes in the last
+        // received frame.
+        total.truncate(ttl_bytes);
+
+        Ok(HostPanicPayloadData {
+            total_len: ttl_bytes,
+            seqno,
+            contents: total,
+        })
+    }
+
+    /// Raw RPC wrapper, only returns a fragment of the host panic payload data
+    async fn get_host_panic_payload_raw(
         &self,
         request: Option<HostInfoRequest>,
         len: u32,
-    ) -> Result<HostPanicPayloadChunk> {
+    ) -> Result<HostPanicPayloadData> {
         self.rpc(MgsRequest::GetHostPanicPayload { request, len })
             .await
             .and_then(expect_host_panic_payload)
@@ -1472,9 +1531,73 @@ impl SingleSp {
 
     pub async fn get_host_bootfail_payload(
         &self,
+    ) -> Result<HostBootfailPayloadData> {
+        // Get the first segment, if any
+        //
+        // TODO: minmax buffer sizing? We have a normal sized UDP frame (15xx
+        // bytes?), with some overhead, 1k might be reasonable here, but
+        // there's probably not that much speed benefit to halving the
+        // number of frames sent as this isn't done in a "hot" loop.
+        let res = self.get_host_bootfail_payload_raw(None, 512).await?;
+
+        let mut total = res.contents;
+        let ttl_bytes = res.total_len;
+        let seqno = res.seqno;
+        let reason = res.reason;
+
+        // Truncate the payload (which potentially contains *more* bytes
+        // than were actually used!) if the total message bytes fit into
+        // a single frame. This is a no-op if ttl_bytes > total.len().
+        total.truncate(ttl_bytes);
+
+        // Request the entire contents, one chunk at a time
+        while total.len() < ttl_bytes {
+            // Get the NEXT chunk of data, after the part(s) that we already
+            // have received.
+            let res = self
+                .get_host_bootfail_payload_raw(
+                    Some(HostInfoRequest { offset: total.len() as u32, seqno }),
+                    512,
+                )
+                .await?;
+
+            // TODO: If either of these change, it would mean that the host
+            // failed RIGHT as we were asking about it.
+            //
+            // The SP can only store one host bootfail at a time, so there's
+            // no way to retrieve an older bootfail after it has been
+            // overwritten. The caller should retry until this succeeds.
+            //
+            // Usually, the sequence number should change, but if for some
+            // reason the SP panicked as well (and reset its sequence number),
+            // and then the host panicked again, the total length could
+            // theoretically change as well. Same for reason.
+            let changed = (seqno != res.seqno)
+                || (ttl_bytes != res.total_len)
+                || (reason != res.reason);
+            if changed {
+                return Err(CommunicationError::HostDataSequenceChanged);
+            }
+            total.extend_from_slice(&res.contents);
+        }
+
+        // Again, truncate `total`, to handle any extra bytes in the last
+        // received frame.
+        total.truncate(ttl_bytes);
+
+        Ok(HostBootfailPayloadData {
+            total_len: ttl_bytes,
+            seqno,
+            reason,
+            contents: total,
+        })
+    }
+
+    async fn get_host_bootfail_payload_raw(
+        &self,
         request: Option<HostInfoRequest>,
         len: u32,
-    ) -> Result<HostBootfailPayloadChunk> {
+    ) -> Result<HostBootfailPayloadData> {
         self.rpc(MgsRequest::GetHostBootfailPayload { request, len })
             .await
             .and_then(expect_host_bootfail_payload)
@@ -1482,16 +1605,17 @@ impl SingleSp {
 }
 
 /// Helper type that contains the owned host panic data
-pub struct HostPanicPayloadChunk {
+pub struct HostPanicPayloadData {
     pub total_len: usize,
     pub seqno: u32,
     pub contents: Vec<u8>,
 }
 
 /// Helper type that contains the owned host bootfail data
-pub struct HostBootfailPayloadChunk {
+pub struct HostBootfailPayloadData {
     pub total_len: usize,
     pub seqno: u32,
+    pub reason: u8,
     pub contents: Vec<u8>,
 }
 

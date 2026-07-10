@@ -21,7 +21,6 @@ use gateway_messages::ApobComponentActionResponse;
 use gateway_messages::ComponentAction;
 use gateway_messages::ComponentActionResponse;
 use gateway_messages::EcdsaSha2Nistp256Challenge;
-use gateway_messages::HostInfoRequest;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::LedComponentAction;
 use gateway_messages::MonorailComponentAction;
@@ -50,6 +49,7 @@ use gateway_sp_comms::ereport;
 use gateway_sp_comms::shared_socket;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use ipcc_data::PanicData;
 use serde_json::json;
 use slog::Drain;
 use slog::Level;
@@ -60,6 +60,7 @@ use slog::o;
 use slog::warn;
 use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -2530,139 +2531,64 @@ async fn run_command(
             Ok(Output::Lines(lines))
         }
         Command::GetHostPanic => {
-            // Get the first segment, if any
-            //
-            // TODO: buffer sizing? We have a normal sized UDP frame (15xx
-            // bytes?), with some overhead, 1k might be reasonable here, but
-            // there's probably not that much speed benefit to halving the
-            // number of frames sent as this isn't done in a "hot" loop.
-            let res = sp.get_host_panic_payload(None, 512).await?;
+            let panic_payload = sp.get_host_panic_payload().await?;
 
-            let mut total = res.contents;
-            let ttl_bytes = res.total_len;
-            let seqno = res.seqno;
-
-            // Truncate the payload (which potentially contains *more* bytes
-            // than were actually used!) if the total message bytes fit into
-            // a single frame. This is a no-op if ttl_bytes > total.len().
-            total.truncate(ttl_bytes);
-
-            // Request the entire contents, one chunk at a time
-            while total.len() < ttl_bytes {
-                // Get the NEXT chunk of data, after the part(s) that we already
-                // have received.
-                let res = sp
-                    .get_host_panic_payload(
-                        Some(HostInfoRequest {
-                            offset: total.len() as u32,
-                            seqno,
-                        }),
-                        512,
-                    )
-                    .await?;
-
-                // TODO: If either of these change, it would mean that the host
-                // panicked RIGHT as we were asking about it. The simpler route
-                // is to just panic, if we wanted to be really fancy we could
-                // put this whole match arm in an outer loop and gracefully
-                // retry. If you are taking this impl for real control plane
-                // things, consider doing that, maybe with some upper bound of
-                // retries!
-                //
-                // The SP can only store one host panic at a time, so there's
-                // no way to retrieve an older panic after it has been
-                // overwritten.
-                assert_eq!(seqno, res.seqno);
-                assert_eq!(ttl_bytes, res.total_len);
-                total.extend_from_slice(&res.contents);
-            }
-
-            // Again, truncate `total`, to handle any extra bytes in the last
-            // received frame.
-            total.truncate(ttl_bytes);
-
+            // TODO: If parsing `PanicData` fails, we may still want to dump the
+            // raw output, instead of just the reason the data failed to parse.
+            let panic_msg = PanicData::from_bytes(panic_payload.contents)?;
             let mut out = vec![];
-            if let Ok(text) = std::str::from_utf8(&total) {
-                out.push("Panic Text:".to_string());
-                // TODO: Is this necessary? Just push as one to_string?
-                out.extend(text.lines().map(str::to_string));
-                Ok(Output::Lines(out))
-            } else {
-                out.push(
-                    "Panic Text was not a valid UTF-8 string.".to_string(),
-                );
-                out.push("Panic Text bytes (hex):".to_string());
-                out.push(format!("{total:02X?}"));
-                Ok(Output::Lines(out))
-            }
+            out.push("Got Panic Data:".to_string());
+            out.push(format!("  total bytes:     {}", panic_payload.total_len));
+            out.push(format!("  sequence number: {}", panic_payload.seqno));
+            out.push("  contents:".to_string());
+            out.push(String::new());
+            out.extend(format!("{panic_msg:#?}").lines().map(str::to_string));
+            Ok(Output::Lines(out))
         }
         Command::GetBootFail => {
-            // Get the first segment, if any
-            //
-            // TODO: buffer sizing? We have a normal sized UDP frame (15xx
-            // bytes?), with some overhead, 1k might be reasonable here, but
-            // there's probably not that much speed benefit to halving the
-            // number of frames sent as this isn't done in a "hot" loop.
-            let res = sp.get_host_bootfail_payload(None, 512).await?;
-
-            let mut total = res.contents;
-            let ttl_bytes = res.total_len;
-            let seqno = res.seqno;
-
-            // Truncate the payload (which potentially contains *more* bytes
-            // than were actually used!) if the total message bytes fit into
-            // a single frame. This is a no-op if ttl_bytes > total.len().
-            total.truncate(ttl_bytes);
-
-            // Request the entire contents, one chunk at a time
-            while total.len() < ttl_bytes {
-                // Get the NEXT chunk of data, after the part(s) that we already
-                // have received.
-                let res = sp
-                    .get_host_bootfail_payload(
-                        Some(HostInfoRequest {
-                            offset: total.len() as u32,
-                            seqno,
-                        }),
-                        512,
-                    )
-                    .await?;
-
-                // TODO: If either of these change, it would mean that the host
-                // failed RIGHT as we were asking about it. The simpler route
-                // is to just panic, if we wanted to be really fancy we could
-                // put this whole match arm in an outer loop and gracefully
-                // retry. If you are taking this impl for real control plane
-                // things, consider doing that, maybe with some upper bound of
-                // retries!
-                //
-                // The SP can only store one bootfail at a time, so there's
-                // no way to retrieve an older panic after it has been
-                // overwritten.
-                assert_eq!(seqno, res.seqno);
-                assert_eq!(ttl_bytes, res.total_len);
-                total.extend_from_slice(&res.contents);
-            }
-
-            // Again, truncate `total`, to handle any extra bytes in the last
-            // received frame.
-            total.truncate(ttl_bytes);
+            let bf_payload = sp.get_host_bootfail_payload().await?;
+            // Reason meaning, according to
+            // https://rfd.shared.oxide.computer/rfd/0316
+            let reason = match bf_payload.reason {
+                1 => "(0x01): General failure".to_string(),
+                2 => "(0x02): Could not locate a phase 2 image".to_string(),
+                3 => "(0x03): Phase 2 protocol header problem".to_string(),
+                4 => "(0x04): Integrity failure".to_string(),
+                5 => "(0x05): Ramdisk problem".to_string(),
+                other => format!("(0x{other:02X}): Unknown/Invalid Reason"),
+            };
 
             let mut out = vec![];
-            if let Ok(text) = std::str::from_utf8(&total) {
-                out.push("Boot Failure Text:".to_string());
-                // TODO: Is this necessary? Just push as one to_string?
-                out.extend(text.lines().map(str::to_string));
-                Ok(Output::Lines(out))
-            } else {
-                out.push(
-                    "Boot Failure Text was not a valid UTF-8 string."
-                        .to_string(),
-                );
-                out.push("Boot Failure Text bytes (hex):".to_string());
-                out.push(format!("{total:02X?}"));
-                Ok(Output::Lines(out))
+            out.push("Got bootfail Data:".to_string());
+            out.push(format!("  total bytes:     {}", bf_payload.total_len));
+            out.push(format!("  sequence number: {}", bf_payload.seqno));
+            out.push(format!("  reason:          {reason}"));
+            out.push("  contents:".to_string());
+            out.push(String::new());
+
+            // Hand-rolled hexdump, as there is currently no IPCC HSSBootFail
+            // parser in ipcc-data
+            for (idx, chunk) in bf_payload.contents.chunks(16).enumerate() {
+                let mut line = String::new();
+                write!(&mut line, "0x{:04X} | ", idx * 16)?;
+                for b in chunk {
+                    write!(&mut line, "{b:02X} ")?;
+                }
+                for _ in 0..(16 - chunk.len()) {
+                    line.push_str("   ");
+                }
+                write!(&mut line, "| ")?;
+                for b in chunk {
+                    if b.is_ascii() && !b.is_ascii_control() {
+                        write!(&mut line, "{}", *b as char)?;
+                    } else {
+                        write!(&mut line, " ")?;
+                    }
+                }
+                out.push(line);
             }
+
+            Ok(Output::Lines(out))
         }
     }
 }
