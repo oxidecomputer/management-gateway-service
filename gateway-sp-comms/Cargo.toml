@@ -36,7 +36,7 @@ zerocopy.workspace = true
 zip.workspace = true
 
 gateway-messages = { workspace = true, features = ["std"] }
-gateway-ereport-messages = { workspace = true, features = ["debug-impls", "serde"] }
+gateway-ereport-messages = { workspace = true, features = ["debug-impls", "serde", "hubpack"] }
 
 # This is required for the build.rs script to check for an appropriate compiler
 # version so that `usdt` can be built on stable rust.

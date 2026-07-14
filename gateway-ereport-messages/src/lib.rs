@@ -95,50 +95,20 @@ impl From<Ena> for u64 {
 )]
 #[repr(transparent)]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "u128", into = "u128"))]
 pub struct RestartId(pub le::U128);
 
-// Unfortunately, `zerocopy::le::U128` doesn't implement serde traits. Use a
-// small decoy type to paper over the differences, without pulling in the
-// `serde_with` or `serde_as` crates.
-mod serde_jig {
-    use hubpack::SerializedSize;
-    use serde::{Deserialize, Serialize};
-
-    #[derive(Serialize, Deserialize, SerializedSize)]
-    pub(crate) struct RestartId(pub(crate) u128);
-
-    impl Serialize for super::RestartId {
-        #[inline]
-        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
-        where
-            S: serde::Serializer,
-        {
-            let jig = RestartId(self.into_u128());
-            jig.serialize(serializer)
-        }
-    }
-
-    impl<'d> Deserialize<'d> for super::RestartId {
-        #[inline]
-        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
-        where
-            D: serde::Deserializer<'d>,
-        {
-            let jig = RestartId::deserialize(deserializer)?;
-            Ok(super::RestartId::new(jig.0))
-        }
-    }
-
-    impl SerializedSize for super::RestartId {
-        const MAX_SIZE: usize = const {
-            assert!(
-                core::mem::size_of::<super::RestartId>()
-                    == core::mem::size_of::<RestartId>(),
-                "RestartId changed!",
-            );
-            <RestartId as SerializedSize>::MAX_SIZE
-        };
-    }
+// Unfortunately, `zerocopy::le::U128` doesn't implement hubpack traits.
+#[cfg(feature = "hubpack")]
+impl hubpack::SerializedSize for RestartId {
+    const MAX_SIZE: usize = const {
+        assert!(
+            core::mem::size_of::<RestartId>() == core::mem::size_of::<u128>(),
+            "RestartId changed!",
+        );
+        <u128 as hubpack::SerializedSize>::MAX_SIZE
+    };
 }
 
 impl RestartId {
