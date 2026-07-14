@@ -2541,9 +2541,13 @@ async fn run_command(
             out.push(format!("  total bytes:     {}", panic_payload.total_len));
             out.push(format!("  sequence number: {}", panic_payload.seqno));
             out.push(format!("  boot slot:       {:?}", panic_payload.slot));
+            out.push(format!(
+                "  restart id:      {:016X}",
+                panic_payload.restart_id.0,
+            ));
             out.push("  contents:".to_string());
             out.push(String::new());
-            out.extend(format!("{panic_msg:#?}").lines().map(str::to_string));
+            out.extend(format!("{panic_msg:#X?}").lines().map(str::to_string));
             Ok(Output::Lines(out))
         }
         Command::GetBootFail => {
@@ -2565,6 +2569,10 @@ async fn run_command(
             out.push(format!("  sequence number: {}", bf_payload.seqno));
             out.push(format!("  reason:          {reason}"));
             out.push(format!("  boot slot:       {:?}", bf_payload.slot));
+            out.push(format!(
+                "  restart id:      {:016X}",
+                bf_payload.restart_id.0,
+            ));
             out.push("  contents:".to_string());
             out.push(String::new());
 
