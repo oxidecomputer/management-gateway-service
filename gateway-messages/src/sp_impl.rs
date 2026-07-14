@@ -1099,6 +1099,7 @@ fn handle_mgs_request<H: SpHandler>(
                     total_len: data.total_len,
                     seqno: data.seqno,
                     slot: data.slot,
+                    restart_id: data.restart_id,
                 })
             }),
         MgsRequest::GetHostBootfailPayload { request, len } => handler
@@ -1111,6 +1112,7 @@ fn handle_mgs_request<H: SpHandler>(
                     seqno: data.seqno,
                     reason: data.reason,
                     slot: data.slot,
+                    restart_id: data.restart_id,
                 })
             }),
     };

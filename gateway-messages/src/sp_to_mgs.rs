@@ -7,6 +7,7 @@
 use crate::BadRequestReason;
 use crate::PowerRailName;
 use crate::PowerState;
+use crate::RestartId;
 use crate::RotResponse;
 use crate::RotSlotId;
 use crate::SensorResponse;
@@ -87,6 +88,8 @@ pub struct HostPanicPayload {
     /// selected slot, but instead the slot that was used to boot the host when
     /// the panic occurred.
     pub slot: Option<u16>,
+    /// The Boot ID of this host panic payload
+    pub restart_id: RestartId,
 }
 
 /// Host Boot Failure Payload. Metadata here, payload in trailing data
@@ -105,6 +108,8 @@ pub struct HostBootfailPayload {
     /// selected slot, but instead the slot that was used to boot the host when
     /// the bootfail occurred.
     pub slot: Option<u16>,
+    /// The Boot ID of this host panic payload
+    pub restart_id: RestartId,
 }
 
 #[derive(
@@ -1981,6 +1986,7 @@ pub enum HostPanicError {
     InvalidOffset,
     InvalidSeqNo,
     ServerRestarted,
+    MissingRestartId,
 }
 
 impl fmt::Display for HostPanicError {
@@ -1992,6 +1998,9 @@ impl fmt::Display for HostPanicError {
                 "Incorrect Host Panic sequence number (new panic occurred)"
             }
             Self::ServerRestarted => "Failed to retrieve Host Panic",
+            Self::MissingRestartId => {
+                "SP was unable to restart due to missing restart ID"
+            }
         };
         write!(f, "{s}")
     }
@@ -2008,6 +2017,7 @@ pub enum HostBootfailError {
     InvalidOffset,
     InvalidSeqNo,
     ServerRestarted,
+    MissingRestartId,
 }
 
 impl fmt::Display for HostBootfailError {
@@ -2019,6 +2029,9 @@ impl fmt::Display for HostBootfailError {
                 "Incorrect Boot Failure sequence number (new panic occurred)"
             }
             Self::ServerRestarted => "Failed to retrieve Boot Failure",
+            Self::MissingRestartId => {
+                "SP was unable to restart due to missing restart ID"
+            }
         };
         write!(f, "{s}")
     }
@@ -2030,6 +2043,7 @@ pub struct HostPanicPayloadData {
     pub seqno: u32,
     pub total_len: u32,
     pub slot: Option<u16>,
+    pub restart_id: RestartId,
 }
 
 /// Helper host bootfail type used in public API, but not on the wire
@@ -2039,4 +2053,5 @@ pub struct HostBootfailPayloadData {
     pub total_len: u32,
     pub reason: u8,
     pub slot: Option<u16>,
+    pub restart_id: RestartId,
 }

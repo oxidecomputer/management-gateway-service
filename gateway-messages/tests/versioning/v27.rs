@@ -17,7 +17,7 @@
 
 use gateway_messages::{
     HostBootfailError, HostBootfailPayload, HostInfoRequest, HostPanicError,
-    HostPanicPayload, MgsRequest, SpError, SpResponse,
+    HostPanicPayload, MgsRequest, RestartId, SpError, SpResponse,
 };
 
 use super::assert_serialized;
@@ -104,6 +104,9 @@ fn get_host_panic_payload_response() {
         total_len: 0x01020304,
         seqno: 0xF0E0D0C0,
         slot: None,
+        restart_id: RestartId::new(
+            0x1324_5768_9A0B_CEDF_FEDC_BA09_8765_4321u128,
+        ),
     });
     #[rustfmt::skip]
     let expected = &[
@@ -115,6 +118,11 @@ fn get_host_panic_payload_response() {
         0xC0, 0xD0, 0xE0, 0xF0,
         // None
         0x00,
+        // 0x1324_5768_9A0B_CEDF_FEDC_BA09_8765_4321u128
+        0x21, 0x43, 0x65, 0x87,
+        0x09, 0xBA, 0xDC, 0xFE,
+        0xDF, 0xCE, 0x0B, 0x9A,
+        0x68, 0x57, 0x24, 0x13,
     ];
     assert_serialized(expected, &response);
 }
@@ -126,6 +134,9 @@ fn get_host_bootfail_payload_response() {
         seqno: 0xF0E0D0C0,
         reason: 0xAB,
         slot: Some(0x4321),
+        restart_id: RestartId::new(
+            0x1324_5768_9A0B_CEDF_FEDC_BA09_8765_4321u128,
+        ),
     });
     #[rustfmt::skip]
     let expected = &[
@@ -139,6 +150,11 @@ fn get_host_bootfail_payload_response() {
         0xAB,
         // Some 0x4321
         0x01, 0x21, 0x43,
+        // 0x1324_5768_9A0B_CEDF_FEDC_BA09_8765_4321u128
+        0x21, 0x43, 0x65, 0x87,
+        0x09, 0xBA, 0xDC, 0xFE,
+        0xDF, 0xCE, 0x0B, 0x9A,
+        0x68, 0x57, 0x24, 0x13,
     ];
     assert_serialized(expected, &response);
 }
@@ -150,6 +166,7 @@ fn get_host_panic_payload_error() {
         (HostPanicError::InvalidOffset, 1),
         (HostPanicError::InvalidSeqNo, 2),
         (HostPanicError::ServerRestarted, 3),
+        (HostPanicError::MissingRestartId, 4),
     ];
     for (e, v) in inner_errors {
         let error = SpError::HostPanic(e);
@@ -165,6 +182,7 @@ fn get_host_bootfail_payload_error() {
         (HostBootfailError::InvalidOffset, 1),
         (HostBootfailError::InvalidSeqNo, 2),
         (HostBootfailError::ServerRestarted, 3),
+        (HostBootfailError::MissingRestartId, 4),
     ];
     for (e, v) in inner_errors {
         let error = SpError::HostBootfail(e);

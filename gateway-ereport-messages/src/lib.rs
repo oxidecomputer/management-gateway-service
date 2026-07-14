@@ -97,6 +97,50 @@ impl From<Ena> for u64 {
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
 pub struct RestartId(pub le::U128);
 
+// Unfortunately, `zerocopy::le::U128` doesn't implement serde traits. Use a
+// small decoy type to paper over the differences, without pulling in the
+// `serde_with` or `serde_as` crates.
+mod serde_jig {
+    use hubpack::SerializedSize;
+    use serde::{Deserialize, Serialize};
+
+    #[derive(Serialize, Deserialize, SerializedSize)]
+    pub(crate) struct RestartId(pub(crate) u128);
+
+    impl Serialize for super::RestartId {
+        #[inline]
+        fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+        where
+            S: serde::Serializer,
+        {
+            let jig = RestartId(self.into_u128());
+            jig.serialize(serializer)
+        }
+    }
+
+    impl<'d> Deserialize<'d> for super::RestartId {
+        #[inline]
+        fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+        where
+            D: serde::Deserializer<'d>,
+        {
+            let jig = RestartId::deserialize(deserializer)?;
+            Ok(super::RestartId::new(jig.0))
+        }
+    }
+
+    impl SerializedSize for super::RestartId {
+        const MAX_SIZE: usize = const {
+            assert!(
+                core::mem::size_of::<super::RestartId>()
+                    == core::mem::size_of::<RestartId>(),
+                "RestartId changed!",
+            );
+            <RestartId as SerializedSize>::MAX_SIZE
+        };
+    }
+}
+
 impl RestartId {
     pub const ZERO: Self = Self(le::U128::ZERO);
 

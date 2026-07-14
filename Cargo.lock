@@ -1080,6 +1080,7 @@ dependencies = [
 name = "gateway-ereport-messages"
 version = "0.1.0"
 dependencies = [
+ "hubpack",
  "serde",
  "zerocopy 0.8.27",
 ]
@@ -1089,6 +1090,7 @@ name = "gateway-messages"
 version = "0.1.0"
 dependencies = [
  "bitflags 2.9.4",
+ "gateway-ereport-messages",
  "hubpack",
  "serde",
  "serde-big-array",

@@ -4,6 +4,7 @@
 
 // Copyright 2022 Oxide Computer Company
 
+use gateway_messages::RestartId;
 use gateway_messages::SpError;
 use gateway_messages::tlv;
 use slog_error_chain::SlogInlineError;
@@ -69,8 +70,30 @@ pub enum CommunicationError {
         "Trailing data decompression failed: expected {expected}, got {got}"
     )]
     BadDecompressionSize { expected: usize, got: usize },
-    #[error("Host data sequence number changed while obtaining")]
-    HostDataSequenceChanged,
+    #[error("Host Panic information changed while obtaining")]
+    HostPanicDataChanged {
+        seqno_before: u32,
+        seqno_after: u32,
+        total_len_before: usize,
+        total_len_after: usize,
+        slot_before: Option<u16>,
+        slot_after: Option<u16>,
+        restart_id_before: RestartId,
+        restart_id_after: RestartId,
+    },
+    #[error("Host Bootfail information changed while obtaining")]
+    HostBootfailDataChanged {
+        seqno_before: u32,
+        seqno_after: u32,
+        total_len_before: usize,
+        total_len_after: usize,
+        slot_before: Option<u16>,
+        slot_after: Option<u16>,
+        reason_before: u8,
+        reason_after: u8,
+        restart_id_before: RestartId,
+        restart_id_after: RestartId,
+    },
 }
 
 impl From<SingleSpHandleError> for CommunicationError {

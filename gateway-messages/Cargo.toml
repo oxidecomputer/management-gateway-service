@@ -17,6 +17,8 @@ strum_macros.workspace = true
 uuid.workspace = true
 zerocopy = { workspace = true, features = ["derive"] }
 
+gateway-ereport-messages = { path = "../gateway-ereport-messages" }
+
 [dev-dependencies]
 serde_json.workspace = true
 
