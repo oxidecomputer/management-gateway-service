@@ -7,6 +7,7 @@
 use crate::BadRequestReason;
 use crate::PowerRailName;
 use crate::PowerState;
+use crate::RestartId;
 use crate::RotResponse;
 use crate::RotSlotId;
 use crate::SensorResponse;
@@ -71,6 +72,44 @@ pub enum SpRequest {
     /// Request a single packet-worth of a host phase 2 image (identified by
     /// `hash`) starting at `offset`.
     HostPhase2Data { hash: [u8; 32], offset: u64 },
+}
+
+/// Host Panic Payload. Metadata here, payload in trailing data
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct HostPanicPayload {
+    /// The length of the total host panic data, in bytes
+    pub total_len: u32,
+    /// The specific identifier of this host panic payload data
+    pub seqno: u32,
+    /// the slot used to boot this host. When "None", the SP was unable to
+    /// determine which slot was used. This is not necessarily the CURRENTLY
+    /// selected slot, but instead the slot that was used to boot the host when
+    /// the panic occurred.
+    pub slot: Option<u16>,
+    /// The Boot ID of this host panic payload
+    pub restart_id: RestartId,
+}
+
+/// Host Boot Failure Payload. Metadata here, payload in trailing data
+#[derive(
+    Debug, Clone, Copy, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub struct HostBootfailPayload {
+    /// The length of the total Host Bootfail data, in bytes
+    pub total_len: u32,
+    /// The specific identifier of this host bootfail payload data
+    pub seqno: u32,
+    /// The "reason" code presented on boot failure
+    pub reason: u8,
+    /// the slot used to boot this host. When "None", the SP was unable to
+    /// determine which slot was used. This is not necessarily the CURRENTLY
+    /// selected slot, but instead the slot that was used to boot the host when
+    /// the bootfail occurred.
+    pub slot: Option<u16>,
+    /// The Boot ID of this host panic payload
+    pub restart_id: RestartId,
 }
 
 #[derive(
@@ -190,6 +229,12 @@ pub enum SpResponse {
 
     /// PMBus status of a given rail
     PmbusStatus(PmbusStatusResponse),
+
+    /// Host Panic data, received over IPCC from the host
+    HostPanicPayload(HostPanicPayload),
+
+    /// Host Bootfail data, received over IPCC from the host
+    HostBootfailPayload(HostBootfailPayload),
 }
 
 #[derive(
@@ -1258,6 +1303,8 @@ pub enum SpError {
     Dump(DumpError),
     Hf(HfError),
     PmbusStatus(PmbusStatusError),
+    HostPanic(HostPanicError),
+    HostBootfail(HostBootfailError),
 }
 
 impl fmt::Display for SpError {
@@ -1383,6 +1430,8 @@ impl fmt::Display for SpError {
             Self::Dump(e) => write!(f, "dump: {}", e),
             Self::Hf(e) => write!(f, "hf: {}", e),
             Self::PmbusStatus(e) => write!(f, "PMBus status: {}", e),
+            Self::HostPanic(e) => write!(f, "hostpanic: {}", e),
+            Self::HostBootfail(e) => write!(f, "hostbootfail: {}", e),
         }
     }
 }
@@ -1924,4 +1973,85 @@ impl fmt::Display for HfError {
         };
         write!(f, "{s}")
     }
+}
+
+/// Errors encountered while obtaining Host Panic messages
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum HostPanicError {
+    NoHostInfo,
+    InvalidOffset,
+    InvalidSeqNo,
+    ServerRestarted,
+    MissingRestartId,
+}
+
+impl fmt::Display for HostPanicError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::NoHostInfo => "No Host Panic Available",
+            Self::InvalidOffset => "Invalid Host Panic data offset request",
+            Self::InvalidSeqNo => {
+                "Incorrect Host Panic sequence number (new panic occurred)"
+            }
+            Self::ServerRestarted => "Failed to retrieve Host Panic",
+            Self::MissingRestartId => {
+                "SP was unable to restart due to missing restart ID"
+            }
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Errors encountered while obtaining Host Boot Failure messages
+///
+/// This value is wrapped by [`SpError`]
+#[derive(
+    Debug, Clone, Copy, Eq, PartialEq, SerializedSize, Serialize, Deserialize,
+)]
+pub enum HostBootfailError {
+    NoHostInfo,
+    InvalidOffset,
+    InvalidSeqNo,
+    ServerRestarted,
+    MissingRestartId,
+}
+
+impl fmt::Display for HostBootfailError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let s = match self {
+            Self::NoHostInfo => "No Boot Failure Available",
+            Self::InvalidOffset => "Invalid Boot Failure data offset request",
+            Self::InvalidSeqNo => {
+                "Incorrect Boot Failure sequence number (new panic occurred)"
+            }
+            Self::ServerRestarted => "Failed to retrieve Boot Failure",
+            Self::MissingRestartId => {
+                "SP was unable to restart due to missing restart ID"
+            }
+        };
+        write!(f, "{s}")
+    }
+}
+
+/// Helper host panic type used in public API, but not on the wire
+pub struct HostPanicPayloadData {
+    pub len: usize,
+    pub seqno: u32,
+    pub total_len: u32,
+    pub slot: Option<u16>,
+    pub restart_id: RestartId,
+}
+
+/// Helper host bootfail type used in public API, but not on the wire
+pub struct HostBootfailPayloadData {
+    pub len: usize,
+    pub seqno: u32,
+    pub total_len: u32,
+    pub reason: u8,
+    pub slot: Option<u16>,
+    pub restart_id: RestartId,
 }

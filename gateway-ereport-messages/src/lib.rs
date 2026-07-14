@@ -95,7 +95,21 @@ impl From<Ena> for u64 {
 )]
 #[repr(transparent)]
 #[cfg_attr(any(feature = "debug-impls", test), derive(Debug))]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
+#[cfg_attr(feature = "serde", serde(from = "u128", into = "u128"))]
 pub struct RestartId(pub le::U128);
+
+// Unfortunately, `zerocopy::le::U128` doesn't implement hubpack traits.
+#[cfg(feature = "hubpack")]
+impl hubpack::SerializedSize for RestartId {
+    const MAX_SIZE: usize = const {
+        assert!(
+            core::mem::size_of::<RestartId>() == core::mem::size_of::<u128>(),
+            "RestartId changed!",
+        );
+        <u128 as hubpack::SerializedSize>::MAX_SIZE
+    };
+}
 
 impl RestartId {
     pub const ZERO: Self = Self(le::U128::ZERO);

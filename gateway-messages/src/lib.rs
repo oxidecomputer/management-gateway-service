@@ -24,6 +24,9 @@ pub use hubpack::{SerializedSize, deserialize, serialize};
 pub use mgs_to_sp::*;
 pub use sp_to_mgs::*;
 
+// This is now used for more than just ereports
+pub use gateway_ereport_messages::RestartId;
+
 /// The SP should detach an attached serial console client if it has not heard
 /// from it in this long (based on the assumption that it has gone away without
 /// sending an explicit detach).
@@ -69,7 +72,7 @@ pub const HF_PAGE_SIZE: usize = 256;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 26;
+    pub const CURRENT: u32 = 27;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;

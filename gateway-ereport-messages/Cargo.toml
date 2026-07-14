@@ -5,6 +5,7 @@ edition = "2024"
 license = "MPL-2.0"
 
 [dependencies]
+hubpack = { workspace = true, optional = true }
 serde = { workspace = true, features = ["derive"], optional = true }
 zerocopy = { workspace = true, features = ["derive"] }
 

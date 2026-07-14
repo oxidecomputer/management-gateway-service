@@ -96,6 +96,8 @@ M.mgs_request.names = {
     [49] = "GetHostFlashHash",
     [50] = "ComponentGetPersistentSlot",
     [51] = "GetPmbusStatus",
+    [52] = "GetHostPanicPayload",
+    [53] = "GetHostBootfailPayload",
 }
 M.mgs_request.handlers = {
     [0] = "dissect_discover",
@@ -150,6 +152,8 @@ M.mgs_request.handlers = {
     [49] = "dissect_get_host_flash_hash",
     [50] = "dissect_component_get_persistent_slot",
     [51] = "dissect_get_pmbus_status",
+    [52] = "dissect_get_host_panic_payload",
+    [53] = "dissect_get_host_bootfail_payload",
 }
 M.mgs_request.field = ProtoField.uint8(
     "mgs.mgs_request",
@@ -216,6 +220,8 @@ M.sp_error.names = {
     [37] = "Dump",
     [38] = "Hf",
     [39] = "PmbusStatus",
+    [40] = "HostPanic",
+    [41] = "HostBootfail",
 }
 M.sp_error.handlers = {
     [0] = "dissect_busy",
@@ -258,6 +264,8 @@ M.sp_error.handlers = {
     [37] = "dissect_dump",
     [38] = "dissect_hf",
     [39] = "dissect_pmbus_status",
+    [40] = "dissect_host_panic",
+    [41] = "dissect_host_bootfail",
 }
 M.sp_error.field = ProtoField.uint8(
     "mgs.sp_error",
@@ -338,6 +346,8 @@ M.sp_response.names = {
     [51] = "HostFlashHash",
     [52] = "ComponentPersistentSlot",
     [53] = "PmbusStatus",
+    [54] = "HostPanicPayload",
+    [55] = "HostBootfailPayload",
 }
 M.sp_response.handlers = {
     [0] = "dissect_discover",
@@ -394,6 +404,8 @@ M.sp_response.handlers = {
     [51] = "dissect_host_flash_hash",
     [52] = "dissect_component_persistent_slot",
     [53] = "dissect_pmbus_status",
+    [54] = "dissect_host_panic_payload",
+    [55] = "dissect_host_bootfail_payload",
 }
 M.sp_response.field = ProtoField.uint8(
     "mgs.sp_response",

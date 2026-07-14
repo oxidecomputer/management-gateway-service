@@ -49,6 +49,7 @@ use gateway_sp_comms::ereport;
 use gateway_sp_comms::shared_socket;
 use indicatif::ProgressBar;
 use indicatif::ProgressStyle;
+use ipcc_data::PanicData;
 use serde_json::json;
 use slog::Drain;
 use slog::Level;
@@ -59,6 +60,7 @@ use slog::o;
 use slog::warn;
 use slog_async::AsyncGuard;
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::fs;
 use std::fs::File;
 use std::fs::OpenOptions;
@@ -542,6 +544,10 @@ enum Command {
         #[clap(value_parser = parse_power_rail_name)]
         rail: PowerRailName,
     },
+    /// Get the Host Panic Payload
+    GetHostPanic,
+    /// Get the Host Boot Failure message
+    GetBootFail,
 }
 
 #[derive(Subcommand, Debug, Clone)]
@@ -2523,6 +2529,76 @@ async fn run_command(
             }
 
             Ok(Output::Lines(lines))
+        }
+        Command::GetHostPanic => {
+            let panic_payload = sp.get_host_panic_payload().await?;
+
+            // TODO: If parsing `PanicData` fails, we may still want to dump the
+            // raw output, instead of just the reason the data failed to parse.
+            let panic_msg = PanicData::from_bytes(panic_payload.contents)?;
+            let mut out = vec![];
+            out.push("Got Panic Data:".to_string());
+            out.push(format!("  total bytes:     {}", panic_payload.total_len));
+            out.push(format!("  sequence number: {}", panic_payload.seqno));
+            out.push(format!("  boot slot:       {:?}", panic_payload.slot));
+            out.push(format!(
+                "  restart id:      {:016X}",
+                panic_payload.restart_id.0,
+            ));
+            out.push("  contents:".to_string());
+            out.push(String::new());
+            out.extend(format!("{panic_msg:#X?}").lines().map(str::to_string));
+            Ok(Output::Lines(out))
+        }
+        Command::GetBootFail => {
+            let bf_payload = sp.get_host_bootfail_payload().await?;
+            // Reason meaning, according to
+            // https://rfd.shared.oxide.computer/rfd/0316
+            let reason = match bf_payload.reason {
+                1 => "(0x01): General failure".to_string(),
+                2 => "(0x02): Could not locate a phase 2 image".to_string(),
+                3 => "(0x03): Phase 2 protocol header problem".to_string(),
+                4 => "(0x04): Integrity failure".to_string(),
+                5 => "(0x05): Ramdisk problem".to_string(),
+                other => format!("(0x{other:02X}): Unknown/Invalid Reason"),
+            };
+
+            let mut out = vec![];
+            out.push("Got bootfail Data:".to_string());
+            out.push(format!("  total bytes:     {}", bf_payload.total_len));
+            out.push(format!("  sequence number: {}", bf_payload.seqno));
+            out.push(format!("  reason:          {reason}"));
+            out.push(format!("  boot slot:       {:?}", bf_payload.slot));
+            out.push(format!(
+                "  restart id:      {:016X}",
+                bf_payload.restart_id.0,
+            ));
+            out.push("  contents:".to_string());
+            out.push(String::new());
+
+            // Hand-rolled hexdump, as there is currently no IPCC HSSBootFail
+            // parser in ipcc-data
+            for (idx, chunk) in bf_payload.contents.chunks(16).enumerate() {
+                let mut line = String::new();
+                write!(&mut line, "0x{:04X} | ", idx * 16)?;
+                for b in chunk {
+                    write!(&mut line, "{b:02X} ")?;
+                }
+                for _ in 0..(16 - chunk.len()) {
+                    line.push_str("   ");
+                }
+                write!(&mut line, "| ")?;
+                for b in chunk {
+                    if b.is_ascii() && !b.is_ascii_control() {
+                        write!(&mut line, "{}", *b as char)?;
+                    } else {
+                        write!(&mut line, " ")?;
+                    }
+                }
+                out.push(line);
+            }
+
+            Ok(Output::Lines(out))
         }
     }
 }

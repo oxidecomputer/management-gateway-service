@@ -19,6 +19,11 @@ use crate::DumpSegment;
 use crate::DumpTask;
 use crate::HF_PAGE_SIZE;
 use crate::Header;
+use crate::HostBootfailPayload;
+use crate::HostBootfailPayloadData;
+use crate::HostInfoRequest;
+use crate::HostPanicPayload;
+use crate::HostPanicPayloadData;
 use crate::IgnitionCommand;
 use crate::IgnitionState;
 use crate::Message;
@@ -430,6 +435,20 @@ pub trait SpHandler {
         &mut self,
         rail: &PowerRailName,
     ) -> Result<PmbusStatus, SpError>;
+
+    fn get_host_panic_payload(
+        &mut self,
+        request: Option<HostInfoRequest>,
+        len: u32,
+        trailing_tx_buf: &mut [u8],
+    ) -> Result<HostPanicPayloadData, SpError>;
+
+    fn get_host_bootfail_payload(
+        &mut self,
+        request: Option<HostInfoRequest>,
+        len: u32,
+        trailing_tx_buf: &mut [u8],
+    ) -> Result<HostBootfailPayloadData, SpError>;
 }
 
 /// Handle a single incoming message.
@@ -1071,6 +1090,31 @@ fn handle_mgs_request<H: SpHandler>(
                 })
             })
         }
+        MgsRequest::GetHostPanicPayload { request, len } => handler
+            .get_host_panic_payload(request, len, trailing_tx_buf)
+            .map(|data| {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(data.len));
+                SpResponse::HostPanicPayload(HostPanicPayload {
+                    total_len: data.total_len,
+                    seqno: data.seqno,
+                    slot: data.slot,
+                    restart_id: data.restart_id,
+                })
+            }),
+        MgsRequest::GetHostBootfailPayload { request, len } => handler
+            .get_host_bootfail_payload(request, len, trailing_tx_buf)
+            .map(|data| {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(data.len));
+                SpResponse::HostBootfailPayload(HostBootfailPayload {
+                    total_len: data.total_len,
+                    seqno: data.seqno,
+                    reason: data.reason,
+                    slot: data.slot,
+                    restart_id: data.restart_id,
+                })
+            }),
     };
 
     let response = match result {
@@ -1508,6 +1552,24 @@ mod tests {
             &mut self,
             _rail: &PowerRailName,
         ) -> Result<PmbusStatus, SpError> {
+            unimplemented!()
+        }
+
+        fn get_host_panic_payload(
+            &mut self,
+            _request: Option<HostInfoRequest>,
+            _len: u32,
+            _trailing_tx_buf: &mut [u8],
+        ) -> Result<HostPanicPayloadData, SpError> {
+            unimplemented!()
+        }
+
+        fn get_host_bootfail_payload(
+            &mut self,
+            _request: Option<HostInfoRequest>,
+            _len: u32,
+            _trailing_tx_buf: &mut [u8],
+        ) -> Result<HostBootfailPayloadData, SpError> {
             unimplemented!()
         }
     }

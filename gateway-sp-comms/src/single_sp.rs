@@ -32,6 +32,7 @@ use gateway_messages::DumpRequest;
 use gateway_messages::DumpResponse;
 use gateway_messages::HF_PAGE_SIZE;
 use gateway_messages::Header;
+use gateway_messages::HostInfoRequest;
 use gateway_messages::IgnitionCommand;
 use gateway_messages::IgnitionState;
 use gateway_messages::MIN_TRAILING_DATA_LEN;
@@ -44,6 +45,7 @@ use gateway_messages::PowerRailName;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
 use gateway_messages::ROT_PAGE_SIZE;
+use gateway_messages::RestartId;
 use gateway_messages::RotBootInfo;
 use gateway_messages::RotRequest;
 use gateway_messages::SensorReading;
@@ -116,6 +118,15 @@ const DISCOVERY_INTERVAL_IDLE: Duration = Duration::from_secs(60);
 // our current winner is the dynamic POST code buffer on Cosmo, which can return
 // up to 4096 POST codes.
 const TLV_RPC_TOTAL_ITEMS_DOS_LIMIT: u32 = 16384;
+
+// The size in bytes of each "chunk" of a Host Panic/Host Bootfail to request
+// in each iteration.
+//
+// TODO: minmax buffer sizing? We have a normal sized UDP frame (15xx
+// bytes?), with some overhead, 1k might be reasonable here, but
+// there's probably not that much speed benefit to halving the
+// number of frames sent as this isn't done in a "hot" loop.
+const HOST_INFO_PAYLOAD_SIZE: u32 = 512;
 
 type Result<T, E = CommunicationError> = std::result::Result<T, E>;
 
@@ -1458,6 +1469,191 @@ impl SingleSp {
             .await
             .and_then(expect_pmbus_status)
     }
+
+    pub async fn get_host_panic_payload(&self) -> Result<HostPanicPayloadData> {
+        // Get the first segment, if any
+        let res = self
+            .get_host_panic_payload_raw(None, HOST_INFO_PAYLOAD_SIZE)
+            .await?;
+
+        // Keep the first message fields to check against subsequent messages
+        let HostPanicPayloadData {
+            total_len,
+            seqno,
+            slot,
+            restart_id,
+            contents: mut total,
+        } = res;
+
+        // Truncate the payload (which potentially contains *more* bytes
+        // than were actually used!) if the total message bytes fit into
+        // a single frame. This is a no-op if ttl_bytes > total.len().
+        total.truncate(total_len);
+
+        // Request the entire contents, one chunk at a time
+        while total.len() < total_len {
+            // Get the NEXT chunk of data, after the part(s) that we already
+            // have received.
+            let res = self
+                .get_host_panic_payload_raw(
+                    Some(HostInfoRequest { offset: total.len() as u32, seqno }),
+                    HOST_INFO_PAYLOAD_SIZE,
+                )
+                .await?;
+
+            // If any of these change, it would mean that the host panicked
+            // RIGHT as we were asking about it.
+            //
+            // The SP can only store one host panic at a time, so there's
+            // no way to retrieve an older panic after it has been
+            // overwritten. The caller should retry until this succeeds.
+            let changed = (seqno != res.seqno)
+                || (total_len != res.total_len)
+                || (slot != res.slot)
+                || (restart_id != res.restart_id);
+            if changed {
+                return Err(CommunicationError::HostPanicDataChanged {
+                    seqno_before: seqno,
+                    seqno_after: res.seqno,
+                    total_len_before: total_len,
+                    total_len_after: res.total_len,
+                    slot_before: slot,
+                    slot_after: res.slot,
+                    restart_id_before: restart_id,
+                    restart_id_after: res.restart_id,
+                });
+            }
+            total.extend_from_slice(&res.contents);
+        }
+
+        // Again, truncate `total`, to handle any extra bytes in the last
+        // received frame.
+        total.truncate(total_len);
+
+        Ok(HostPanicPayloadData {
+            total_len,
+            seqno,
+            contents: total,
+            restart_id,
+            slot,
+        })
+    }
+
+    /// Raw RPC wrapper, only returns a fragment of the host panic payload data
+    async fn get_host_panic_payload_raw(
+        &self,
+        request: Option<HostInfoRequest>,
+        len: u32,
+    ) -> Result<HostPanicPayloadData> {
+        self.rpc(MgsRequest::GetHostPanicPayload { request, len })
+            .await
+            .and_then(expect_host_panic_payload)
+    }
+
+    pub async fn get_host_bootfail_payload(
+        &self,
+    ) -> Result<HostBootfailPayloadData> {
+        // Get the first segment, if any
+        let res = self
+            .get_host_bootfail_payload_raw(None, HOST_INFO_PAYLOAD_SIZE)
+            .await?;
+
+        // Keep the first message fields to check against subsequent messages
+        let HostBootfailPayloadData {
+            total_len,
+            seqno,
+            reason,
+            slot,
+            restart_id,
+            contents: mut total,
+        } = res;
+
+        // Truncate the payload (which potentially contains *more* bytes
+        // than were actually used!) if the total message bytes fit into
+        // a single frame. This is a no-op if ttl_bytes > total.len().
+        total.truncate(total_len);
+
+        // Request the entire contents, one chunk at a time
+        while total.len() < total_len {
+            // Get the NEXT chunk of data, after the part(s) that we already
+            // have received.
+            let res = self
+                .get_host_bootfail_payload_raw(
+                    Some(HostInfoRequest { offset: total.len() as u32, seqno }),
+                    HOST_INFO_PAYLOAD_SIZE,
+                )
+                .await?;
+
+            // If any of these change, it would mean that the host
+            // failed RIGHT as we were asking about it.
+            //
+            // The SP can only store one host bootfail at a time, so there's
+            // no way to retrieve an older bootfail after it has been
+            // overwritten. The caller should retry until this succeeds.
+            let changed = (seqno != res.seqno)
+                || (total_len != res.total_len)
+                || (reason != res.reason)
+                || (slot != res.slot)
+                || (restart_id != res.restart_id);
+            if changed {
+                return Err(CommunicationError::HostBootfailDataChanged {
+                    seqno_before: seqno,
+                    seqno_after: res.seqno,
+                    total_len_before: total_len,
+                    total_len_after: res.total_len,
+                    slot_before: slot,
+                    slot_after: res.slot,
+                    reason_before: reason,
+                    reason_after: res.reason,
+                    restart_id_before: restart_id,
+                    restart_id_after: res.restart_id,
+                });
+            }
+            total.extend_from_slice(&res.contents);
+        }
+
+        // Again, truncate `total`, to handle any extra bytes in the last
+        // received frame.
+        total.truncate(total_len);
+
+        Ok(HostBootfailPayloadData {
+            total_len,
+            seqno,
+            reason,
+            contents: total,
+            restart_id,
+            slot,
+        })
+    }
+
+    async fn get_host_bootfail_payload_raw(
+        &self,
+        request: Option<HostInfoRequest>,
+        len: u32,
+    ) -> Result<HostBootfailPayloadData> {
+        self.rpc(MgsRequest::GetHostBootfailPayload { request, len })
+            .await
+            .and_then(expect_host_bootfail_payload)
+    }
+}
+
+/// Helper type that contains the owned host panic data
+pub struct HostPanicPayloadData {
+    pub total_len: usize,
+    pub seqno: u32,
+    pub slot: Option<u16>,
+    pub restart_id: RestartId,
+    pub contents: Vec<u8>,
+}
+
+/// Helper type that contains the owned host bootfail data
+pub struct HostBootfailPayloadData {
+    pub total_len: usize,
+    pub seqno: u32,
+    pub reason: u8,
+    pub slot: Option<u16>,
+    pub restart_id: RestartId,
+    pub contents: Vec<u8>,
 }
 
 // Helper trait to call a "paginated" (i.e., split across multiple UDP packets)
