@@ -9,7 +9,7 @@
 #:	"=/out/faux-mgs.sha256.txt",
 #:	"=/out/faux-mgs.gz.sha256.txt",
 #:	"=/out/omicron-faux-mgs.tar.gz",
-#:	"=/out/omicron-faux-mgs.tar.gz.sha256.txt",
+#:	"=/out/omicron-faux-mgs.sha256.txt",
 #: ]
 #:
 #: [[publish]]
@@ -28,9 +28,9 @@
 #: name = "omicron-faux-mgs.tar.gz"
 #:
 #: [[publish]]
-#: from_output = "/out/omicron-faux-mgs.tar.gz.sha256.txt"
+#: from_output = "/out/omicron-faux-mgs.sha256.txt"
 #: series = "image"
-#: name = "omicron-faux-mgs.tar.gz.sha256.txt"
+#: name = "omicron-faux-mgs.sha256.txt"
 #:
 
 set -o errexit
@@ -57,4 +57,4 @@ gzip /out/faux-mgs
 digest -a sha256 /out/faux-mgs.gz > /out/faux-mgs.gz.sha256.txt
 
 mv target/out/omicron-faux-mgs.tar.gz /out/omicron-faux-mgs.tar.gz
-digest -a sha256 /out/omicron-faux-mgs.tar.gz > /out/omicron-faux-mgs.tar.gz.sha256.txt
+digest -a sha256 /out/omicron-faux-mgs.tar.gz > /out/omicron-faux-mgs.sha256.txt
