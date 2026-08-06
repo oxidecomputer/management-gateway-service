@@ -36,6 +36,7 @@ use crate::PmbusStatusResponse;
 use crate::PowerRailName;
 use crate::PowerState;
 use crate::PowerStateTransition;
+use crate::PowerStateWithReason;
 use crate::ROT_PAGE_SIZE;
 use crate::RotBootInfo;
 use crate::RotRequest;
@@ -209,6 +210,10 @@ pub trait SpHandler {
     ) -> Result<(), SpError>;
 
     fn power_state(&mut self) -> Result<PowerState, SpError>;
+
+    fn power_state_with_reason(
+        &mut self,
+    ) -> Result<PowerStateWithReason, SpError>;
 
     fn set_power_state(
         &mut self,
@@ -872,6 +877,9 @@ fn handle_mgs_request<H: SpHandler>(
         MgsRequest::GetPowerState => {
             handler.power_state().map(SpResponse::PowerState)
         }
+        MgsRequest::GetPowerStateWithReason => handler
+            .power_state_with_reason()
+            .map(SpResponse::PowerStateWithReason),
         MgsRequest::SetPowerState(power_state) => {
             handler.set_power_state(sender, power_state).map(SpResponse::from)
         }
@@ -1277,6 +1285,12 @@ mod tests {
         }
 
         fn power_state(&mut self) -> Result<PowerState, SpError> {
+            unimplemented!()
+        }
+
+        fn power_state_with_reason(
+            &mut self,
+        ) -> Result<PowerStateWithReason, SpError> {
             unimplemented!()
         }
 

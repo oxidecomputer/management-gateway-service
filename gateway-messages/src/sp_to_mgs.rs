@@ -7,6 +7,7 @@
 use crate::BadRequestReason;
 use crate::PowerRailName;
 use crate::PowerState;
+use crate::PowerStateWithReason;
 use crate::RestartId;
 use crate::RotResponse;
 use crate::RotSlotId;
@@ -235,6 +236,9 @@ pub enum SpResponse {
 
     /// Host Bootfail data, received over IPCC from the host
     HostBootfailPayload(HostBootfailPayload),
+
+    /// Response to a `GetPowerStateWithReason` request
+    PowerStateWithReason(PowerStateWithReason),
 }
 
 #[derive(
