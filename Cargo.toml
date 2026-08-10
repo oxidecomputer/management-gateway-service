@@ -18,9 +18,9 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
-tlvc = { git = "https://github.com/oxidecomputer/tlvc.git", branch = "main" }
+tlvc = { git = "https://github.com/oxidecomputer/tlvc", version = "0.4.1" }
 turin-post-decoder = { git = "https://github.com/oxidecomputer/turin-post-decoder", branch = "master" }
-hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", rev = "2b1ef9b38d75563ea800baa3b17327eec17b1b7a" }
+hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", version = "0.4.9" }
 slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain.git", branch = "main", features = ["derive"] }
 ipcc-data = { git = "https://github.com/oxidecomputer/ipcc-rs/", branch = "main" }
 
@@ -78,7 +78,7 @@ usdt = "0.5.0"
 uuid = { version = "1.18", default-features = false }
 version_check = "0.9.5"
 zerocopy = "0.8.27"
-zip = { version = "0.6.6", default-features = false, features = ["deflate", "bzip2"] }
+zip = { version = "8.6.0", default-features = false, features = ["deflate", "bzip2"] }
 
 gateway-messages.path = "gateway-messages"
 gateway-sp-comms.path = "gateway-sp-comms"

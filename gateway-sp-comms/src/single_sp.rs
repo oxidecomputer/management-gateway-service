@@ -238,7 +238,7 @@ impl TaskDump {
         out: W,
     ) -> Result<(), std::io::Error> {
         let mut z = zip::ZipWriter::new(out);
-        let opt = zip::write::FileOptions::default();
+        let opt = zip::write::SimpleFileOptions::default();
 
         // Store metadata about the dump format itself in `meta.json`
         //
