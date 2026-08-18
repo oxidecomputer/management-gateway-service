@@ -72,7 +72,7 @@ pub const HF_PAGE_SIZE: usize = 256;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 27;
+    pub const CURRENT: u32 = 28;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;
@@ -126,6 +126,56 @@ pub enum PowerState {
     A0,
     A1,
     A2,
+}
+
+/// The reason for the power state's most recent change.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub enum StateChangeReason {
+    /// No reason was provided.
+    ///
+    /// This indicates a legacy caller of `Sequencer.set_state`, rather than
+    /// `Sequencer.set_state_with_reason`. All Hubris-internal callers should
+    /// use `set_state_with_reason`, so this variant generally indicates that
+    /// the `Sequencer.set_state` IPC is being called via Hiffy.
+    Other,
+    /// The system has just received power, so the sequencer has booted the
+    /// host CPU.
+    InitialPowerOn,
+    /// A power state change was requested by the control plane.
+    ControlPlane,
+    /// The host CPU reset while in A0, so the system has powered off to clear
+    /// hidden core state.
+    CpuReset,
+    /// The host OS failed to boot, so the system has powered off.
+    HostBootFailure,
+    /// The host OS panicked.
+    HostPanic,
+    /// The host OS requested that the system power off without rebooting.
+    HostPowerOff,
+    /// The host OS requested that the system reboot.
+    HostReboot,
+    /// The system powered off because a component has overheated.
+    Overheat,
+    /// A0 MAPO fault from the sequencer
+    A0Mapo,
+    /// System Management Error
+    SmerrAssert,
+    /// NIC MAPO fault from the sequencer.
+    NicMapo,
+    /// The system powered off for reasons we can't explain
+    Unknown,
+}
+
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, SerializedSize,
+)]
+pub struct PowerStateWithReason {
+    pub state: PowerState,
+    pub reason: StateChangeReason,
+    /// The Hubris tick at which the device transitioned to this state.
+    pub since: u64,
 }
 
 #[derive(

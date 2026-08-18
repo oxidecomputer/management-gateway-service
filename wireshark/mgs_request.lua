@@ -199,4 +199,8 @@ M.dissect_dump = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse MgsRequest dump')
 end
 
+M.dissect_get_power_state_with_reason = function(buffer, pinfo, tree)
+    tree:add(buffer, 'TODO: parse MgsRequest get_power_state_with_reason')
+end
+
 return M

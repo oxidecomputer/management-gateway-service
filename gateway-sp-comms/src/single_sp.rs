@@ -44,6 +44,7 @@ use gateway_messages::PmbusStatusResponse;
 use gateway_messages::PowerRailName;
 use gateway_messages::PowerState;
 use gateway_messages::PowerStateTransition;
+use gateway_messages::PowerStateWithReason;
 use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RestartId;
 use gateway_messages::RotBootInfo;
@@ -841,6 +842,15 @@ impl SingleSp {
     /// Get the current power state.
     pub async fn power_state(&self) -> Result<PowerState> {
         self.rpc(MgsRequest::GetPowerState).await.and_then(expect_power_state)
+    }
+
+    /// Get the current power state and the reason for its most recent change
+    pub async fn power_state_with_reason(
+        &self,
+    ) -> Result<PowerStateWithReason> {
+        self.rpc(MgsRequest::GetPowerStateWithReason)
+            .await
+            .and_then(expect_power_state_with_reason)
     }
 
     /// Set the current power state.

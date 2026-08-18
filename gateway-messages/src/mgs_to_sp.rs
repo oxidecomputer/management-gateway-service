@@ -61,6 +61,7 @@ pub enum MgsRequest {
         component: SpComponent,
         id: UpdateId,
     },
+    /// See also: `GetPowerStateWithReason`
     GetPowerState,
     SetPowerState(PowerState),
     ResetPrepare,
@@ -266,6 +267,9 @@ pub enum MgsRequest {
         // The maximum size, in bytes, of the fragment to be returned
         len: u32,
     },
+
+    /// See also: `GetPowerState`
+    GetPowerStateWithReason,
 }
 
 /// Request information for Host Bootfail or Host Panic data
