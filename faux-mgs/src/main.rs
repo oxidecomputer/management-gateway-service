@@ -2030,7 +2030,7 @@ async fn run_command(
                     .context("failed to get power state")?;
                 info!(
                     log,
-                    "SP power state = {state:?}, reason = {reason:?}, since = {since:?}"
+                    "SP power state = {state:?}, reason = {reason:?}, since = {since:?}ms"
                 );
                 if json {
                     Ok(Output::Json(
