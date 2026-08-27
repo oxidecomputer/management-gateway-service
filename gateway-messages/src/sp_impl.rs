@@ -360,6 +360,18 @@ pub trait SpHandler {
         buf: &mut [u8],
     ) -> Result<usize, SpError>;
 
+    /// Serializes a component's VPD directly into `buf`.
+    ///
+    /// On success, `buf[..len]` must contain exactly one hubpack-encoded
+    /// [`crate::vpd::Vpd`], where `len` is the returned value. Implementors can
+    /// use [`crate::vpd::VpdRef`] to avoid constructing the owned value on the
+    /// stack.
+    fn component_get_vpd(
+        &mut self,
+        component: SpComponent,
+        buf: &mut [u8],
+    ) -> Result<usize, SpError>;
+
     fn reset_component_prepare(
         &mut self,
         component: SpComponent,
@@ -1123,6 +1135,13 @@ fn handle_mgs_request<H: SpHandler>(
                     restart_id: data.restart_id,
                 })
             }),
+        MgsRequest::ComponentGetVpd { component } => {
+            handler.component_get_vpd(component, trailing_tx_buf).map(|len| {
+                outgoing_trailing_data =
+                    Some(OutgoingTrailingData::ShiftFromTail(len));
+                SpResponse::ComponentVpd
+            })
+        }
     };
 
     let response = match result {
@@ -1159,12 +1178,14 @@ mod tests {
     use super::*;
     use crate::SerializedSize;
     use crate::SpPort;
+    use crate::VpdError;
+    use crate::vpd::{PmbusVpd, Vpd, VpdRef};
     use serde::Serialize;
 
     struct FakeHandler;
 
-    // Only implements `discover()`; all other methods are left as
-    // `unimplemented!()` since no tests are intended to call them.
+    // Only implements methods called by tests; all others are left as
+    // `unimplemented!()`.
     impl SpHandler for FakeHandler {
         type BulkIgnitionStateIter = std::iter::Empty<IgnitionState>;
         type BulkIgnitionLinkEventsIter = std::iter::Empty<LinkEvents>;
@@ -1467,6 +1488,16 @@ mod tests {
             unimplemented!()
         }
 
+        fn component_get_vpd(
+            &mut self,
+            _component: SpComponent,
+            buf: &mut [u8],
+        ) -> Result<usize, SpError> {
+            static VPD: PmbusVpd = PmbusVpd::EMPTY;
+            hubpack::serialize(buf, &VpdRef::Pmbus(&VPD))
+                .map_err(|_| SpError::Vpd(VpdError::BadBuffer))
+        }
+
         fn read_sensor(
             &mut self,
             _r: SensorRequest,
@@ -1602,6 +1633,13 @@ mod tests {
     where
         Msg: Serialize + SerializedSize,
     {
+        call_handle_message_with_data(msg).0
+    }
+
+    fn call_handle_message_with_data<Msg>(msg: Msg) -> (Message, Vec<u8>)
+    where
+        Msg: Serialize + SerializedSize,
+    {
         let mut req_buf = vec![0; Msg::MAX_SIZE];
         let m = crate::serialize(&mut req_buf, &msg).unwrap();
 
@@ -1611,8 +1649,39 @@ mod tests {
             handle_message(sender, &req_buf[..m], &mut FakeHandler, &mut buf)
                 .unwrap();
 
-        let (resp, _) = crate::deserialize::<Message>(&buf[..n]).unwrap();
-        resp
+        let (resp, trailing_data) =
+            crate::deserialize::<Message>(&buf[..n]).unwrap();
+        (resp, trailing_data.to_vec())
+    }
+
+    #[test]
+    fn component_vpd_is_serialized_as_trailing_data() {
+        let component = SpComponent::try_from("power").unwrap();
+        let req = Message {
+            header: Header {
+                version: version::CURRENT,
+                message_id: 0x01020304,
+            },
+            kind: MessageKind::MgsRequest(MgsRequest::ComponentGetVpd {
+                component,
+            }),
+        };
+
+        let (resp, trailing_data) = call_handle_message_with_data(req);
+        assert_eq!(
+            resp,
+            Message {
+                header: req.header,
+                kind: MessageKind::SpResponse(SpResponse::ComponentVpd),
+            }
+        );
+        let (vpd, remainder) =
+            crate::deserialize::<Vpd>(&trailing_data).unwrap();
+        assert!(remainder.is_empty());
+        let Vpd::Pmbus(vpd) = vpd else {
+            panic!("expected PMBus VPD");
+        };
+        assert!(vpd.mfr_id.is_unsupported());
     }
 
     // Smoke test that a valid request returns an `Ok(_)` response.

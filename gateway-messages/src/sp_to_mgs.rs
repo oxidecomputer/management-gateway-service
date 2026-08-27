@@ -240,6 +240,11 @@ pub enum SpResponse {
 
     /// Response to a `GetPowerStateWithReason` request
     PowerStateWithReason(PowerStateWithReason),
+
+    /// Response to a [`crate::MgsRequest::ComponentGetVpd`] request.
+    ///
+    /// The packet's trailing data contains one hubpack-encoded [`vpd::Vpd`].
+    ComponentVpd,
 }
 
 #[derive(

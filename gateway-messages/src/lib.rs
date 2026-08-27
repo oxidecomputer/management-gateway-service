@@ -72,7 +72,7 @@ pub const HF_PAGE_SIZE: usize = 256;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 28;
+    pub const CURRENT: u32 = 29;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;

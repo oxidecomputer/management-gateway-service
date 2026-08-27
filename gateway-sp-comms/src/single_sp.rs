@@ -67,6 +67,7 @@ use gateway_messages::ignition::TransceiverSelect;
 use gateway_messages::tlv;
 use gateway_messages::version;
 use gateway_messages::version::WATCHDOG_VERSION;
+use gateway_messages::vpd::Vpd;
 use serde::Serialize;
 use slog::Logger;
 use slog::debug;
@@ -596,6 +597,13 @@ impl SingleSp {
             .await?;
 
         Ok(SpComponentDetails { entries })
+    }
+
+    /// Reads vital product data for a component.
+    pub async fn component_vpd(&self, component: SpComponent) -> Result<Vpd> {
+        self.rpc(MgsRequest::ComponentGetVpd { component })
+            .await
+            .and_then(expect_component_vpd)
     }
 
     /// Get the currently-active slot of a particular component.

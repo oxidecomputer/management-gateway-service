@@ -264,6 +264,12 @@ enum Command {
         component: SpComponent,
     },
 
+    /// Read vital product data for a component.
+    ComponentVpd {
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
+    },
+
     /// Ask SP to clear the state (e.g., reset counters) on a component.
     ComponentClearStatus {
         #[clap(value_parser = parse_sp_component)]
@@ -1869,6 +1875,14 @@ async fn run_command(
                 lines.push(format!("{d}"));
             }
             Ok(Output::Lines(lines))
+        }
+        Command::ComponentVpd { component } => {
+            let vpd = sp.component_vpd(component).await?;
+            if json {
+                Ok(Output::Json(serde_json::to_value(vpd)?))
+            } else {
+                Ok(Output::Lines(vec![vpd.to_string()]))
+            }
         }
         Command::ComponentClearStatus { component } => {
             sp.component_clear_status(component).await?;

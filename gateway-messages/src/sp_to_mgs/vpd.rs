@@ -1,16 +1,78 @@
+// This Source Code Form is subject to the terms of the Mozilla Public
+// License, v. 2.0. If a copy of the MPL was not distributed with this
+// file, You can obtain one at https://mozilla.org/MPL/2.0/.
+
 use crate::nullstr::NullStr;
+use core::fmt;
 use hubpack::SerializedSize;
+use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
 
+/// Contains one component's vital product data.
+///
+/// This owned representation is intended for MGS to use when deserializing data
+/// from the SP. SP implementations may serialize [`VpdRef`] directly into
+/// packet storage instead of constructing this enum on their stack.
+#[allow(clippy::large_enum_variant)]
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub enum Vpd {
-    Pmbus(PmbusIdentity),
+    Pmbus(PmbusVpd),
     OxideBarcode(OxideIdentity),
     Mpn1Barcode(Mpn1Identity),
     FanAssembly(FanAssemblyIdentity),
     Tmp117(Tmp117Identity),
+}
+
+impl fmt::Display for Vpd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pmbus(vpd) => vpd.fmt(f),
+            Self::OxideBarcode(identity) => identity.fmt(f),
+            Self::Mpn1Barcode(identity) => identity.fmt(f),
+            Self::FanAssembly(identity) => identity.fmt(f),
+            Self::Tmp117(identity) => identity.fmt(f),
+        }
+    }
+}
+
+/// A borrowed reference to any device's VPD type.
+///
+/// This type has the same hubpack representation as [`Vpd`]. The SP
+/// implementation may use it to serialize VPD directly into a packet's
+/// trailing-data buffer rather than constructing an owned [`Vpd`] on the stack.
+#[derive(Debug, Serialize)]
+pub enum VpdRef<'a> {
+    Pmbus(&'a PmbusVpd),
+    OxideBarcode(&'a OxideIdentity),
+    Mpn1Barcode(&'a Mpn1Identity),
+    FanAssembly(&'a FanAssemblyIdentity),
+    Tmp117(&'a Tmp117Identity),
+}
+
+impl<'a> From<&'a Vpd> for VpdRef<'a> {
+    fn from(value: &'a Vpd) -> Self {
+        match value {
+            Vpd::Pmbus(vpd) => Self::Pmbus(vpd),
+            Vpd::OxideBarcode(identity) => Self::OxideBarcode(identity),
+            Vpd::Mpn1Barcode(identity) => Self::Mpn1Barcode(identity),
+            Vpd::FanAssembly(identity) => Self::FanAssembly(identity),
+            Vpd::Tmp117(identity) => Self::Tmp117(identity),
+        }
+    }
+}
+
+impl fmt::Display for VpdRef<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Pmbus(vpd) => vpd.fmt(f),
+            Self::OxideBarcode(identity) => identity.fmt(f),
+            Self::Mpn1Barcode(identity) => identity.fmt(f),
+            Self::FanAssembly(identity) => identity.fmt(f),
+            Self::Tmp117(identity) => identity.fmt(f),
+        }
+    }
 }
 
 #[derive(
@@ -19,6 +81,15 @@ pub enum Vpd {
 pub enum Barcode {
     Oxide(OxideIdentity),
     Mpn1(Mpn1Identity),
+}
+
+impl fmt::Display for Barcode {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Oxide(identity) => identity.fmt(f),
+            Self::Mpn1(identity) => identity.fmt(f),
+        }
+    }
 }
 
 /// An Oxide-assigned VPD identity.
@@ -34,6 +105,14 @@ pub struct OxideIdentity {
     pub revision: u32,
 }
 
+impl fmt::Display for OxideIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { serial_number, model, revision } = self;
+        write!(f, "0XV2:{model}:{revision:03}:{serial_number}")?;
+        Ok(())
+    }
+}
+
 /// An MPN1 identity
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
@@ -45,26 +124,185 @@ pub struct Mpn1Identity {
     pub serial_number: NullStr<32>,
 }
 
+impl fmt::Display for Mpn1Identity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self { manufacturer, model, revision, serial_number } = self;
+        write!(f, "MPN1:{manufacturer}:{model}:{revision}:{serial_number}")?;
+        Ok(())
+    }
+}
+
+/// Contains the standard identity blocks read from a PMBus device.
+///
+/// Each field owns its 32-byte block-read buffer so that one instance can be
+/// allocated statically and populated in place. Unsupported commands and
+/// supported commands returning an empty block remain distinct.
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct PmbusIdentity {
-    /// `MFR_ID` (PMBus operation 0x99)
-    pub mfr_id: NullStr<PMBUS_BLOCK_LEN>,
-    /// `MFR_MODEL` (PMBus operation 0x9A)
-    pub mfr_model: NullStr<PMBUS_BLOCK_LEN>,
-    /// `MFR_REVISION` (PMBus operation 0x9B)
-    pub mfr_revision: NullStr<PMBUS_BLOCK_LEN>,
-    /// `MFR_LOCATION` (PMBus operation 0x9C)
-    pub mfr_location: NullStr<PMBUS_BLOCK_LEN>,
-    /// `MFR_DATE` (PMBus operation 0x9D)
-    pub mfr_date: NullStr<PMBUS_BLOCK_LEN>,
-    /// `MFR_SERIAL` (PMBus operation 0x9E)
-    pub mfr_serial: NullStr<PMBUS_BLOCK_LEN>,
-    /// `IC_DEVICE_ID` (PMBus operation 0x9F)
-    pub ic_device_id: NullStr<PMBUS_BLOCK_LEN>,
-    /// `IC_DEVICE_REV` (PMBus operation 0xA0)
-    pub ic_device_rev: NullStr<PMBUS_BLOCK_LEN>,
+pub struct PmbusVpd {
+    /// `MFR_ID` (PMBus command 0x99).
+    pub mfr_id: PmbusBlock,
+    /// `MFR_MODEL` (PMBus command 0x9A).
+    pub mfr_model: PmbusBlock,
+    /// `MFR_REVISION` (PMBus command 0x9B).
+    pub mfr_revision: PmbusBlock,
+    /// `MFR_LOCATION` (PMBus command 0x9C).
+    pub mfr_location: PmbusBlock,
+    /// `MFR_DATE` (PMBus command 0x9D).
+    pub mfr_date: PmbusBlock,
+    /// `MFR_SERIAL` (PMBus command 0x9E).
+    pub mfr_serial: PmbusBlock,
+    /// `IC_DEVICE_ID` (PMBus command 0xAD).
+    pub ic_device_id: PmbusBlock,
+    /// `IC_DEVICE_REV` (PMBus command 0xAE).
+    pub ic_device_rev: PmbusBlock,
+}
+
+impl PmbusVpd {
+    /// An instance with every command marked unsupported and every buffer zeroed.
+    pub const EMPTY: Self = Self {
+        mfr_id: PmbusBlock::UNSUPPORTED,
+        mfr_model: PmbusBlock::UNSUPPORTED,
+        mfr_revision: PmbusBlock::UNSUPPORTED,
+        mfr_location: PmbusBlock::UNSUPPORTED,
+        mfr_date: PmbusBlock::UNSUPPORTED,
+        mfr_serial: PmbusBlock::UNSUPPORTED,
+        ic_device_id: PmbusBlock::UNSUPPORTED,
+        ic_device_rev: PmbusBlock::UNSUPPORTED,
+    };
+}
+
+impl Default for PmbusVpd {
+    fn default() -> Self {
+        Self::EMPTY
+    }
+}
+
+impl fmt::Display for PmbusVpd {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut first = true;
+        for (name, block) in [
+            ("MFR_ID:", &self.mfr_id),
+            ("MFR_MODEL:", &self.mfr_model),
+            ("MFR_REVISION:", &self.mfr_revision),
+            ("MFR_LOCATION:", &self.mfr_location),
+            ("MFR_DATE:", &self.mfr_date),
+            ("MFR_SERIAL:", &self.mfr_serial),
+            ("IC_DEVICE_ID:", &self.ic_device_id),
+            ("IC_DEVICE_REV:", &self.ic_device_rev),
+        ] {
+            if block.is_unsupported() {
+                continue;
+            }
+            if !first {
+                f.write_str("\n")?;
+            }
+            write!(f, "{name:<13} {block}")?;
+            first = false;
+        }
+        Ok(())
+    }
+}
+
+/// A buffer containing the result of a PMBus block read, along with the length
+/// of the data read into that buffer, or an indication that the device does not
+/// support a given register.
+#[derive(Debug, Clone, PartialEq, Eq, SerializedSize, Serialize)]
+pub struct PmbusBlock {
+    len: Option<u8>,
+    bytes: [u8; PMBUS_BLOCK_LEN],
+}
+
+impl PmbusBlock {
+    /// Marks an unsupported command and provides zeroed backing storage.
+    pub const UNSUPPORTED: Self =
+        Self { len: None, bytes: [0; PMBUS_BLOCK_LEN] };
+
+    /// Maximum number of bytes in a PMBus block response.
+    pub const MAX_LEN: usize = PMBUS_BLOCK_LEN;
+
+    /// Perform a PMBus block read into this block's buffer.
+    ///
+    /// The provided read function should return an `Option<usize>`, with `None`
+    /// indicating that the device does not support this VPD register, and
+    /// `Some(len)` indicating the number of bytes read. Since SMBus block reads
+    /// may not be greater than 32 bytes in length, the provided buffer is
+    /// always 32 bytes long.
+    pub fn read_into<E>(
+        &mut self,
+        f: impl FnOnce(&mut [u8; PMBUS_BLOCK_LEN]) -> Result<Option<usize>, E>,
+    ) -> Result<(), E> {
+        self.len =
+            f(&mut self.bytes)?.map(|len| len.min(PMBUS_BLOCK_LEN) as u8);
+        // Zero any remaining bytes (or the whole buffer, if nothing was read)
+        let start = self.len.unwrap_or(0) as usize;
+        for byte in &mut self.bytes[start..] {
+            *byte = 0;
+        }
+        Ok(())
+    }
+
+    /// Returns the response bytes, or `None` if the command is unsupported.
+    pub fn as_bytes(&self) -> Option<&[u8]> {
+        self.len.map(|len| &self.bytes[..len as usize])
+    }
+
+    /// Returns the response length, or `None` if the command is unsupported.
+    pub fn response_len(&self) -> Option<usize> {
+        self.len.map(usize::from)
+    }
+
+    /// Returns `true` if the device does not support the command to read this
+    /// register.
+    pub fn is_unsupported(&self) -> bool {
+        self.len.is_none()
+    }
+}
+
+impl fmt::Display for PmbusBlock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(bytes) = self.as_bytes() else {
+            return f.write_str("unsupported");
+        };
+        match core::str::from_utf8(bytes) {
+            Ok(value) => f.write_str(value),
+            Err(_) => write!(f, "{bytes:02x?}"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for PmbusBlock {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        struct WireBlock {
+            len: Option<u8>,
+            bytes: [u8; PMBUS_BLOCK_LEN],
+        }
+
+        let WireBlock { len, bytes } = WireBlock::deserialize(deserializer)?;
+        let nbytes = usize::from(len.unwrap_or(0));
+        if nbytes > PMBUS_BLOCK_LEN {
+            return Err(D::Error::invalid_length(
+                nbytes,
+                &"a PMBus block read of 32 bytes in length",
+            ));
+        }
+
+        // Check if all padding bytes are zero
+        if let Some(idx) = bytes[nbytes..].iter().position(|&byte| byte != 0) {
+            let idx = nbytes + idx;
+            return Err(D::Error::invalid_value(
+                serde::de::Unexpected::Bytes(&bytes[idx..]),
+                &"expected all padding bytes to be zero",
+            ));
+        }
+
+        Ok(Self { len, bytes })
+    }
 }
 
 /// VPD for a compute sled fan subassembly.
@@ -84,6 +322,18 @@ pub struct FanAssemblyIdentity {
     pub fans: [Barcode; 3],
 }
 
+impl fmt::Display for FanAssemblyIdentity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "FAN TRAY:  {}", self.identity)?;
+        writeln!(f, "VPD BOARD: {}", self.vpd_board_identity)?;
+        writeln!(f, "FANS: [")?;
+        for fan in &self.fans {
+            writeln!(f, "  {fan}")?;
+        }
+        writeln!(f, "]")
+    }
+}
+
 /// Identity of a TMP117 temperature sensor.
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
@@ -97,4 +347,173 @@ pub struct Tmp117Identity {
     pub eeprom3: u16,
 }
 
+impl fmt::Display for Tmp117Identity {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        writeln!(f, "DEVICE ID: {:#06x}", self.id)?;
+        writeln!(f, "EEPROM1:   {:#06x}", self.eeprom1)?;
+        writeln!(f, "EEPROM2:   {:#06x}", self.eeprom2)?;
+        writeln!(f, "EEPROM3:   {:#06x}", self.eeprom3)
+    }
+}
+
 const PMBUS_BLOCK_LEN: usize = 32;
+
+static_assertions::const_assert!(Vpd::MAX_SIZE <= crate::MIN_TRAILING_DATA_LEN);
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn oxide_identity(
+        model: &str,
+        revision: u32,
+        serial_number: &str,
+    ) -> OxideIdentity {
+        OxideIdentity {
+            serial_number: serial_number.try_into().unwrap(),
+            model: model.try_into().unwrap(),
+            revision,
+        }
+    }
+
+    fn mpn1_identity(serial_number: &str) -> Mpn1Identity {
+        Mpn1Identity {
+            manufacturer: "Joe's Stuff".try_into().unwrap(),
+            model: "Thingy 2000".try_into().unwrap(),
+            revision: "revision".try_into().unwrap(),
+            serial_number: serial_number.try_into().unwrap(),
+        }
+    }
+
+    fn pmbus_block(value: &[u8]) -> PmbusBlock {
+        let mut block = PmbusBlock::UNSUPPORTED;
+        block
+            .read_into(|buffer| {
+                buffer[..value.len()].copy_from_slice(value);
+                Ok::<_, core::convert::Infallible>(Some(value.len()))
+            })
+            .unwrap();
+        block
+    }
+
+    fn pmbus_vpd() -> PmbusVpd {
+        PmbusVpd {
+            // Unfortunately, "Crazy Eliza's Discount Pre-Owned Power
+            // Electronics Warehouse, Everything Must Go, Priced To Sell" was
+            // too many bytes to fit in one 32-byte SMBus block read.
+            mfr_id: pmbus_block(b"Eliza's Discount Power Supplies"),
+            mfr_model: pmbus_block(&[0x55; 32]),
+            mfr_revision: PmbusBlock::UNSUPPORTED,
+            mfr_location: pmbus_block(b"\0Anytown,\0USA"),
+            mfr_date: pmbus_block(b"January 1st, 1970"),
+            mfr_serial: pmbus_block(&[1, 2, 3, 4]),
+            ic_device_id: pmbus_block(&[0xff, 0, 0x80]),
+            ic_device_rev: PmbusBlock::UNSUPPORTED,
+        }
+    }
+
+    fn serialize(value: &impl Serialize) -> Vec<u8> {
+        let mut out = vec![0; Vpd::MAX_SIZE];
+        let len = hubpack::serialize(&mut out, value).unwrap();
+        out.truncate(len);
+        out
+    }
+
+    #[test]
+    fn borrowed_and_owned_encodings_match() {
+        let oxide = oxide_identity("913-000000", 3, "BRM41210001");
+        let mpn1 = mpn1_identity("mpn1-serial");
+        let values = [
+            Vpd::Pmbus(pmbus_vpd()),
+            Vpd::OxideBarcode(oxide.clone()),
+            Vpd::Mpn1Barcode(mpn1.clone()),
+            Vpd::FanAssembly(FanAssemblyIdentity {
+                identity: oxide.clone(),
+                vpd_board_identity: oxide,
+                fans: [
+                    Barcode::Mpn1(mpn1.clone()),
+                    Barcode::Oxide(oxide_identity(
+                        "913-00005",
+                        1,
+                        "BRM41210002",
+                    )),
+                    Barcode::Oxide(oxide_identity(
+                        "913-00005",
+                        2,
+                        "BRM41210003",
+                    )),
+                ],
+            }),
+            Vpd::Tmp117(Tmp117Identity {
+                id: 0x117,
+                eeprom1: 1,
+                eeprom2: 2,
+                eeprom3: 3,
+            }),
+        ];
+
+        for value in values {
+            let owned = serialize(&value);
+            let borrowed = serialize(&VpdRef::from(&value));
+            assert_eq!(borrowed, owned);
+
+            let (decoded, remainder) = hubpack::deserialize::<Vpd>(&borrowed)
+                .expect("borrowed encoding must deserialize as owned VPD");
+            assert!(remainder.is_empty());
+            assert_eq!(decoded, value);
+        }
+    }
+
+    #[test]
+    fn pmbus_blocks_preserve_presence_length_and_opaque_bytes() {
+        let vpd = pmbus_vpd();
+        assert_eq!(
+            vpd.mfr_id.as_bytes().unwrap(),
+            b"Eliza's Discount Power Supplies"
+        );
+        assert_eq!(vpd.mfr_model.as_bytes().unwrap(), &[0x55; 32]);
+        assert!(vpd.mfr_revision.is_unsupported());
+        assert_eq!(vpd.mfr_location.as_bytes().unwrap(), b"\0Anytown,\0USA");
+        assert_eq!(vpd.mfr_date.as_bytes().unwrap(), b"January 1st, 1970");
+        assert_eq!(vpd.mfr_serial.as_bytes().unwrap(), &[1, 2, 3, 4]);
+        assert_eq!(vpd.ic_device_id.as_bytes().unwrap(), &[0xff, 0, 0x80]);
+        assert!(vpd.ic_device_rev.is_unsupported());
+
+        let mut empty = PmbusBlock::UNSUPPORTED;
+        empty
+            .read_into(|_| Ok::<_, core::convert::Infallible>(Some(0)))
+            .unwrap();
+        assert_eq!(empty.as_bytes(), Some(&[][..]));
+        assert!(!empty.is_unsupported());
+    }
+
+    #[test]
+    fn pmbus_block_read_into_canonicalizes_the_result() {
+        let mut block = pmbus_block(&[0x55; PMBUS_BLOCK_LEN]);
+        block
+            .read_into(|buffer| {
+                buffer[0] = 0xaa;
+                Ok::<_, core::convert::Infallible>(Some(1))
+            })
+            .unwrap();
+        assert_eq!(block.as_bytes(), Some(&[0xaa][..]));
+        assert!(block.bytes[1..].iter().all(|&byte| byte == 0));
+
+        block
+            .read_into(|buffer| {
+                buffer[0] = 0xff;
+                Ok::<_, core::convert::Infallible>(None)
+            })
+            .unwrap();
+        assert_eq!(block, PmbusBlock::UNSUPPORTED);
+    }
+
+    #[test]
+    fn pmbus_block_rejects_noncanonical_wire_padding() {
+        let mut noncanonical = [0; PMBUS_BLOCK_LEN + 2];
+        noncanonical[0] = 1;
+        noncanonical[1] = 1;
+        noncanonical[3] = 1;
+        assert!(hubpack::deserialize::<PmbusBlock>(&noncanonical).is_err());
+    }
+}
