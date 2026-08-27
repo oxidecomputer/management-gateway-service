@@ -30,6 +30,7 @@ pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
 pub mod tofino;
+pub mod vpd;
 
 pub use host_cpu_details::GpioToggleCount;
 pub use host_cpu_details::LastPostCode;
