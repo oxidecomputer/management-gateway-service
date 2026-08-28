@@ -499,7 +499,7 @@ mod tests {
 
     #[test]
     fn smbus_block_read_into_canonicalizes_the_result() {
-        let mut block = smbus_block(&[0x55; PMBUS_BLOCK_LEN]);
+        let mut block = smbus_block(&[0x55; SmbusBlock::MAX_LEN]);
         block
             .read_into(|buffer| {
                 buffer[0] = 0xaa;
@@ -520,7 +520,7 @@ mod tests {
 
     #[test]
     fn smbus_block_rejects_noncanonical_wire_padding() {
-        let mut noncanonical = [0; PMBUS_BLOCK_LEN + 2];
+        let mut noncanonical = [0; SmbusBlock::MAX_LEN + 2];
         noncanonical[0] = 1;
         noncanonical[1] = 1;
         noncanonical[3] = 1;
