@@ -136,14 +136,14 @@ impl fmt::Display for PmbusVpd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut first = true;
         for (name, block) in [
-            ("MFR_ID:", &self.mfr_id),
-            ("MFR_MODEL:", &self.mfr_model),
-            ("MFR_REVISION:", &self.mfr_revision),
-            ("MFR_LOCATION:", &self.mfr_location),
-            ("MFR_DATE:", &self.mfr_date),
-            ("MFR_SERIAL:", &self.mfr_serial),
-            ("IC_DEVICE_ID:", &self.ic_device_id),
-            ("IC_DEVICE_REV:", &self.ic_device_rev),
+            ("MFR_ID", &self.mfr_id),
+            ("MFR_MODEL", &self.mfr_model),
+            ("MFR_REVISION", &self.mfr_revision),
+            ("MFR_LOCATION", &self.mfr_location),
+            ("MFR_DATE", &self.mfr_date),
+            ("MFR_SERIAL", &self.mfr_serial),
+            ("IC_DEVICE_ID", &self.ic_device_id),
+            ("IC_DEVICE_REV", &self.ic_device_rev),
         ] {
             if block.is_unsupported() {
                 continue;
@@ -151,7 +151,7 @@ impl fmt::Display for PmbusVpd {
             if !first {
                 f.write_str("\n")?;
             }
-            write!(f, "{name:<13} {block}")?;
+            write!(f, "{name:<13} : {block}")?;
             first = false;
         }
         Ok(())
@@ -284,13 +284,12 @@ pub struct FanAssemblyVpd {
 
 impl fmt::Display for FanAssemblyVpd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "FAN TRAY:  {}", self.identity)?;
-        writeln!(f, "VPD BOARD: {}", self.vpd_board_identity)?;
-        writeln!(f, "FANS: [")?;
-        for fan in &self.fans {
-            writeln!(f, "  {fan}")?;
+        writeln!(f, "fan tray    : {}", self.identity)?;
+        writeln!(f, "  VPD board : {}", self.vpd_board_identity)?;
+        for (i, fan) in self.fans.iter().enumerate() {
+            writeln!(f, "  fan {i:<4} : {fan}")?;
         }
-        writeln!(f, "]")
+        Ok(())
     }
 }
 
@@ -309,10 +308,10 @@ pub struct Tmp117Identity {
 
 impl fmt::Display for Tmp117Identity {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        writeln!(f, "DEVICE ID: {:#06x}", self.id)?;
-        writeln!(f, "EEPROM1:   {:#06x}", self.eeprom1)?;
-        writeln!(f, "EEPROM2:   {:#06x}", self.eeprom2)?;
-        writeln!(f, "EEPROM3:   {:#06x}", self.eeprom3)
+        writeln!(f, "device ID : {:#06x}", self.id)?;
+        writeln!(f, "  EEPROM1 : {:#06x}", self.eeprom1)?;
+        writeln!(f, "  EEPROM2 : {:#06x}", self.eeprom2)?;
+        writeln!(f, "  EEPROM3 : {:#06x}", self.eeprom3)
     }
 }
 
