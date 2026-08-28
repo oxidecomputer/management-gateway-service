@@ -287,7 +287,7 @@ impl fmt::Display for FanAssemblyVpd {
         writeln!(f, "fan tray    : {}", self.identity)?;
         writeln!(f, "  VPD board : {}", self.vpd_board_identity)?;
         for (i, fan) in self.fans.iter().enumerate() {
-            writeln!(f, "  fan {i:<4} : {fan}")?;
+            writeln!(f, "  fan {i:<5} : {fan}")?;
         }
         Ok(())
     }
