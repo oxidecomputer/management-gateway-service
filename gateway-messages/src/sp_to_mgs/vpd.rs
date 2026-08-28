@@ -2,11 +2,13 @@
 // License, v. 2.0. If a copy of the MPL was not distributed with this
 // file, You can obtain one at https://mozilla.org/MPL/2.0/.
 
-use crate::nullstr::NullStr;
+use crate::nullstr::{self, NullStr};
 use core::fmt;
 use hubpack::SerializedSize;
 use serde::de::Error as _;
 use serde::{Deserialize, Serialize};
+
+pub use nullstr::ReadIntoError as BarcodeReadError;
 
 /// Contains one component's vital product data.
 ///
