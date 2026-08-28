@@ -132,44 +132,48 @@ impl fmt::Display for Mpn1Identity {
     }
 }
 
-/// Contains the standard identity blocks read from a PMBus device.
+/// Vital product data for a PMBus device.
 ///
-/// Each field owns its 32-byte block-read buffer so that one instance can be
-/// allocated statically and populated in place. Unsupported commands and
-/// supported commands returning an empty block remain distinct.
+/// All vital product data commands we read are SMBus block reads. See the
+/// [`SmbusBlock`] type for more details on how the result of block read
+/// commands are represented.
+///
+/// Depending on the particular device in question, some VPD commands may or may
+/// not be supported. When a device does not implement a particular command, the
+/// field for that command's value is set to [`SmbusBlock::UNSUPPORTED`].
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
 pub struct PmbusVpd {
     /// `MFR_ID` (PMBus command 0x99).
-    pub mfr_id: PmbusBlock,
+    pub mfr_id: SmbusBlock,
     /// `MFR_MODEL` (PMBus command 0x9A).
-    pub mfr_model: PmbusBlock,
+    pub mfr_model: SmbusBlock,
     /// `MFR_REVISION` (PMBus command 0x9B).
-    pub mfr_revision: PmbusBlock,
+    pub mfr_revision: SmbusBlock,
     /// `MFR_LOCATION` (PMBus command 0x9C).
-    pub mfr_location: PmbusBlock,
+    pub mfr_location: SmbusBlock,
     /// `MFR_DATE` (PMBus command 0x9D).
-    pub mfr_date: PmbusBlock,
+    pub mfr_date: SmbusBlock,
     /// `MFR_SERIAL` (PMBus command 0x9E).
-    pub mfr_serial: PmbusBlock,
+    pub mfr_serial: SmbusBlock,
     /// `IC_DEVICE_ID` (PMBus command 0xAD).
-    pub ic_device_id: PmbusBlock,
+    pub ic_device_id: SmbusBlock,
     /// `IC_DEVICE_REV` (PMBus command 0xAE).
-    pub ic_device_rev: PmbusBlock,
+    pub ic_device_rev: SmbusBlock,
 }
 
 impl PmbusVpd {
     /// An instance with every command marked unsupported and every buffer zeroed.
     pub const EMPTY: Self = Self {
-        mfr_id: PmbusBlock::UNSUPPORTED,
-        mfr_model: PmbusBlock::UNSUPPORTED,
-        mfr_revision: PmbusBlock::UNSUPPORTED,
-        mfr_location: PmbusBlock::UNSUPPORTED,
-        mfr_date: PmbusBlock::UNSUPPORTED,
-        mfr_serial: PmbusBlock::UNSUPPORTED,
-        ic_device_id: PmbusBlock::UNSUPPORTED,
-        ic_device_rev: PmbusBlock::UNSUPPORTED,
+        mfr_id: SmbusBlock::UNSUPPORTED,
+        mfr_model: SmbusBlock::UNSUPPORTED,
+        mfr_revision: SmbusBlock::UNSUPPORTED,
+        mfr_location: SmbusBlock::UNSUPPORTED,
+        mfr_date: SmbusBlock::UNSUPPORTED,
+        mfr_serial: SmbusBlock::UNSUPPORTED,
+        ic_device_id: SmbusBlock::UNSUPPORTED,
+        ic_device_rev: SmbusBlock::UNSUPPORTED,
     };
 }
 
@@ -205,36 +209,44 @@ impl fmt::Display for PmbusVpd {
     }
 }
 
-/// A buffer containing the result of a PMBus block read, along with the length
-/// of the data read into that buffer, or an indication that the device does not
-/// support a given register.
+/// A buffer for storing the value sent in response to a SMBus block read
+/// command (see 6.5.7 in the [SMBus Specification 3.3][smbus]), along with the
+/// length of the data read into that buffer, or an indication that the device
+/// does not support a given command.
+///
+/// [smbus]: https://www.smbus.org/specs/SMBus_3_3_20230228.pdf
 #[derive(Debug, Clone, PartialEq, Eq, SerializedSize, Serialize)]
-pub struct PmbusBlock {
+pub struct SmbusBlock {
     len: Option<u8>,
-    bytes: [u8; PMBUS_BLOCK_LEN],
+    bytes: [u8; SmbusBlock::MAX_LEN],
 }
 
-impl PmbusBlock {
+impl SmbusBlock {
     /// Marks an unsupported command and provides zeroed backing storage.
     pub const UNSUPPORTED: Self =
-        Self { len: None, bytes: [0; PMBUS_BLOCK_LEN] };
+        Self { len: None, bytes: [0; SmbusBlock::MAX_LEN] };
 
-    /// Maximum number of bytes in a PMBus block response.
-    pub const MAX_LEN: usize = PMBUS_BLOCK_LEN;
+    /// Maximum number of bytes we support in a SMBus block read.
+    ///
+    /// This is a bit arbitrary, as the protocol as specified in the SMBus
+    /// specification will permit a block to be up to 255 bytes in length.
+    /// However, none of the devices we expect to work with will return blocks
+    /// bigger than 32 bytes for any of these commands, so it's fine.
+    pub const MAX_LEN: usize = 32;
 
-    /// Perform a PMBus block read into this block's buffer.
+    /// Perform a SMBus block read into this block's buffer.
     ///
     /// The provided read function should return an `Option<usize>`, with `None`
-    /// indicating that the device does not support this VPD register, and
+    /// indicating that the device does not support this VPD command, and
     /// `Some(len)` indicating the number of bytes read. Since SMBus block reads
     /// may not be greater than 32 bytes in length, the provided buffer is
     /// always 32 bytes long.
     pub fn read_into<E>(
         &mut self,
-        f: impl FnOnce(&mut [u8; PMBUS_BLOCK_LEN]) -> Result<Option<usize>, E>,
+        f: impl FnOnce(&mut [u8; SmbusBlock::MAX_LEN]) -> Result<Option<usize>, E>,
     ) -> Result<(), E> {
         self.len =
-            f(&mut self.bytes)?.map(|len| len.min(PMBUS_BLOCK_LEN) as u8);
+            f(&mut self.bytes)?.map(|len| len.min(SmbusBlock::MAX_LEN) as u8);
         // Zero any remaining bytes (or the whole buffer, if nothing was read)
         let start = self.len.unwrap_or(0) as usize;
         for byte in &mut self.bytes[start..] {
@@ -260,7 +272,7 @@ impl PmbusBlock {
     }
 }
 
-impl fmt::Display for PmbusBlock {
+impl fmt::Display for SmbusBlock {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let Some(bytes) = self.as_bytes() else {
             return f.write_str("unsupported");
@@ -272,7 +284,7 @@ impl fmt::Display for PmbusBlock {
     }
 }
 
-impl<'de> Deserialize<'de> for PmbusBlock {
+impl<'de> Deserialize<'de> for SmbusBlock {
     fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
     where
         D: serde::Deserializer<'de>,
@@ -280,12 +292,12 @@ impl<'de> Deserialize<'de> for PmbusBlock {
         #[derive(Deserialize)]
         struct WireBlock {
             len: Option<u8>,
-            bytes: [u8; PMBUS_BLOCK_LEN],
+            bytes: [u8; SmbusBlock::MAX_LEN],
         }
 
         let WireBlock { len, bytes } = WireBlock::deserialize(deserializer)?;
         let nbytes = usize::from(len.unwrap_or(0));
-        if nbytes > PMBUS_BLOCK_LEN {
+        if nbytes > SmbusBlock::MAX_LEN {
             return Err(D::Error::invalid_length(
                 nbytes,
                 &"a PMBus block read of 32 bytes in length",
@@ -356,8 +368,6 @@ impl fmt::Display for Tmp117Identity {
     }
 }
 
-const PMBUS_BLOCK_LEN: usize = 32;
-
 static_assertions::const_assert!(Vpd::MAX_SIZE <= crate::MIN_TRAILING_DATA_LEN);
 
 #[cfg(test)]
@@ -385,8 +395,8 @@ mod tests {
         }
     }
 
-    fn pmbus_block(value: &[u8]) -> PmbusBlock {
-        let mut block = PmbusBlock::UNSUPPORTED;
+    fn smbus_block(value: &[u8]) -> SmbusBlock {
+        let mut block = SmbusBlock::UNSUPPORTED;
         block
             .read_into(|buffer| {
                 buffer[..value.len()].copy_from_slice(value);
@@ -401,14 +411,14 @@ mod tests {
             // Unfortunately, "Crazy Eliza's Discount Pre-Owned Power
             // Electronics Warehouse, Everything Must Go, Priced To Sell" was
             // too many bytes to fit in one 32-byte SMBus block read.
-            mfr_id: pmbus_block(b"Eliza's Discount Power Supplies"),
-            mfr_model: pmbus_block(&[0x55; 32]),
-            mfr_revision: PmbusBlock::UNSUPPORTED,
-            mfr_location: pmbus_block(b"\0Anytown,\0USA"),
-            mfr_date: pmbus_block(b"January 1st, 1970"),
-            mfr_serial: pmbus_block(&[1, 2, 3, 4]),
-            ic_device_id: pmbus_block(&[0xff, 0, 0x80]),
-            ic_device_rev: PmbusBlock::UNSUPPORTED,
+            mfr_id: smbus_block(b"Eliza's Discount Power Supplies"),
+            mfr_model: smbus_block(&[0x55; 32]),
+            mfr_revision: SmbusBlock::UNSUPPORTED,
+            mfr_location: smbus_block(b"\0Anytown,\0USA"),
+            mfr_date: smbus_block(b"January 1st, 1970"),
+            mfr_serial: smbus_block(&[1, 2, 3, 4]),
+            ic_device_id: smbus_block(&[0xff, 0, 0x80]),
+            ic_device_rev: SmbusBlock::UNSUPPORTED,
         }
     }
 
@@ -465,7 +475,7 @@ mod tests {
     }
 
     #[test]
-    fn pmbus_blocks_preserve_presence_length_and_opaque_bytes() {
+    fn smbus_blocks_preserve_presence_length_and_opaque_bytes() {
         let vpd = pmbus_vpd();
         assert_eq!(
             vpd.mfr_id.as_bytes().unwrap(),
@@ -479,7 +489,7 @@ mod tests {
         assert_eq!(vpd.ic_device_id.as_bytes().unwrap(), &[0xff, 0, 0x80]);
         assert!(vpd.ic_device_rev.is_unsupported());
 
-        let mut empty = PmbusBlock::UNSUPPORTED;
+        let mut empty = SmbusBlock::UNSUPPORTED;
         empty
             .read_into(|_| Ok::<_, core::convert::Infallible>(Some(0)))
             .unwrap();
@@ -488,8 +498,8 @@ mod tests {
     }
 
     #[test]
-    fn pmbus_block_read_into_canonicalizes_the_result() {
-        let mut block = pmbus_block(&[0x55; PMBUS_BLOCK_LEN]);
+    fn smbus_block_read_into_canonicalizes_the_result() {
+        let mut block = smbus_block(&[0x55; PMBUS_BLOCK_LEN]);
         block
             .read_into(|buffer| {
                 buffer[0] = 0xaa;
@@ -505,15 +515,15 @@ mod tests {
                 Ok::<_, core::convert::Infallible>(None)
             })
             .unwrap();
-        assert_eq!(block, PmbusBlock::UNSUPPORTED);
+        assert_eq!(block, SmbusBlock::UNSUPPORTED);
     }
 
     #[test]
-    fn pmbus_block_rejects_noncanonical_wire_padding() {
+    fn smbus_block_rejects_noncanonical_wire_padding() {
         let mut noncanonical = [0; PMBUS_BLOCK_LEN + 2];
         noncanonical[0] = 1;
         noncanonical[1] = 1;
         noncanonical[3] = 1;
-        assert!(hubpack::deserialize::<PmbusBlock>(&noncanonical).is_err());
+        assert!(hubpack::deserialize::<SmbusBlock>(&noncanonical).is_err());
     }
 }
