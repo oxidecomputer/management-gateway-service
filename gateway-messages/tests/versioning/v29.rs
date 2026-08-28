@@ -18,33 +18,11 @@
 use std::iter::repeat_n;
 
 use gateway_messages::vpd::{
-    Barcode, FanAssemblyIdentity, Mpn1Identity, OxideIdentity, PmbusVpd,
-    SmbusBlock, Tmp117Identity, Vpd,
+    FanAssemblyVpd, PmbusVpd, SmbusBlock, Tmp117Identity, Vpd,
 };
 use gateway_messages::{MgsRequest, SpComponent, SpResponse};
 
 use super::assert_serialized;
-
-fn oxide_identity(
-    model: &str,
-    revision: u32,
-    serial_number: &str,
-) -> OxideIdentity {
-    OxideIdentity {
-        serial_number: serial_number.try_into().unwrap(),
-        model: model.try_into().unwrap(),
-        revision,
-    }
-}
-
-fn mpn1_identity(serial_number: &str) -> Mpn1Identity {
-    Mpn1Identity {
-        manufacturer: "manufacturer".try_into().unwrap(),
-        model: "model".try_into().unwrap(),
-        revision: "revision".try_into().unwrap(),
-        serial_number: serial_number.try_into().unwrap(),
-    }
-}
 
 fn smbus_block(value: &[u8]) -> SmbusBlock {
     let mut block = SmbusBlock::UNSUPPORTED;
@@ -146,102 +124,54 @@ fn pmbus_vpd() {
 
 #[test]
 fn oxide_barcode_vpd() {
-    const MODEL: &[u8] = b"913-000000";
-    const SERIAL: &[u8] = b"BRM41210001";
+    const BARCODE: &str = "0XV2:913-000000:003:BRM41210001";
 
-    let vpd = Vpd::OxideBarcode(oxide_identity("913-000000", 3, "BRM41210001"));
+    let vpd = Vpd::Barcode(BARCODE.try_into().unwrap());
     let mut expected = vec![
-        1, // Vpd::OxideBarcode
+        1, // Vpd::Barcode
     ];
-    expected.extend_from_slice(SERIAL);
-    expected.extend(repeat_n(0, 32 - SERIAL.len()));
-    expected.extend_from_slice(MODEL);
-    expected.extend(repeat_n(0, 32 - MODEL.len()));
-    expected.extend_from_slice(&3_u32.to_le_bytes());
+    expected.extend_from_slice(BARCODE.as_bytes());
+    expected.extend(repeat_n(0, 128 - BARCODE.len()));
     assert_serialized(&expected, &vpd);
 }
 
 #[test]
 fn mpn1_barcode_vpd() {
-    const MANUFACTURER: &[u8] = b"manufacturer";
-    const MODEL: &[u8] = b"model";
-    const REVISION: &[u8] = b"revision";
-    const SERIAL: &[u8] = b"mpn1-serial";
+    const BARCODE: &str = "MPN1:Joe's Stuff:Thingy 2000:420:555-5555";
 
-    let vpd = Vpd::Mpn1Barcode(mpn1_identity("mpn1-serial"));
+    let vpd = Vpd::Barcode(BARCODE.try_into().unwrap());
     let mut expected = vec![
-        2, // Vpd::Mpn1Barcode
+        1, // Vpd::Barcode
     ];
-    for value in [MANUFACTURER, MODEL, REVISION, SERIAL] {
-        expected.extend_from_slice(value);
-        expected.extend(repeat_n(0, 32 - value.len()));
-    }
+    expected.extend_from_slice(BARCODE.as_bytes());
+    expected.extend(repeat_n(0, 128 - BARCODE.len()));
     assert_serialized(&expected, &vpd);
 }
 
 #[test]
 fn fan_assembly_vpd() {
-    const ASSEMBLY_MODEL: &[u8] = b"913-000000";
-    const ASSEMBLY_SERIAL: &[u8] = b"BRM41210001";
-    const FAN_MODEL: &[u8] = b"913-00005";
-    const FAN_1_SERIAL: &[u8] = b"BRM41210002";
-    const FAN_2_SERIAL: &[u8] = b"BRM41210003";
-    const MPN1_SERIAL: &[u8] = b"mpn1-serial";
+    const ASSEMBLY: &str = "0XV2:913-000000:003:BRM41210001";
+    const FAN_0: &str = "MPN1:Eliza's Fans:bcantrill#1fan:01:12345";
+    const FAN_1: &str = "0XV2:913-00005:001:BRM41210002";
+    const FAN_2: &str = "0XV2:913-00005:002:BRM41210003";
 
-    let assembly = oxide_identity("913-000000", 3, "BRM41210001");
-    let vpd = Vpd::FanAssembly(FanAssemblyIdentity {
-        identity: assembly.clone(),
-        vpd_board_identity: assembly,
+    let vpd = Vpd::FanAssembly(FanAssemblyVpd {
+        identity: ASSEMBLY.try_into().unwrap(),
+        vpd_board_identity: ASSEMBLY.try_into().unwrap(),
         fans: [
-            Barcode::Mpn1(mpn1_identity("mpn1-serial")),
-            Barcode::Oxide(oxide_identity("913-00005", 1, "BRM41210002")),
-            Barcode::Oxide(oxide_identity("913-00005", 2, "BRM41210003")),
+            FAN_0.try_into().unwrap(),
+            FAN_1.try_into().unwrap(),
+            FAN_2.try_into().unwrap(),
         ],
     });
 
     let mut expected = vec![
-        3, // Vpd::FanAssembly
+        2, // Vpd::FanAssembly
     ];
-
-    // Fan assembly identity.
-    expected.extend_from_slice(ASSEMBLY_SERIAL);
-    expected.extend(repeat_n(0, 32 - ASSEMBLY_SERIAL.len()));
-    expected.extend_from_slice(ASSEMBLY_MODEL);
-    expected.extend(repeat_n(0, 32 - ASSEMBLY_MODEL.len()));
-    expected.extend_from_slice(&3_u32.to_le_bytes());
-
-    // VPD board identity.
-    expected.extend_from_slice(ASSEMBLY_SERIAL);
-    expected.extend(repeat_n(0, 32 - ASSEMBLY_SERIAL.len()));
-    expected.extend_from_slice(ASSEMBLY_MODEL);
-    expected.extend(repeat_n(0, 32 - ASSEMBLY_MODEL.len()));
-    expected.extend_from_slice(&3_u32.to_le_bytes());
-
-    // Fan 0: Barcode::Mpn1.
-    expected.push(1);
-    for value in
-        [&b"manufacturer"[..], &b"model"[..], &b"revision"[..], MPN1_SERIAL]
-    {
-        expected.extend_from_slice(value);
-        expected.extend(repeat_n(0, 32 - value.len()));
+    for barcode in [ASSEMBLY, ASSEMBLY, FAN_0, FAN_1, FAN_2] {
+        expected.extend_from_slice(barcode.as_bytes());
+        expected.extend(repeat_n(0, 128 - barcode.len()));
     }
-
-    // Fan 1: Barcode::Oxide.
-    expected.push(0);
-    expected.extend_from_slice(FAN_1_SERIAL);
-    expected.extend(repeat_n(0, 32 - FAN_1_SERIAL.len()));
-    expected.extend_from_slice(FAN_MODEL);
-    expected.extend(repeat_n(0, 32 - FAN_MODEL.len()));
-    expected.extend_from_slice(&1_u32.to_le_bytes());
-
-    // Fan 2: Barcode::Oxide.
-    expected.push(0);
-    expected.extend_from_slice(FAN_2_SERIAL);
-    expected.extend(repeat_n(0, 32 - FAN_2_SERIAL.len()));
-    expected.extend_from_slice(FAN_MODEL);
-    expected.extend(repeat_n(0, 32 - FAN_MODEL.len()));
-    expected.extend_from_slice(&2_u32.to_le_bytes());
-
     assert_serialized(&expected, &vpd);
 }
 
@@ -255,7 +185,7 @@ fn tmp117_vpd() {
     });
     #[rustfmt::skip]
     let expected = &[
-        4,          // Vpd::Tmp117
+        3,          // Vpd::Tmp117
         0x17, 0x01, // id
         0x01, 0x00, // eeprom1
         0x02, 0x00, // eeprom2

@@ -19,9 +19,8 @@ use serde::{Deserialize, Serialize};
 )]
 pub enum Vpd {
     Pmbus(PmbusVpd),
-    OxideBarcode(OxideIdentity),
-    Mpn1Barcode(Mpn1Identity),
-    FanAssembly(FanAssemblyIdentity),
+    Barcode(Barcode),
+    FanAssembly(FanAssemblyVpd),
     Tmp117(Tmp117Identity),
 }
 
@@ -29,8 +28,7 @@ impl fmt::Display for Vpd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pmbus(vpd) => vpd.fmt(f),
-            Self::OxideBarcode(identity) => identity.fmt(f),
-            Self::Mpn1Barcode(identity) => identity.fmt(f),
+            Self::Barcode(identity) => identity.fmt(f),
             Self::FanAssembly(identity) => identity.fmt(f),
             Self::Tmp117(identity) => identity.fmt(f),
         }
@@ -45,9 +43,8 @@ impl fmt::Display for Vpd {
 #[derive(Debug, Serialize)]
 pub enum VpdRef<'a> {
     Pmbus(&'a PmbusVpd),
-    OxideBarcode(&'a OxideIdentity),
-    Mpn1Barcode(&'a Mpn1Identity),
-    FanAssembly(&'a FanAssemblyIdentity),
+    Barcode(&'a Barcode),
+    FanAssembly(&'a FanAssemblyVpd),
     Tmp117(&'a Tmp117Identity),
 }
 
@@ -55,8 +52,7 @@ impl<'a> From<&'a Vpd> for VpdRef<'a> {
     fn from(value: &'a Vpd) -> Self {
         match value {
             Vpd::Pmbus(vpd) => Self::Pmbus(vpd),
-            Vpd::OxideBarcode(identity) => Self::OxideBarcode(identity),
-            Vpd::Mpn1Barcode(identity) => Self::Mpn1Barcode(identity),
+            Vpd::Barcode(identity) => Self::Barcode(identity),
             Vpd::FanAssembly(identity) => Self::FanAssembly(identity),
             Vpd::Tmp117(identity) => Self::Tmp117(identity),
         }
@@ -67,70 +63,21 @@ impl fmt::Display for VpdRef<'_> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::Pmbus(vpd) => vpd.fmt(f),
-            Self::OxideBarcode(identity) => identity.fmt(f),
-            Self::Mpn1Barcode(identity) => identity.fmt(f),
+            Self::Barcode(identity) => identity.fmt(f),
             Self::FanAssembly(identity) => identity.fmt(f),
             Self::Tmp117(identity) => identity.fmt(f),
         }
     }
 }
+/// Maximum length to represent a barcode is determined based on the max
+/// length of the MPN1 format, per [§7.2 RFD308]. An 0XV1 or 0XV2 barcode
+/// will be much shorter.
+///
+/// [§7.2 RFD308]: https://rfd.shared.oxide.computer/rfd/0308#fmt-mpn.
+pub const MAX_BARCODE_LEN: usize = 128;
 
-#[derive(
-    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub enum Barcode {
-    Oxide(OxideIdentity),
-    Mpn1(Mpn1Identity),
-}
-
-impl fmt::Display for Barcode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Oxide(identity) => identity.fmt(f),
-            Self::Mpn1(identity) => identity.fmt(f),
-        }
-    }
-}
-
-/// An Oxide-assigned VPD identity.
-#[derive(
-    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub struct OxideIdentity {
-    // Serial and revision are only 11 bytes in practice; we have plenty of room
-    // so we'll leave the fields wider in case we grow it in the future. The
-    // values are 0-padded.
-    pub serial_number: NullStr<32>,
-    pub model: NullStr<32>,
-    pub revision: u32,
-}
-
-impl fmt::Display for OxideIdentity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { serial_number, model, revision } = self;
-        write!(f, "0XV2:{model}:{revision:03}:{serial_number}")?;
-        Ok(())
-    }
-}
-
-/// An MPN1 identity
-#[derive(
-    Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
-)]
-pub struct Mpn1Identity {
-    pub manufacturer: NullStr<32>,
-    pub model: NullStr<32>,
-    pub revision: NullStr<32>,
-    pub serial_number: NullStr<32>,
-}
-
-impl fmt::Display for Mpn1Identity {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let Self { manufacturer, model, revision, serial_number } = self;
-        write!(f, "MPN1:{manufacturer}:{model}:{revision}:{serial_number}")?;
-        Ok(())
-    }
-}
+/// A barcode in any of the 0XV1, 0XV2, or MPN1 formats (see [RFD308]).
+pub type Barcode = NullStr<MAX_BARCODE_LEN>;
 
 /// Vital product data for a PMBus device.
 ///
@@ -321,20 +268,19 @@ impl<'de> Deserialize<'de> for SmbusBlock {
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct FanAssemblyIdentity {
+pub struct FanAssemblyVpd {
     /// Identity of the fan assembly.
-    pub identity: OxideIdentity,
+    pub identity: Barcode,
     /// Identity of the VPD board within the fan assembly.
-    pub vpd_board_identity: OxideIdentity,
+    pub vpd_board_identity: Barcode,
     /// Identities of the individual fans.
     ///
     /// Depending on the time of manufacture, the fans may be identified by
-    /// either an `0XV1` or `0XV2` barcode ([`OxideIdentity`]) or a `MPN1`
-    /// barcode ([`Mpn1Identity`]).
+    /// either an `0XV1`, `0XV2`, or `MPN1` barcode.
     pub fans: [Barcode; 3],
 }
 
-impl fmt::Display for FanAssemblyIdentity {
+impl fmt::Display for FanAssemblyVpd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "FAN TRAY:  {}", self.identity)?;
         writeln!(f, "VPD BOARD: {}", self.vpd_board_identity)?;
@@ -374,25 +320,8 @@ static_assertions::const_assert!(Vpd::MAX_SIZE <= crate::MIN_TRAILING_DATA_LEN);
 mod tests {
     use super::*;
 
-    fn oxide_identity(
-        model: &str,
-        revision: u32,
-        serial_number: &str,
-    ) -> OxideIdentity {
-        OxideIdentity {
-            serial_number: serial_number.try_into().unwrap(),
-            model: model.try_into().unwrap(),
-            revision,
-        }
-    }
-
-    fn mpn1_identity(serial_number: &str) -> Mpn1Identity {
-        Mpn1Identity {
-            manufacturer: "Joe's Stuff".try_into().unwrap(),
-            model: "Thingy 2000".try_into().unwrap(),
-            revision: "revision".try_into().unwrap(),
-            serial_number: serial_number.try_into().unwrap(),
-        }
+    fn barcode(value: &str) -> Barcode {
+        value.try_into().unwrap()
     }
 
     fn smbus_block(value: &[u8]) -> SmbusBlock {
@@ -431,27 +360,19 @@ mod tests {
 
     #[test]
     fn borrowed_and_owned_encodings_match() {
-        let oxide = oxide_identity("913-000000", 3, "BRM41210001");
-        let mpn1 = mpn1_identity("mpn1-serial");
+        let oxide = barcode("0XV2:913-000000:003:BRM41210001");
+        let mpn1 = barcode("MPN1:Joe's Stuff:Thingy 2000:revision:mpn1-serial");
         let values = [
             Vpd::Pmbus(pmbus_vpd()),
-            Vpd::OxideBarcode(oxide.clone()),
-            Vpd::Mpn1Barcode(mpn1.clone()),
-            Vpd::FanAssembly(FanAssemblyIdentity {
-                identity: oxide.clone(),
+            Vpd::Barcode(oxide),
+            Vpd::Barcode(mpn1),
+            Vpd::FanAssembly(FanAssemblyVpd {
+                identity: oxide,
                 vpd_board_identity: oxide,
                 fans: [
-                    Barcode::Mpn1(mpn1.clone()),
-                    Barcode::Oxide(oxide_identity(
-                        "913-00005",
-                        1,
-                        "BRM41210002",
-                    )),
-                    Barcode::Oxide(oxide_identity(
-                        "913-00005",
-                        2,
-                        "BRM41210003",
-                    )),
+                    mpn1,
+                    barcode("0XV2:913-00005:001:BRM41210002"),
+                    barcode("0XV2:913-00005:002:BRM41210003"),
                 ],
             }),
             Vpd::Tmp117(Tmp117Identity {
