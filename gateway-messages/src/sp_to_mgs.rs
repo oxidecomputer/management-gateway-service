@@ -1064,6 +1064,40 @@ bitflags! {
         /// capabilities, rather than assuming that they will be present if a
         /// device `IS_PMBUS`.
         const IS_PMBUS = 1 << 5;
+        /// This device is removeable (without an undue degree of violence)
+        /// while the service processor is powered on.
+        ///
+        /// Many components of a server, power shelf, or switch are removeable.
+        /// More of them are removeable if one is armed with a soldering iron or
+        /// hot-air rework tool. Even more are removeable with the assistance of
+        /// a dremel tool or angle grinder. This bit, however, is intended to
+        /// indicate a very specific thing: whether the identity of a component
+        /// may *change* without requiring a reset of the service processor.
+        /// This indicates whether the control plane may expect to see the
+        /// device's presence change, or its VPD identity change, during
+        /// normal and normal-ish operation.
+        ///
+        /// Interestingly, many components which are field-repleaceable and even
+        /// customer-replaceable units (FRU and CRUs, respectively) may not need
+        /// to set this bit. For example, the fan tray on a Cosmo or Gimlet
+        /// compute sled is certainly customer replaceable, but it may not be
+        /// replaced without pulling the sled out of the rack. Pulling the sled
+        /// out of the rack disconnects its service processor from both power
+        /// and from the management network, and when it is put back, the
+        /// control plane will completely re-inventory its components and notice
+        /// the new fan tray's identity even if the SP does not advertise that
+        /// the fan tray was REMOVEABLE.
+        ///
+        /// On the other hand, if a component on a sled may be removed without
+        /// removing it from the rack, but requires a power-down of the host
+        /// processor, it *should* set this bit.[^1] This bit is intended
+        /// specifically to tell MGS whether the VPD identity of a FRU may
+        /// change whilst it is still talking to the same SP restart.
+        ///
+        /// [^1]: Note that there are presently no such devices on current
+        ///       generation Oxide sleds, but imagine with me for a moment, if
+        ///       you will...
+        const REMOVEABLE = 1 << 6;
         // MGS has a placeholder API for powering off an individual component;
         // do we want to keep that? If so, add a bit for "can be powered on and
         // off".
