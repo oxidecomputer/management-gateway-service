@@ -79,6 +79,8 @@ impl fmt::Display for VpdRef<'_> {
 pub const MAX_BARCODE_LEN: usize = 128;
 
 /// A barcode in any of the 0XV1, 0XV2, or MPN1 formats (see [RFD308]).
+///
+/// [RFD308]: https://rfd.shared.oxide.computer/rfd/0308
 pub type Barcode = NullStr<MAX_BARCODE_LEN>;
 
 /// Vital product data for a PMBus device.
