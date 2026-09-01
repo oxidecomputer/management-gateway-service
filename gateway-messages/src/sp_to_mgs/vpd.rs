@@ -187,21 +187,47 @@ impl SmbusBlock {
     ///
     /// The provided read function should return an `Option<usize>`, with `None`
     /// indicating that the device does not support this VPD command, and
-    /// `Some(len)` indicating the number of bytes read. Since SMBus block reads
-    /// may not be greater than 32 bytes in length, the provided buffer is
-    /// always 32 bytes long.
+    /// `Some(len)` indicating the number of bytes read.
+    ///
+    /// The remaining length of the `SmbusBlock`'s buffer after the portion
+    /// filled by the read function is zeroed after reading into it. If the read
+    /// function returns an error, returns `None` to indicate that the register
+    /// is unsupported by the device, or returns a length greater than the
+    /// length of the buffer, the `SmbusBlock` is zeroed completely, and this
+    /// function returns an error and the buffer is zeroed completely.
     pub fn read_into<E>(
         &mut self,
         f: impl FnOnce(&mut [u8; SmbusBlock::MAX_LEN]) -> Result<Option<usize>, E>,
-    ) -> Result<(), E> {
-        self.len =
-            f(&mut self.bytes)?.map(|len| len.min(SmbusBlock::MAX_LEN) as u8);
-        // Zero any remaining bytes (or the whole buffer, if nothing was read)
+    ) -> Result<Option<usize>, SmbusReadIntoError<E>> {
+        let result = f(&mut self.bytes)
+            .map_err(SmbusReadIntoError::ReadError)
+            .and_then(|len| {
+                if len > Some(SmbusBlock::MAX_LEN) {
+                    Err(SmbusReadIntoError::ReadTooLong)
+                } else {
+                    Ok(len)
+                }
+            });
+
+        // Based on the result of the read, set the length field for this
+        // `SmbusBlock`.
+        self.len = result
+            .as_ref()
+            .unwrap_or(&None)
+            .as_ref()
+            // Casting this to a u8 unconditionally is okay since the
+            // `and_then` closure above checks that it is less than MAX_LEN,
+            // which is, of course, less than u8::MAX. :)
+            .map(|&len| len as u8);
+
+        // Zero any remaining bytes (or the whole buffer, if nothing was
+        // read/the read failed).
         let start = self.len.unwrap_or(0) as usize;
         for byte in &mut self.bytes[start..] {
             *byte = 0;
         }
-        Ok(())
+
+        result
     }
 
     /// Returns the response bytes, or `None` if the command is unsupported.
@@ -264,6 +290,23 @@ impl<'de> Deserialize<'de> for SmbusBlock {
 
         Ok(Self { len, bytes })
     }
+}
+
+/// Errors returned by [`SmbusBlock::read_into`].
+///
+/// Any of these errors being returned indicates that the [`SmbusBlock`] may
+/// not have contained valid UTF-8 bytes after the read operation, and was
+/// therefore zeroed in its entireity.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+pub enum SmbusReadIntoError<E> {
+    /// The read function returned an error (such as an I/O error).
+    ReadError(E),
+    /// The read function returned a length greater than
+    /// [`SmbusBlock::MAX_LEN`]. It probably did not actually read that many
+    /// bytes, since it was not given a sufficiently long buffer to read into.
+    /// But, this almost certainly indicates that the read function is in some
+    /// way broken.
+    ReadTooLong,
 }
 
 /// VPD for a compute sled fan subassembly.
