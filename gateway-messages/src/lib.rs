@@ -465,13 +465,13 @@ mod nullstr {
         /// Read bytes into this `NullStr` in a closure that returns the number
         /// of bytes written, or an error.
         ///
-        /// The remaining length `NullStr` after the portion filled by the read
-        /// function is zeroed after reading into it. If the read function
-        /// returns an error, or reads any non-UTF-8 bytes into the buffer, the
-        /// `NullStr` is zeroed completely, and this function returns an error.
-        /// Finally, if the read function returns a length greater than the
-        /// length of the buffer, this function returns an error and the buffer
-        /// is zeroed completely.
+        /// The remaining length of the `NullStr`'s buffer after the portion
+        /// filled by the read function is zeroed after reading into it. If the
+        /// read function returns an error, or reads any non-UTF-8 bytes into
+        /// the buffer, the `NullStr` is zeroed completely, and this function
+        /// returns an error. Finally, if the read function returns a length
+        /// greater than the length of the buffer, this function returns an
+        /// error and the buffer is zeroed completely.
         pub fn read_into<E>(
             &mut self,
             read: impl FnOnce(&mut [u8; N]) -> Result<usize, E>,
@@ -480,15 +480,19 @@ mod nullstr {
                 .map_err(ReadIntoError::ReadError)
                 .and_then(|n| {
                     // Did the read uphold its side of the bargain and only fill
-                    // the buffer with UTF-8 bytes and return an in-bounds read
+                    // the buffer with UTF-8 bytes, and return an in-bounds read
                     // length?
-                    if str::from_utf8(&self.contents[..n]).is_err() {
-                        Err(ReadIntoError::NotUtf8)
-                    } else if n > N {
-                        Err(ReadIntoError::ReadTooLong)
-                    } else {
-                        Ok(n)
-                    }
+                    let read_contents = self
+                        .contents
+                        // This fails if `n > N`, indicating that `read`
+                        // returned an impossible length.
+                        .get(..n)
+                        .ok_or(ReadIntoError::ReadTooLong)?;
+
+                    str::from_utf8(read_contents)
+                        .map_err(|_| ReadIntoError::NotUtf8)?;
+
+                    Ok(n)
                 });
 
             // How many bytes must be zeroed? If the read failed, throw away the
