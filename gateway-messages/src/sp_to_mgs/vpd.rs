@@ -44,6 +44,25 @@ impl fmt::Display for Vpd {
 /// trailing-data buffer rather than constructing an owned [`Vpd`] on the stack.
 #[derive(Debug, Serialize)]
 pub enum VpdRef<'a> {
+    // /!\ ORDER MATTERS WARNING /!\
+    //
+    // `hubpack` serialization determines the tag for enum values based on the
+    // enum's Rust discriminant, which is determined based on the order in which
+    // the variants are declared when not explicitly overridden. Therefore,
+    // because this enum is intended to serialize identically to the owned `Vpd`
+    // enum, its variants must be declared in the same order as the
+    // corresponding variants of the owned enum. Of course, they are that way at
+    // present, and one would have to go somewhat substantially out of one's way
+    // to break this property while adding new variants, but, well...you
+    // shouldn't do that! Thanks for not doing it!
+    //
+    // N.B. that the `borrowed_and_owned_encodings_match` test below will
+    // *probably* break if you add a new variant in different positions in the
+    // two enums...unless you are adding multiple variants at the same time, and
+    // (for whatever reason) add them to the two enums in different orders, AND
+    // you don't add any of them to the test. At this point, it begins to sound
+    // almost like actively going out of your way to do it wrong. So, again,
+    // well...you shouldn't do that!
     Pmbus(&'a PmbusVpd),
     Barcode(&'a Barcode),
     FanAssembly(&'a FanAssemblyVpd),
@@ -293,6 +312,13 @@ impl<'de> Deserialize<'de> for SmbusBlock {
     where
         D: serde::Deserializer<'de>,
     {
+        // /!\ IMPORTANT WARNING /!\
+        //
+        // This MUST match the structure of the `SmbusBlock` type! This type
+        // exists so that we can derive `Deserialize` for an identically-shaped
+        // struct and then add additional checks for its validity upon
+        // deserializing it. That will, of course, not work if the two types
+        // drift. So don't do that!
         #[derive(Deserialize)]
         struct WireBlock {
             len: Option<u8>,
@@ -431,6 +457,8 @@ mod tests {
         out
     }
 
+    // Tests that `Vpd` and `VpdRef` can roundtrip between each other. When
+    // adding new variants, remember to add them to the list of `values` here!
     #[test]
     fn borrowed_and_owned_encodings_match() {
         let oxide = barcode("0XV2:913-000000:003:BRM41210001");
