@@ -168,6 +168,33 @@ impl fmt::Display for PmbusVpd {
 /// [smbus]: https://www.smbus.org/specs/SMBus_3_3_20230228.pdf
 #[derive(Debug, Clone, PartialEq, Eq, SerializedSize, Serialize)]
 pub struct SmbusBlock {
+    // The structure of this type may seem a bit weird, but it is intended to be
+    // able to represent a few things distinctly:
+    //
+    // - We did not send the device a particular PMBus command at all, because
+    //   it does not support that command and will NAK it,
+    //
+    // - We read a block of data from the device, which included some bytes that
+    //   were zero; these may be trailing zeroes,
+    //
+    // - The device responded to a read with a zero-length response.
+    //
+    // In order to represent all of these possibiliies, we must store the length
+    // of the buffer that contains bytes actually returned by the device, so
+    // that it is possible to distinguish trailing zero bytes actually read from
+    // a device from NUL padding inserted due to hubpack serialization
+    // requirements. Furthermore, we must *also* be able to distinguish a zero
+    // length because no bytes were read because the command was not supported
+    // from a zero-length response from the device.
+    //
+    // Thus, we arrive here. The `len` field is an `Option<u8>` that represents
+    // the number of bytes in the `bytes` array that were actually read over
+    // PMBus in response to a command. If the `len` is `None`, then the command
+    // is not believed to be supported by the device and therefore was not sent.
+    // If it is `Some`, then it contains the length of the response, which may
+    // be zero, but also may not be. Any zero bytes at indices within `len` were
+    // read from the device, and any zero bytes *past* len are `NUL`-padding
+    // inserted to satisfy hubpack serialization requirements.
     len: Option<u8>,
     bytes: [u8; SmbusBlock::MAX_LEN],
 }
