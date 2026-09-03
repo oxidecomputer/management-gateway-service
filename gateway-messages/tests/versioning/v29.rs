@@ -18,7 +18,7 @@
 use std::iter::repeat_n;
 
 use gateway_messages::vpd::{
-    FanAssemblyVpd, PmbusVpd, SmbusBlock, Tmp117Identity, Vpd,
+    PmbusVpd, SledFanTrayVpd, SmbusBlock, Tmp11xVpd, Vpd,
 };
 use gateway_messages::{MgsRequest, SpComponent, SpResponse};
 
@@ -155,7 +155,7 @@ fn fan_assembly_vpd() {
     const FAN_1: &str = "0XV2:913-00005:001:BRM41210002";
     const FAN_2: &str = "0XV2:913-00005:002:BRM41210003";
 
-    let vpd = Vpd::FanAssembly(FanAssemblyVpd {
+    let vpd = Vpd::SledFanTray(SledFanTrayVpd {
         identity: ASSEMBLY.try_into().unwrap(),
         vpd_board_identity: ASSEMBLY.try_into().unwrap(),
         fans: [
@@ -177,7 +177,7 @@ fn fan_assembly_vpd() {
 
 #[test]
 fn tmp117_vpd() {
-    let vpd = Vpd::Tmp117(Tmp117Identity {
+    let vpd = Vpd::Tmp11x(Tmp11xVpd {
         id: 0x117,
         eeprom1: 1,
         eeprom2: 2,

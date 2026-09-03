@@ -411,9 +411,9 @@ mod tests {
 
     #[test]
     fn test_component_vpd() {
-        use gateway_messages::vpd::Tmp117Identity;
+        use gateway_messages::vpd::Tmp11xVpd;
 
-        let expected = Vpd::Tmp117(Tmp117Identity {
+        let expected = Vpd::Tmp11x(Tmp11xVpd {
             id: 0x117,
             eeprom1: 1,
             eeprom2: 2,

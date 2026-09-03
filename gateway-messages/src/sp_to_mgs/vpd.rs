@@ -22,8 +22,8 @@ pub use nullstr::ReadIntoError as BarcodeReadError;
 pub enum Vpd {
     Pmbus(PmbusVpd),
     Barcode(Barcode),
-    FanAssembly(FanAssemblyVpd),
-    Tmp117(Tmp117Identity),
+    SledFanTray(SledFanTrayVpd),
+    Tmp11x(Tmp11xVpd),
 }
 
 impl fmt::Display for Vpd {
@@ -31,8 +31,8 @@ impl fmt::Display for Vpd {
         match self {
             Self::Pmbus(vpd) => vpd.fmt(f),
             Self::Barcode(identity) => identity.fmt(f),
-            Self::FanAssembly(identity) => identity.fmt(f),
-            Self::Tmp117(identity) => identity.fmt(f),
+            Self::SledFanTray(identity) => identity.fmt(f),
+            Self::Tmp11x(identity) => identity.fmt(f),
         }
     }
 }
@@ -65,8 +65,8 @@ pub enum VpdRef<'a> {
     // well...you shouldn't do that!
     Pmbus(&'a PmbusVpd),
     Barcode(&'a Barcode),
-    FanAssembly(&'a FanAssemblyVpd),
-    Tmp117(&'a Tmp117Identity),
+    FanAssembly(&'a SledFanTrayVpd),
+    Tmp117(&'a Tmp11xVpd),
 }
 
 impl<'a> From<&'a Vpd> for VpdRef<'a> {
@@ -74,8 +74,8 @@ impl<'a> From<&'a Vpd> for VpdRef<'a> {
         match value {
             Vpd::Pmbus(vpd) => Self::Pmbus(vpd),
             Vpd::Barcode(identity) => Self::Barcode(identity),
-            Vpd::FanAssembly(identity) => Self::FanAssembly(identity),
-            Vpd::Tmp117(identity) => Self::Tmp117(identity),
+            Vpd::SledFanTray(identity) => Self::FanAssembly(identity),
+            Vpd::Tmp11x(identity) => Self::Tmp117(identity),
         }
     }
 }
@@ -368,7 +368,7 @@ pub enum SmbusReadIntoError<E> {
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct FanAssemblyVpd {
+pub struct SledFanTrayVpd {
     /// Identity of the fan assembly.
     pub identity: Barcode,
     /// Identity of the VPD board within the fan assembly.
@@ -380,7 +380,7 @@ pub struct FanAssemblyVpd {
     pub fans: [Barcode; 3],
 }
 
-impl fmt::Display for FanAssemblyVpd {
+impl fmt::Display for SledFanTrayVpd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "fan tray    : {}", self.identity)?;
         writeln!(f, "  VPD board : {}", self.vpd_board_identity)?;
@@ -391,11 +391,11 @@ impl fmt::Display for FanAssemblyVpd {
     }
 }
 
-/// Identity of a TMP117 temperature sensor.
+/// Identity of a TMP116 or TMP117 temperature sensor.
 #[derive(
     Debug, Clone, PartialEq, Eq, SerializedSize, Serialize, Deserialize,
 )]
-pub struct Tmp117Identity {
+pub struct Tmp11xVpd {
     /// Device ID (register 0x0F)
     pub id: u16,
     /// 48-bit NIST traceability data
@@ -404,12 +404,12 @@ pub struct Tmp117Identity {
     pub eeprom3: u16,
 }
 
-impl fmt::Display for Tmp117Identity {
+impl fmt::Display for Tmp11xVpd {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         writeln!(f, "device ID : {:#06x}", self.id)?;
-        writeln!(f, "  EEPROM1 : {:#06x}", self.eeprom1)?;
-        writeln!(f, "  EEPROM2 : {:#06x}", self.eeprom2)?;
-        writeln!(f, "  EEPROM3 : {:#06x}", self.eeprom3)
+        writeln!(f, "EEPROM1   : {:#06x}", self.eeprom1)?;
+        writeln!(f, "EEPROM2   : {:#06x}", self.eeprom2)?;
+        writeln!(f, "EEPROM3   : {:#06x}", self.eeprom3)
     }
 }
 
@@ -467,7 +467,7 @@ mod tests {
             Vpd::Pmbus(pmbus_vpd()),
             Vpd::Barcode(oxide),
             Vpd::Barcode(mpn1),
-            Vpd::FanAssembly(FanAssemblyVpd {
+            Vpd::SledFanTray(SledFanTrayVpd {
                 identity: oxide,
                 vpd_board_identity: oxide,
                 fans: [
@@ -476,7 +476,7 @@ mod tests {
                     barcode("0XV2:913-00005:002:BRM41210003"),
                 ],
             }),
-            Vpd::Tmp117(Tmp117Identity {
+            Vpd::Tmp11x(Tmp11xVpd {
                 id: 0x117,
                 eeprom1: 1,
                 eeprom2: 2,
