@@ -99,6 +99,7 @@ M.mgs_request.names = {
     [52] = "GetHostPanicPayload",
     [53] = "GetHostBootfailPayload",
     [54] = "GetPowerStateWithReason",
+    [55] = "ComponentGetVpd",
 }
 M.mgs_request.handlers = {
     [0] = "dissect_discover",
@@ -156,6 +157,7 @@ M.mgs_request.handlers = {
     [52] = "dissect_get_host_panic_payload",
     [53] = "dissect_get_host_bootfail_payload",
     [54] = "dissect_get_power_state_with_reason",
+    [55] = "dissect_component_get_vpd",
 }
 M.mgs_request.field = ProtoField.uint8(
     "mgs.mgs_request",
@@ -351,6 +353,7 @@ M.sp_response.names = {
     [54] = "HostPanicPayload",
     [55] = "HostBootfailPayload",
     [56] = "PowerStateWithReason",
+    [57] = "ComponentVpd",
 }
 M.sp_response.handlers = {
     [0] = "dissect_discover",
@@ -410,6 +413,7 @@ M.sp_response.handlers = {
     [54] = "dissect_host_panic_payload",
     [55] = "dissect_host_bootfail_payload",
     [56] = "dissect_power_state_with_reason",
+    [57] = "dissect_component_vpd",
 }
 M.sp_response.field = ProtoField.uint8(
     "mgs.sp_response",

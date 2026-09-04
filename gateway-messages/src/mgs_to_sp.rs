@@ -270,6 +270,14 @@ pub enum MgsRequest {
 
     /// See also: `GetPowerState`
     GetPowerStateWithReason,
+
+    /// Reads vital product data (VPD) for a component.
+    ///
+    /// The resulting [`Vpd`](crate::vpd::Vpd) is serialized in the packet's
+    /// trailing data.
+    ComponentGetVpd {
+        component: SpComponent,
+    },
 }
 
 /// Request information for Host Bootfail or Host Panic data

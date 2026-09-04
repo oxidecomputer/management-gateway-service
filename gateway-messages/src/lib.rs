@@ -72,7 +72,7 @@ pub const HF_PAGE_SIZE: usize = 256;
 /// for more detail and discussion.
 pub mod version {
     pub const MIN: u32 = 2;
-    pub const CURRENT: u32 = 28;
+    pub const CURRENT: u32 = 29;
 
     /// MGS protocol version in which SP watchdog messages were added
     pub const WATCHDOG_VERSION: u32 = 12;
@@ -352,6 +352,11 @@ mod nullstr {
     }
 
     impl<const N: usize> NullStr<N> {
+        /// A completely empty `NullStr`. This is mostly only useful when
+        /// const-initializing an empty`NullStr` for use with
+        /// [`Self::read_into`].
+        pub const EMPTY: Self = NullStr { contents: [0; N] };
+
         /// Create a [`NullStr`] from the given slice.
         ///
         /// This function has some Interesting Details:
@@ -456,6 +461,72 @@ mod nullstr {
         pub fn contents(&self) -> &[u8; N] {
             &self.contents
         }
+
+        /// Read bytes into this `NullStr` in a closure that returns the number
+        /// of bytes written, or an error.
+        ///
+        /// The remaining length of the `NullStr`'s buffer after the portion
+        /// filled by the read function is zeroed after reading into it. If the
+        /// read function returns an error, or reads any non-UTF-8 bytes into
+        /// the buffer, the `NullStr` is zeroed completely, and this function
+        /// returns an error. Finally, if the read function returns a length
+        /// greater than the length of the buffer, this function returns an
+        /// error and the buffer is zeroed completely.
+        pub fn read_into<E>(
+            &mut self,
+            read: impl FnOnce(&mut [u8; N]) -> Result<usize, E>,
+        ) -> Result<usize, ReadIntoError<E>> {
+            let result = read(&mut self.contents)
+                .map_err(ReadIntoError::ReadError)
+                .and_then(|n| {
+                    // Did the read uphold its side of the bargain and only fill
+                    // the buffer with UTF-8 bytes, and return an in-bounds read
+                    // length?
+                    let read_contents = self
+                        .contents
+                        // This fails if `n > N`, indicating that `read`
+                        // returned an impossible length.
+                        .get(..n)
+                        .ok_or(ReadIntoError::ReadTooLong)?;
+
+                    str::from_utf8(read_contents)
+                        .map_err(|_| ReadIntoError::NotUtf8)?;
+
+                    Ok(n)
+                });
+
+            // How many bytes must be zeroed? If the read failed, throw away the
+            // whole thing.
+            let len = result.as_ref().ok().copied().unwrap_or(0);
+            for byte in self
+                .contents
+                .get_mut(len..)
+                .into_iter()
+                .flat_map(|bytes| bytes.iter_mut())
+            {
+                *byte = 0;
+            }
+            result
+        }
+    }
+
+    /// Errors returned by [`NullStr::read_into`].
+    ///
+    /// Any of these errors being returned indicates that the [`NullStr`] may
+    /// not have contained valid UTF-8 bytes after the read operation, and was
+    /// therefore zeroed in its entireity.
+    #[derive(Copy, Clone, Debug, PartialEq, Eq)]
+    pub enum ReadIntoError<E> {
+        /// The read function returned an error (such as an I/O error).
+        ReadError(E),
+        /// The read function read non-UTF-8 bytes into the [`NullStr`].
+        NotUtf8,
+        /// The read function returned a length greater than the buffer size of
+        /// the `NullStr`. It probably did not actually read that many bytes,
+        /// since it was not given a sufficiently long buffer to read into. But,
+        /// this almost certainly indicates that the read function is in some
+        /// way broken.
+        ReadTooLong,
     }
 
     impl<const N: usize> Serialize for NullStr<N> {

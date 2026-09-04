@@ -212,4 +212,8 @@ M.dissect_power_state_with_reason = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse SpResponse power_state_with_reason')
 end
 
+M.dissect_component_vpd = function(buffer, pinfo, tree)
+    tree:add(buffer, 'TODO: parse SpResponse component_vpd')
+end
+
 return M

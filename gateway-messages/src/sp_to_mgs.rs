@@ -30,6 +30,7 @@ pub mod ignition;
 pub mod measurement;
 pub mod monorail_port_status;
 pub mod tofino;
+pub mod vpd;
 
 pub use host_cpu_details::GpioToggleCount;
 pub use host_cpu_details::LastPostCode;
@@ -239,6 +240,11 @@ pub enum SpResponse {
 
     /// Response to a `GetPowerStateWithReason` request
     PowerStateWithReason(PowerStateWithReason),
+
+    /// Response to a [`crate::MgsRequest::ComponentGetVpd`] request.
+    ///
+    /// The packet's trailing data contains one hubpack-encoded [`vpd::Vpd`].
+    ComponentVpd,
 }
 
 #[derive(

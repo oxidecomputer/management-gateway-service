@@ -203,4 +203,8 @@ M.dissect_get_power_state_with_reason = function(buffer, pinfo, tree)
     tree:add(buffer, 'TODO: parse MgsRequest get_power_state_with_reason')
 end
 
+M.dissect_component_get_vpd = function(buffer, pinfo, tree)
+    tree:add(buffer, 'TODO: parse MgsRequest component_get_vpd')
+end
+
 return M
