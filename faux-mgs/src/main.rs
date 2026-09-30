@@ -28,7 +28,6 @@ use gateway_messages::MonorailComponentActionResponse;
 use gateway_messages::PmbusStatus;
 use gateway_messages::PowerRailName;
 use gateway_messages::PowerState;
-use gateway_messages::PowerStateWithReason;
 use gateway_messages::ROT_PAGE_SIZE;
 use gateway_messages::RotBootInfo;
 use gateway_messages::SpComponent;
@@ -2038,24 +2037,15 @@ async fn run_command(
                     )]))
                 }
             } else {
-                let PowerStateWithReason { state, reason, since } = sp
-                    .power_state_with_reason()
+                let state = sp
+                    .power_state()
                     .await
                     .context("failed to get power state")?;
-                info!(
-                    log,
-                    "SP power state = {state:?}, reason = {reason:?}, since = {since:?}ms"
-                );
+                info!(log, "SP power state = {state:?}");
                 if json {
-                    Ok(Output::Json(
-                        json!({ "state": state, "reason": reason, "since": since }),
-                    ))
+                    Ok(Output::Json(json!({ "state": state })))
                 } else {
-                    Ok(Output::Lines(vec![
-                        format!("{state:?}"),
-                        format!("{reason:?}"),
-                        format!("{since:?}"),
-                    ]))
+                    Ok(Output::Lines(vec![format!("{state:?}")]))
                 }
             }
         }
