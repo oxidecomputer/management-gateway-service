@@ -1194,7 +1194,7 @@ dependencies = [
  "socket2 0.6.1",
  "string_cache",
  "thiserror 2.0.17",
- "tlvc 0.3.1",
+ "tlvc 0.4.1 (git+https://github.com/oxidecomputer/tlvc.git)",
  "tokio",
  "usdt",
  "uuid",
@@ -1407,7 +1407,7 @@ dependencies = [
  "path-slash",
  "rsa",
  "thiserror 2.0.17",
- "tlvc 0.4.1",
+ "tlvc 0.4.1 (git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3)",
  "tlvc-text",
  "toml 1.1.5+spec-1.1.0",
  "x509-cert",
@@ -3505,18 +3505,19 @@ dependencies = [
 
 [[package]]
 name = "tlvc"
-version = "0.3.1"
-source = "git+https://github.com/oxidecomputer/tlvc.git?branch=main#e644a21a7ca973ed31499106ea926bd63ebccc6f"
+version = "0.4.1"
+source = "git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3#7a96eab94c8aec9120412d8601ffd68853957da3"
 dependencies = [
- "byteorder",
  "crc",
- "zerocopy 0.6.6",
+ "thiserror 2.0.17",
+ "zerocopy 0.8.27",
+ "zerocopy-derive 0.8.27",
 ]
 
 [[package]]
 name = "tlvc"
 version = "0.4.1"
-source = "git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3#7a96eab94c8aec9120412d8601ffd68853957da3"
+source = "git+https://github.com/oxidecomputer/tlvc.git#7a96eab94c8aec9120412d8601ffd68853957da3"
 dependencies = [
  "crc",
  "thiserror 2.0.17",
@@ -3531,7 +3532,7 @@ source = "git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d86
 dependencies = [
  "ron",
  "serde",
- "tlvc 0.4.1",
+ "tlvc 0.4.1 (git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3)",
  "zerocopy 0.8.27",
 ]
 
@@ -4409,16 +4410,6 @@ dependencies = [
 
 [[package]]
 name = "zerocopy"
-version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "854e949ac82d619ee9a14c66a1b674ac730422372ccb759ce0c39cabcf2bf8e6"
-dependencies = [
- "byteorder",
- "zerocopy-derive 0.6.6",
-]
-
-[[package]]
-name = "zerocopy"
 version = "0.7.35"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1b9b4fd18abc82b8136838da5d50bae7bdea537c574d8dc1a34ed098d6c166f0"
@@ -4434,17 +4425,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0894878a5fa3edfd6da3f88c4805f4c8558e2b996227a3d864f47fe11e38282c"
 dependencies = [
  "zerocopy-derive 0.8.27",
-]
-
-[[package]]
-name = "zerocopy-derive"
-version = "0.6.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "125139de3f6b9d625c39e2efdd73d41bdac468ccd556556440e322be0e1bbd91"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn 2.0.104",
 ]
 
 [[package]]
