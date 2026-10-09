@@ -1194,7 +1194,7 @@ dependencies = [
  "socket2 0.6.1",
  "string_cache",
  "thiserror 2.0.17",
- "tlvc 0.4.1 (git+https://github.com/oxidecomputer/tlvc.git)",
+ "tlvc",
  "tokio",
  "usdt",
  "uuid",
@@ -1407,7 +1407,7 @@ dependencies = [
  "path-slash",
  "rsa",
  "thiserror 2.0.17",
- "tlvc 0.4.1 (git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3)",
+ "tlvc",
  "tlvc-text",
  "toml 1.1.5+spec-1.1.0",
  "x509-cert",
@@ -3506,18 +3506,7 @@ dependencies = [
 [[package]]
 name = "tlvc"
 version = "0.4.1"
-source = "git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3#7a96eab94c8aec9120412d8601ffd68853957da3"
-dependencies = [
- "crc",
- "thiserror 2.0.17",
- "zerocopy 0.8.27",
- "zerocopy-derive 0.8.27",
-]
-
-[[package]]
-name = "tlvc"
-version = "0.4.1"
-source = "git+https://github.com/oxidecomputer/tlvc.git#7a96eab94c8aec9120412d8601ffd68853957da3"
+source = "git+https://github.com/oxidecomputer/tlvc.git?rev=7a96eab94c8aec9120412d8601ffd68853957da3#7a96eab94c8aec9120412d8601ffd68853957da3"
 dependencies = [
  "crc",
  "thiserror 2.0.17",
@@ -3528,11 +3517,11 @@ dependencies = [
 [[package]]
 name = "tlvc-text"
 version = "0.4.0"
-source = "git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3#7a96eab94c8aec9120412d8601ffd68853957da3"
+source = "git+https://github.com/oxidecomputer/tlvc.git?rev=7a96eab94c8aec9120412d8601ffd68853957da3#7a96eab94c8aec9120412d8601ffd68853957da3"
 dependencies = [
  "ron",
  "serde",
- "tlvc 0.4.1 (git+https://github.com/oxidecomputer/tlvc?rev=7a96eab94c8aec9120412d8601ffd68853957da3)",
+ "tlvc",
  "zerocopy 0.8.27",
 ]
 

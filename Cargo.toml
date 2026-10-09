@@ -18,7 +18,7 @@ default-members = [
 resolver = "2"
 
 [workspace.dependencies]
-tlvc = { git = "https://github.com/oxidecomputer/tlvc.git", version = "0.4.1" }
+tlvc = { git = "https://github.com/oxidecomputer/tlvc.git", rev = "7a96eab94c8aec9120412d8601ffd68853957da3" }
 turin-post-decoder = { git = "https://github.com/oxidecomputer/turin-post-decoder", branch = "master" }
 hubtools = { git = "https://github.com/oxidecomputer/hubtools.git", rev = "87881bd389025f7c5692c0be153452c11ae3312e" }
 slog-error-chain = { git = "https://github.com/oxidecomputer/slog-error-chain.git", branch = "main", features = ["derive"] }
