@@ -20,7 +20,7 @@ use gateway_messages::ignition::SystemType;
 
 #[test]
 fn observer_metro_ignition() {
-    // We technically only need `Cosmo` but test everything else
+    // We technically only need `Metro` and `Observer` but test everything else
     // here again for good measure
     for (system_type, system_type_val) in [
         (SystemType::Gimlet, &[0_u8] as &[_]),
