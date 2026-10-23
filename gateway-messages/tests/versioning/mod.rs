@@ -35,6 +35,7 @@ mod v26;
 mod v27;
 mod v28;
 mod v29;
+mod v30;
 
 #[track_caller]
 pub fn assert_serialized<T: Serialize + SerializedSize + std::fmt::Debug>(
