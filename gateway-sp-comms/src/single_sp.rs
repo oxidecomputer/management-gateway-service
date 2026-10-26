@@ -656,6 +656,16 @@ impl SingleSp {
             .and_then(expect_component_clear_status_ack)
     }
 
+    /// Check whether a component supports the reset watchdog.
+    pub async fn component_watchdog_supported(
+        &self,
+        component: SpComponent,
+    ) -> Result<()> {
+        self.rpc(MgsRequest::ComponentWatchdogSupported { component })
+            .await
+            .and_then(expect_component_watchdog_supported_ack)
+    }
+
     /// Request the current system time and interpret it into a [`Duration`].
     pub async fn current_time(&self) -> Result<Duration> {
         let raw = self.current_time_raw().await?;
@@ -1000,13 +1010,8 @@ impl SingleSp {
                 UpdateStatus::Complete(..)
             );
         if use_watchdog {
-            let response = self
-                .rpc(MgsRequest::ComponentWatchdogSupported { component })
-                .await;
-            match response {
-                Ok(v) => {
-                    expect_component_watchdog_supported_ack(v)?;
-                }
+            match self.component_watchdog_supported(component).await {
+                Ok(()) => {}
                 Err(CommunicationError::SpError(
                     SpError::RequestUnsupportedForComponent,
                 )) => {
