@@ -114,6 +114,8 @@ pub enum SystemType {
     Psc,
     Unknown(u16),
     Cosmo,
+    Metro,
+    Observer,
 }
 
 #[cfg(feature = "std")]
@@ -124,6 +126,8 @@ impl std::fmt::Display for SystemType {
             SystemType::Sidecar => write!(f, "Sidecar"),
             SystemType::Psc => write!(f, "PSC"),
             SystemType::Cosmo => write!(f, "Cosmo"),
+            SystemType::Metro => write!(f, "Metro"),
+            SystemType::Observer => write!(f, "Observer"),
             SystemType::Unknown(u) => write!(f, "Unknown ({u})"),
         }
     }
@@ -136,17 +140,27 @@ impl From<u16> for SystemType {
             raw_system_type::SIDECAR => Self::Sidecar,
             raw_system_type::PSC => Self::Psc,
             raw_system_type::COSMO => Self::Cosmo,
+            raw_system_type::METRO => Self::Metro,
+            raw_system_type::OBSERVER => Self::Observer,
             _ => Self::Unknown(val),
         }
     }
 }
 
-// Constant values from RFD 141.
+// Constant values from RFD 142.
 mod raw_system_type {
+    // Compute Socket SP3
     pub(super) const GIMLET: u16 = 0b0000_0000_0001_0001;
+    // Rack switch
     pub(super) const SIDECAR: u16 = 0b0000_0000_0001_0010;
+    // Power Shelf Controller (Original)
     pub(super) const PSC: u16 = 0b0000_0000_0001_0011;
+    // Socket SP5
     pub(super) const COSMO: u16 = 0b0000_0000_0000_0100;
+    // Socket SP5 plus network
+    pub(super) const METRO: u16 = 0b0000_0000_0000_0101;
+    // Power Shelf Controller version 2
+    pub(super) const OBSERVER: u16 = 0b0000_0000_0000_0110;
 }
 
 #[derive(
