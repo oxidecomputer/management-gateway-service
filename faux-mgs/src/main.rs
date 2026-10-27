@@ -275,6 +275,12 @@ enum Command {
         component: SpComponent,
     },
 
+    /// Ask the SP whether a component supports the reset watchdog.
+    ComponentWatchdogSupported {
+        #[clap(value_parser = parse_sp_component)]
+        component: SpComponent,
+    },
+
     /// Ask the SP for its current system time (interpreted as human time or as
     /// a raw value).
     CurrentTime {
@@ -1890,6 +1896,15 @@ async fn run_command(
                 Ok(Output::Json(json!({ "ack": "cleared" })))
             } else {
                 Ok(Output::Lines(vec!["status cleared".to_string()]))
+            }
+        }
+        Command::ComponentWatchdogSupported { component } => {
+            sp.component_watchdog_supported(component).await?;
+            info!(log, "watchdog supported for component {component}");
+            if json {
+                Ok(Output::Json(json!({ "ack": "supported" })))
+            } else {
+                Ok(Output::Lines(vec!["watchdog supported".to_string()]))
             }
         }
         Command::CurrentTime { raw } => {
