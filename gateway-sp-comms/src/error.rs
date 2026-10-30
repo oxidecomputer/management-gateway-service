@@ -135,8 +135,6 @@ pub enum UpdateError {
     CorruptTlvc(String),
     #[error("failed to send update message to SP")]
     Communication(#[from] CommunicationError),
-    #[error("invalid zip archive")]
-    InvalidArchive,
     #[error("invalid slot ID for operation")]
     InvalidSlotIdForOperation,
     #[error("invalid component for device")]

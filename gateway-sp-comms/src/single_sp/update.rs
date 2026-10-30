@@ -30,7 +30,6 @@ use slog::info;
 use slog::warn;
 use std::convert::TryInto;
 use std::io::Cursor;
-use std::io::Read;
 use std::time::Duration;
 use tlvc::TlvcReader;
 use tokio::sync::mpsc;
@@ -312,52 +311,6 @@ fn read_auxi_check_from_tlvc(data: &[u8]) -> Result<[u8; 32], UpdateError> {
     })
 }
 
-/// Isolate extraction of bootleby from old-format archives.
-// TODO: When old-format archives are eliminated from customer
-// racks and spares inventory, then this code can be removed.
-fn bootleby_from_old_style_archive(
-    image: Vec<u8>,
-    log: &Logger,
-) -> Result<Vec<u8>, UpdateError> {
-    // Try the pre-v1.2.0 Bootleby archive format.
-    let cursor = Cursor::new(image.as_slice());
-    let mut archive = zip::ZipArchive::new(cursor).map_err(|zip_error| {
-        // Return the original Hubris Archive error instead
-        // of our attempted zip extraction error.
-        HubtoolsError::ZipError(zip_error)
-    })?;
-
-    for i in 0..archive.len() {
-        match archive.by_index(i) {
-            Ok(mut file) => {
-                if file.name() == "bootleby.bin" {
-                    let mut rot_image = vec![];
-                    match file.read_to_end(&mut rot_image) {
-                        Ok(_) => {
-                            debug!(
-                                log,
-                                "using bootleby.bin from old-style archive"
-                            );
-                            return Ok(rot_image);
-                        }
-                        Err(err) => {
-                            error!(
-                                log,
-                                "cannot access bootleby.bin from zip file index {i}: {err}"
-                            );
-                            return Err(UpdateError::InvalidArchive);
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                error!(log, "cannot access zip archive at index {i}: {err}")
-            }
-        }
-    }
-    Err(UpdateError::ImageNotFound)
-}
-
 /// Start an update to the RoT.
 pub(super) async fn start_rot_update(
     cmds_tx: &mpsc::Sender<InnerCommand>,
@@ -428,22 +381,7 @@ pub(super) async fn start_rot_update(
                 return Err(UpdateError::InvalidSlotIdForOperation);
             }
 
-            RawHubrisArchive::from_vec(image.clone())
-                .and_then(|archive| archive.image.to_binary())
-                .or_else(|hubtool_error|
-                    // Prior to v1.2.0, Bootleby was packaged as a simple
-                    // zip archive containing a "bootleby.bin" file.
-                    //
-                    // TODO: Remove support for the old image format when
-                    // those bootleby versions are no longer used in
-                    // manufacturing and rollback protection can be used to
-                    // prevent their re-introduction. Until then, we need to
-                    // be able to test update and rollback using the oldest
-                    // releases that may be in customers' racks or spares pool.
-                    bootleby_from_old_style_archive(image, log)
-                        // Report the original Hubtools error if
-                        // this second chance did not work.
-                        .map_err(|_| hubtool_error))?
+            RawHubrisArchive::from_vec(image)?.image.to_binary()?
 
             // TODO: Even though the RoT will protect itself, put
             // pre-flash checks here for BORD, Bootloader vs Hubris,
