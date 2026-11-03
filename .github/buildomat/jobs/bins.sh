@@ -43,9 +43,6 @@ rustc --version
 pfexec mkdir -p /out
 pfexec chown "$LOGNAME" /out
 
-banner build
-ptime -m cargo build --release --bin faux-mgs
-
 banner omicron-zone-package
 cargo xtask zone-package target/out/
 

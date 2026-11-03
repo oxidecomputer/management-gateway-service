@@ -5,12 +5,10 @@
 // Copyright 2024 Oxide Computer Company
 
 use anyhow::Context;
-use anyhow::ensure;
 use camino::Utf8Path;
 use camino::Utf8PathBuf;
 use clap::Parser;
 use clap::Subcommand;
-use omicron_zone_package::config::PackageName;
 use omicron_zone_package::package::BuildConfig;
 use tokio::fs;
 
@@ -39,48 +37,16 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn build_zone_package(output_dir: &Utf8Path) -> anyhow::Result<()> {
-    let src = Utf8Path::new("target/release/faux-mgs");
-    let proto_dst = Utf8Path::new("target/proto/usr/bin/faux-mgs");
-    let proto_dst_dir = proto_dst.parent().unwrap();
-    let final_dst = "/usr/bin/faux-mgs";
-
-    ensure!(
-        src.exists(),
-        "{src} not found - run `cargo build --release --bin faux-mgs` first",
-    );
-
-    fs::create_dir_all(proto_dst_dir)
-        .await
-        .with_context(|| format!("failed to create {proto_dst_dir}"))?;
-    fs::copy(src, proto_dst)
-        .await
-        .with_context(|| format!("failed to copy {src} to {proto_dst}"))?;
-
-    let manifest = format!(
-        "
-        [package.faux-mgs]
-        service_name = \"faux-mgs\"
-        source.type = \"local\"
-        source.paths = [
-          {{from = \"{proto_dst}\" , to = \"{final_dst}\"}},
-        ]
-        output.type = \"zone\"
-    "
-    );
-    let config = omicron_zone_package::config::parse_manifest(&manifest)
-        .context("failed to parse built-in package manifest")?;
+    let config = omicron_zone_package::config::parse("package-manifest.toml")
+        .context("failed to parse package-manifest.toml")?;
 
     fs::create_dir_all(output_dir)
         .await
         .with_context(|| format!("failed to create {output_dir}"))?;
 
-    for package in config.packages.values() {
+    for (name, package) in config.packages {
         package
-            .create(
-                &PackageName::new_const("omicron-faux-mgs"),
-                output_dir,
-                &BuildConfig::default(),
-            )
+            .create(&name, output_dir, &BuildConfig::default())
             .await
             .context("failed to create faux-mgs omicron-zone-package")?;
     }
