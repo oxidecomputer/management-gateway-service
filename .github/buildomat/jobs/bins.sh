@@ -2,7 +2,7 @@
 #:
 #: name = "bins"
 #: variety = "basic"
-#: target = "helios-latest"
+#: target = "helios-3.0"
 #: rust_toolchain = true
 #: output_rules = [
 #:	"=/out/faux-mgs.gz",
