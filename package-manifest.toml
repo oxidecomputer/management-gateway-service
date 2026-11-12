@@ -1,0 +1,6 @@
+[package.omicron-faux-mgs]
+service_name = "faux-mgs"
+source.type = "local"
+source.rust.binary_names = ["faux-mgs"]
+source.rust.release = true
+output.type = "zone"

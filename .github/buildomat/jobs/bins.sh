@@ -2,8 +2,8 @@
 #:
 #: name = "bins"
 #: variety = "basic"
-#: target = "helios-latest"
-#: rust_toolchain = "stable"
+#: target = "helios-3.0"
+#: rust_toolchain = true
 #: output_rules = [
 #:	"=/out/faux-mgs.gz",
 #:	"=/out/faux-mgs.sha256.txt",
