@@ -1834,8 +1834,8 @@ async fn run_command(
 
             /// Helper `struct` to pretty-print component details
             ///
-            /// This normally delegates to `Debug`, but prints `LastPostCode`,
-            /// `PostCode`, and `Pcie` decoded values for convenience.
+            /// This normally delegates to `Debug`, but prints `LastPostCode`
+            /// and `Pcie` decoded values for convenience.
             struct ComponentDetailPrinter(gateway_messages::ComponentDetails);
             impl std::fmt::Display for ComponentDetailPrinter {
                 fn fmt(
@@ -1848,10 +1848,6 @@ async fn run_command(
                             let decoded = turin_post_decoder::decode(p.0);
                             let detail = decoded.lines().join("\n    ");
                             write!(f, "LastPostCode:\n    {detail}")
-                        }
-                        ComponentDetails::PostCode(p) => {
-                            let decoded = turin_post_decoder::decode(p.0);
-                            write!(f, "{}", decoded.lines().join("\n"))
                         }
                         ComponentDetails::Pcie(p) => {
                             write!(
@@ -1874,8 +1870,14 @@ async fn run_command(
                 }
             }
 
+            let mut decoder = turin_post_decoder::Decoder::new();
             let mut lines = Vec::new();
             for entry in details.entries {
+                if let gateway_messages::ComponentDetails::PostCode(p) = &entry
+                {
+                    lines.push(decoder.decode(p.0).lines().join("\n"));
+                    continue;
+                }
                 let d = ComponentDetailPrinter(entry);
                 lines.push(format!("{d}"));
             }
